@@ -15,9 +15,18 @@
   <div id="screen-home" class="screen active">
     <div class="home-container">
       <h1>♟ Ethan's Chess</h1>
-      <div class="menu-buttons">
-        <button class="btn btn-primary"   onclick="showColorSelect('computer')">Play vs Computer</button>
-        <button class="btn btn-secondary" onclick="showColorSelect('online')">Invite Friend</button>
+      <div class="home-body">
+        <div class="home-left">
+          <input type="text" id="player-name-input" class="name-input" placeholder="Enter your name" maxlength="20" />
+          <div class="menu-buttons">
+            <button class="btn btn-primary"   onclick="showColorSelect('computer')">Play vs Computer</button>
+            <button class="btn btn-secondary" onclick="showColorSelect('online')">Invite Friend</button>
+          </div>
+        </div>
+        <div class="leaderboard-panel">
+          <h3 class="lb-heading">Leaderboard</h3>
+          <div class="lb-list" id="lb-list"></div>
+        </div>
       </div>
     </div>
   </div>

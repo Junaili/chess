@@ -43,6 +43,8 @@ let suggestedMoveBeforePlay = null;
 let selectedPieceColor = null;
 let aiThinking = false;
 let contacts = JSON.parse(localStorage.getItem('chess_contacts') || '[]');
+let playerName = localStorage.getItem('chess_player_name') || '';
+let leaderboard = JSON.parse(localStorage.getItem('chess_leaderboard') || '[]');
 
 // ─── Online / PeerJS State ────────────────────────────────────────────────────
 
@@ -78,11 +80,13 @@ function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const el = document.getElementById('screen-' + name);
   if (el) el.classList.add('active');
+  if (name === 'home') renderLeaderboard();
 }
 
 // ─── Home / Setup screens ─────────────────────────────────────────────────────
 
 function showColorSelect(mode) {
+  savePlayerName();
   gameMode = mode;
   selectedPieceColor = null;
   document.documentElement.style.removeProperty('--white-piece-color');
@@ -555,6 +559,10 @@ function showPromotionModal(color) {
 // ─── Game over modal ──────────────────────────────────────────────────────────
 
 function showGameOver() {
+  if (game.status === 'checkmate' && game.winner === playerColor) {
+    recordWin();
+  }
+
   const title = document.getElementById('game-over-title');
   const msg   = document.getElementById('game-over-message');
   if (game.status === 'checkmate') {
@@ -1179,6 +1187,43 @@ function confirmGoHome() {
   showScreen('home');
 }
 
+function savePlayerName() {
+  const val = document.getElementById('player-name-input')?.value.trim();
+  if (val) { playerName = val; localStorage.setItem('chess_player_name', playerName); }
+}
+
+function recordWin() {
+  savePlayerName();
+  if (!playerName) return;
+  const entry = leaderboard.find(e => e.name.toLowerCase() === playerName.toLowerCase());
+  if (entry) { entry.wins++; } else { leaderboard.push({ name: playerName, wins: 1 }); }
+  leaderboard.sort((a, b) => b.wins - a.wins);
+  if (leaderboard.length > 100) leaderboard.length = 100;
+  localStorage.setItem('chess_leaderboard', JSON.stringify(leaderboard));
+}
+
+function renderLeaderboard() {
+  const nameInput = document.getElementById('player-name-input');
+  if (nameInput && !nameInput.value) nameInput.value = playerName;
+
+  const listEl = document.getElementById('lb-list');
+  if (!listEl) return;
+
+  if (leaderboard.length === 0) {
+    listEl.innerHTML = '<p class="lb-empty">No wins yet — be the first!</p>';
+    return;
+  }
+
+  listEl.innerHTML = leaderboard.map((e, i) => {
+    const isYou = playerName && e.name.toLowerCase() === playerName.toLowerCase();
+    return `<div class="lb-entry${isYou ? ' lb-you' : ''}">
+      <span class="lb-rank">${i + 1}</span>
+      <span class="lb-name">${escapeHtml(e.name)}${isYou ? ' (you)' : ''}</span>
+      <span class="lb-wins">${e.wins}</span>
+    </div>`;
+  }).join('');
+}
+
 function escapeHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
             .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -1212,6 +1257,7 @@ document.addEventListener('visibilitychange', () => {
 // ─── Auto-join from URL ───────────────────────────────────────────────────────
 
 window.addEventListener('DOMContentLoaded', () => {
+  renderLeaderboard();
   const params = new URLSearchParams(window.location.search);
   const hostPeerId = params.get('peer');
   if (hostPeerId) {

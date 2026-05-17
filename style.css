@@ -67,10 +67,81 @@ html, body {
   font-size: 3.2rem; font-weight: 800;
   background: linear-gradient(135deg, #fff, var(--accent2));
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  margin-bottom: 48px;
+  margin-bottom: 36px;
 }
-.menu-buttons { display: flex; flex-direction: column; gap: 16px; min-width: 260px; }
+.home-body {
+  display: flex;
+  gap: 32px;
+  align-items: flex-start;
+  justify-content: center;
+}
+.home-left {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: stretch;
+  min-width: 260px;
+}
+.name-input {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #444;
+  background: var(--surface);
+  color: var(--text);
+  font-size: .95rem;
+  text-align: center;
+  width: 100%;
+}
+.name-input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+.name-input::placeholder { color: var(--text-dim); }
+.menu-buttons { display: flex; flex-direction: column; gap: 16px; }
 .menu-buttons .btn { padding: 16px 32px; font-size: 1.1rem; }
+
+/* ─── Leaderboard Panel ─────────────────────────────────────────────────────── */
+.leaderboard-panel {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 16px;
+  width: 220px;
+  text-align: left;
+}
+.lb-heading {
+  font-size: .78rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  text-align: center;
+}
+.lb-list {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.lb-entry {
+  display: grid;
+  grid-template-columns: 26px 1fr 32px;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 4px;
+  border-radius: 6px;
+  font-size: .82rem;
+}
+.lb-entry:nth-child(odd) { background: rgba(255,255,255,.03); }
+.lb-entry.lb-you { background: rgba(233,69,96,.12); }
+.lb-rank { color: var(--text-dim); font-size: .72rem; text-align: right; }
+.lb-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-wins { color: var(--accent2); font-weight: 700; text-align: right; }
+.lb-entry.lb-you .lb-name { color: var(--accent2); }
+.lb-empty { font-size: .82rem; color: var(--text-dim); text-align: center; padding: 20px 4px; line-height: 1.7; }
+
+@media (max-width: 640px) {
+  .home-body { flex-direction: column; align-items: center; }
+  .leaderboard-panel { width: 100%; max-width: 280px; }
+  .lb-list { max-height: 180px; }
+}
 
 /* ─── Color & Difficulty Screens ───────────────────────────────────────────── */
 .color-select-container, .difficulty-container {
