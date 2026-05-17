@@ -1,6 +1,7 @@
 # Ethan's Chess
 I made this game so that I can play chess with friends and family who could be on the other side of the world. I also added extra features such as video call so that I can see and hear the person that I am playing against and a side bar to show me how many pieces I have captured and how many pieces my opponent captured. I also give credit to my dad who helped my come up with ideas and helped me understand things better. 
-A fully-featured chess game built with vanilla HTML, CSS, and JavaScript. Play against an AI or challenge a friend online — no accounts, no installs.
+
+This is a fully-featured chess game built with vanilla HTML, CSS, and JavaScript. Play against an AI or challenge a friend online — no accounts, no installs.
 
 ## Features
 
