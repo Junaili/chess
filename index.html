@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ethan's Chess</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Connection Banner ──────────────────────────────────────────────── -->
+  <div id="conn-banner" class="conn-banner" style="display:none"></div>
+
+  <!-- ── Home Screen ─────────────────────────────────────────────────────── -->
+  <div id="screen-home" class="screen active">
+    <div class="home-container">
+      <h1>♟ Ethan's Chess</h1>
+      <div class="menu-buttons">
+        <button class="btn btn-primary"   onclick="showColorSelect('computer')">Play vs Computer</button>
+        <button class="btn btn-secondary" onclick="showColorSelect('online')">Invite Friend</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Color Select ────────────────────────────────────────────────────── -->
+  <div id="screen-color-select" class="screen">
+    <div class="color-select-container">
+      <h2>Choose Your Color</h2>
+      <div class="color-options">
+        <button class="color-btn white-btn" onclick="selectColor('white')">
+          <span class="piece-icon">♔</span>
+          White
+        </button>
+        <button class="color-btn black-btn" onclick="selectColor('black')">
+          <span class="piece-icon">♚</span>
+          Black
+        </button>
+      </div>
+      <button class="btn btn-back" onclick="showScreen('home')">← Back</button>
+    </div>
+  </div>
+
+  <!-- ── Piece Color Select ────────────────────────────────────────────── -->
+  <div id="screen-piece-color" class="screen">
+    <div class="piece-color-container">
+      <h2>Choose Your Piece Color</h2>
+      <p class="piece-color-sub" id="piece-color-sub"></p>
+      <div class="piece-color-options" id="piece-color-options"></div>
+      <button class="btn btn-back" onclick="showScreen('color-select')">← Back</button>
+    </div>
+  </div>
+
+  <!-- ── Difficulty ──────────────────────────────────────────────────────── -->
+  <div id="screen-difficulty" class="screen">
+    <div class="difficulty-container">
+      <h2>Choose Difficulty</h2>
+      <div class="difficulty-options">
+        <button class="diff-btn easy"   onclick="startVsComputer('easy')">
+          <span>Easy</span>
+          <small>For beginners</small>
+        </button>
+        <button class="diff-btn medium" onclick="startVsComputer('medium')">
+          <span>Medium</span>
+          <small>A real challenge</small>
+        </button>
+        <button class="diff-btn hard"   onclick="startVsComputer('hard')">
+          <span>Hard</span>
+          <small>Expert level</small>
+        </button>
+      </div>
+      <button class="btn btn-back" onclick="showScreen('piece-color')">← Back</button>
+    </div>
+  </div>
+
+  <!-- ── Game Screen ─────────────────────────────────────────────────────── -->
+  <div id="screen-game" class="screen">
+    <div class="game-layout">
+
+      <div class="game-sidebar left">
+        <div class="player-info">
+          <span class="player-name" id="black-player-name">Black</span>
+          <span class="player-score" id="black-score">0</span>
+        </div>
+        <div class="captured-pieces" id="captured-by-white"></div>
+      </div>
+
+      <div class="game-center">
+        <div class="board-container">
+          <div class="board-labels-top">
+            <span>a</span><span>b</span><span>c</span><span>d</span>
+            <span>e</span><span>f</span><span>g</span><span>h</span>
+          </div>
+          <div class="board-wrapper">
+            <div class="board-labels-left">
+              <span>8</span><span>7</span><span>6</span><span>5</span>
+              <span>4</span><span>3</span><span>2</span><span>1</span>
+            </div>
+            <div id="chess-board" class="chess-board"></div>
+            <div class="board-labels-right">
+              <span>8</span><span>7</span><span>6</span><span>5</span>
+              <span>4</span><span>3</span><span>2</span><span>1</span>
+            </div>
+          </div>
+          <div class="board-labels-bottom">
+            <span>a</span><span>b</span><span>c</span><span>d</span>
+            <span>e</span><span>f</span><span>g</span><span>h</span>
+          </div>
+        </div>
+        <div class="game-status">
+          <span id="turn-indicator">White's turn</span>
+        </div>
+        <div class="hint-box" id="hint-box" style="display:none">
+          <strong>Tip:</strong>
+          <span id="hint-text"></span>
+        </div>
+      </div>
+
+      <div class="game-sidebar right">
+        <div class="player-info">
+          <span class="player-name" id="white-player-name">White</span>
+          <span class="player-score" id="white-score">0</span>
+        </div>
+        <div class="captured-pieces" id="captured-by-black"></div>
+        <div class="move-history">
+          <h3>Move History</h3>
+          <div id="move-list"></div>
+        </div>
+        <button class="btn btn-hint" id="btn-hint" onclick="showHint()">💡 Get Hint</button>
+        <button class="btn btn-video-chat" id="btn-video-chat" onclick="startVideoChat()" style="display:none">📹 Video Chat</button>
+        <button class="btn btn-home" onclick="confirmGoHome()">← Menu</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Waiting / Connecting Screen ─────────────────────────────────────── -->
+  <div id="screen-waiting" class="screen">
+    <div class="waiting-container">
+      <div class="waiting-icon" id="waiting-icon">🎮</div>
+      <h2 id="waiting-title">Waiting for opponent…</h2>
+      <p id="waiting-sub" class="waiting-sub"></p>
+
+      <!-- Shown to the host (inviter) -->
+      <div id="invite-link-section" style="display:none">
+        <p class="link-label">Share this link with your friend:</p>
+        <div class="invite-link-box">
+          <span id="invite-link-text" class="invite-link-text"></span>
+          <button class="btn-copy" id="btn-copy" onclick="copyInviteLink()">Copy</button>
+        </div>
+        <div class="invite-actions">
+          <button class="btn btn-secondary" onclick="shareInviteLink()">📤 Share…</button>
+          <button class="btn btn-secondary" onclick="showContactsForInvite()">👤 Send to Contact</button>
+        </div>
+      </div>
+
+      <div id="waiting-spinner" class="waiting-spinner" style="display:none"></div>
+      <button class="btn btn-back" style="margin-top:8px" onclick="cancelOnlineGame()">← Cancel</button>
+    </div>
+  </div>
+
+  <!-- ── Contacts Screen ─────────────────────────────────────────────────── -->
+  <div id="screen-contacts" class="screen">
+    <div class="contacts-container">
+      <h2>Send Invite</h2>
+      <div class="contacts-list" id="contacts-list"></div>
+      <button class="btn btn-add" onclick="showAddContact()">+ Add Contact</button>
+      <div class="add-contact-form" id="add-contact-form" style="display:none">
+        <input type="text" id="contact-input" placeholder="Phone number or email" autocomplete="off" />
+        <button class="btn btn-primary"   onclick="addContact()">Add</button>
+        <button class="btn btn-secondary" onclick="hideAddContact()">Cancel</button>
+      </div>
+      <button class="btn btn-back" onclick="backFromContacts()">← Back</button>
+    </div>
+  </div>
+
+  <!-- ── Pawn Promotion Modal ────────────────────────────────────────────── -->
+  <div id="promotion-modal" class="modal">
+    <div class="modal-content">
+      <h3>Promote Pawn</h3>
+      <p>Choose the piece to promote to:</p>
+      <div class="promotion-options" id="promotion-options"></div>
+    </div>
+  </div>
+
+  <!-- ── Game Over Modal ─────────────────────────────────────────────────── -->
+  <div id="game-over-modal" class="modal">
+    <div class="modal-content">
+      <h2 id="game-over-title">Game Over</h2>
+      <p id="game-over-message"></p>
+      <div class="modal-buttons">
+        <button class="btn btn-primary"   id="btn-play-again" onclick="startNewGame()">Play Again</button>
+        <button class="btn btn-primary"   id="btn-rematch"    onclick="requestRematch()" style="display:none">Rematch</button>
+        <button class="btn btn-secondary" onclick="endOnlineAndGoHome()">Main Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Rematch Notification ───────────────────────────────────────────────── -->
+  <div id="rematch-notification" class="rematch-notification" style="display:none">
+    <p class="vcn-title">🔄 Rematch</p>
+    <p class="vcn-sub">Your opponent wants a rematch!</p>
+    <div class="vcn-buttons">
+      <button class="btn btn-primary"   onclick="acceptRematch()">Accept</button>
+      <button class="btn btn-secondary" onclick="declineRematch()">Decline</button>
+    </div>
+  </div>
+
+  <!-- ── Video Chat Panel ───────────────────────────────────────────────────── -->
+  <div id="video-chat-panel" class="video-chat-panel">
+    <div class="video-wrapper">
+      <video id="remote-video" class="remote-video" autoplay playsinline></video>
+      <video id="local-video"  class="local-video"  autoplay playsinline muted></video>
+      <div class="video-status" id="video-status">Calling…</div>
+    </div>
+    <div class="video-controls">
+      <button class="video-ctrl-btn" id="btn-toggle-audio" onclick="toggleAudio()" title="Mute mic">🎤</button>
+      <button class="video-ctrl-btn" id="btn-toggle-cam"   onclick="toggleVideoFeed()" title="Toggle camera">📹</button>
+      <button class="video-ctrl-btn danger" onclick="endVideoChat()" title="End call">📵</button>
+    </div>
+  </div>
+
+  <!-- ── Incoming Call Notification ─────────────────────────────────────────── -->
+  <div id="video-call-notification" class="video-call-notification">
+    <p class="vcn-title">📹 Video Chat</p>
+    <p class="vcn-sub">Your opponent wants to video chat</p>
+    <div class="vcn-buttons">
+      <button class="btn btn-primary"   onclick="acceptVideoCall()">Accept</button>
+      <button class="btn btn-secondary" onclick="declineVideoCall()">Decline</button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="chess-engine.js"></script>
+  <script src="ai-engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

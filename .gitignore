@@ -1,0 +1,8 @@
+# SSL certificates and keys
+*.pem
+*.key
+*.crt
+*.cert
+
+# macOS
+.DS_Store
