@@ -339,8 +339,11 @@ function tryMove(fr, fc, toR, toC, move) {
 function executeMove(fr, fc, toR, toC, promType) {
   const notation = game.getMoveNotation(fr, fc, toR, toC, promType);
   const capturesBefore = game.capturedByWhite.length + game.capturedByBlack.length;
+  const movingColor = game.board[fr][fc]?.color;
   if (!game.makeMove(fr, fc, toR, toC, promType)) return;
-  if (game.capturedByWhite.length + game.capturedByBlack.length > capturesBefore) playCapture();
+  if (game.capturedByWhite.length + game.capturedByBlack.length > capturesBefore) {
+    movingColor !== playerColor ? playDunDunDun() : playCapture();
+  }
 
   selectedSquare = null;
   validMoves = [];
@@ -373,7 +376,7 @@ function applyOpponentMove(fr, fc, toR, toC, promType = 'queen') {
   const notation = game.getMoveNotation(fr, fc, toR, toC, promType);
   const capturesBefore = game.capturedByWhite.length + game.capturedByBlack.length;
   if (!game.makeMove(fr, fc, toR, toC, promType)) return;
-  if (game.capturedByWhite.length + game.capturedByBlack.length > capturesBefore) playCapture();
+  if (game.capturedByWhite.length + game.capturedByBlack.length > capturesBefore) playDunDunDun();
 
   selectedSquare = null;
   validMoves = [];
@@ -426,6 +429,37 @@ function playCapture() {
     snapFilter.connect(snapGain);
     snapGain.connect(ctx.destination);
     snap.start(t);
+  } catch (e) { /* audio not available */ }
+}
+
+function playDunDunDun() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const ctx = audioCtx;
+
+    const dun = (freq, start, duration, vol = 0.45) => {
+      const osc    = ctx.createOscillator();
+      const filter = ctx.createBiquadFilter();
+      const gain   = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, start);
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(500, start);
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(vol, start + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + duration + 0.05);
+    };
+
+    const t = ctx.currentTime;
+    dun(110,  t,        0.3);       // Dun
+    dun(110,  t + 0.38, 0.3);       // Dun
+    dun(73.4, t + 0.76, 0.7, 0.6); // Duuun (lower, louder, longer)
   } catch (e) { /* audio not available */ }
 }
 
