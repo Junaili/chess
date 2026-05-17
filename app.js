@@ -1262,6 +1262,10 @@ function renderLeaderboard() {
   const listEl = document.getElementById('lb-list');
   if (!listEl) return;
 
+  const hasLocalData = !!localStorage.getItem('chess_leaderboard');
+  const resetBtn = document.querySelector('.btn-lb-reset');
+  if (resetBtn) resetBtn.style.display = hasLocalData ? 'block' : 'none';
+
   if (leaderboard.length === 0) {
     listEl.innerHTML = '<p class="lb-empty">No wins yet — be the first!</p>';
     return;
