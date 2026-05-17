@@ -767,13 +767,20 @@ function createOnlineRoom() {
       document.getElementById('waiting-spinner').style.display = 'block';
     };
 
-    fetch('https://api4.ipify.org')
-      .then(r => r.text())
-      .then(ip => {
-        const port = window.location.port || '8000';
-        showLink(`${window.location.protocol}//${ip.trim()}:${port}${window.location.pathname}`);
-      })
-      .catch(() => showLink(window.location.href.split('?')[0]));
+    const base = window.location.href.split('?')[0];
+    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
+    if (isLocal) {
+      fetch('https://api4.ipify.org')
+        .then(r => r.text())
+        .then(ip => {
+          const port = window.location.port || '8000';
+          showLink(`${window.location.protocol}//${ip.trim()}:${port}${window.location.pathname}`);
+        })
+        .catch(() => showLink(base));
+    } else {
+      showLink(base);
+    }
   });
 
   peer.on('connection', conn => {
