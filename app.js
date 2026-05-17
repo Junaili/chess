@@ -1235,7 +1235,11 @@ function savePlayerName() {
 }
 
 function saveLeaderboard() {
-  localStorage.setItem('chess_leaderboard', JSON.stringify(leaderboard));
+  if (leaderboard.length > 0) {
+    localStorage.setItem('chess_leaderboard', JSON.stringify(leaderboard));
+  } else {
+    localStorage.removeItem('chess_leaderboard');
+  }
 }
 
 function recordWin() {
@@ -1262,7 +1266,7 @@ function renderLeaderboard() {
   const listEl = document.getElementById('lb-list');
   if (!listEl) return;
 
-  const hasLocalData = !!localStorage.getItem('chess_leaderboard');
+  const hasLocalData = leaderboard.length > 0;
   const resetBtn = document.querySelector('.btn-lb-reset');
   if (resetBtn) resetBtn.style.display = hasLocalData ? 'block' : 'none';
 
