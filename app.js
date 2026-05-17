@@ -435,31 +435,32 @@ function playCapture() {
 function playDunDunDun() {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
     const ctx = audioCtx;
 
-    const dun = (freq, start, duration, vol = 0.45) => {
-      const osc    = ctx.createOscillator();
-      const filter = ctx.createBiquadFilter();
-      const gain   = ctx.createGain();
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(freq, start);
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(500, start);
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(vol, start + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-      osc.connect(filter);
-      filter.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(start);
-      osc.stop(start + duration + 0.05);
+    const go = () => {
+      const t = ctx.currentTime;
+
+      const dun = (freq, start, dur, vol) => {
+        const osc  = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, start);
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.8, start + dur);
+        gain.gain.setValueAtTime(0.001, start);
+        gain.gain.linearRampToValueAtTime(vol, start + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + dur + 0.05);
+      };
+
+      dun(220, t,        0.35, 0.7);  // Dun
+      dun(220, t + 0.42, 0.35, 0.7);  // Dun
+      dun(165, t + 0.84, 0.75, 0.9);  // Duuun (lower, louder, longer)
     };
 
-    const t = ctx.currentTime;
-    dun(110,  t,        0.3);       // Dun
-    dun(110,  t + 0.38, 0.3);       // Dun
-    dun(73.4, t + 0.76, 0.7, 0.6); // Duuun (lower, louder, longer)
+    if (ctx.state === 'suspended') { ctx.resume().then(go); } else { go(); }
   } catch (e) { /* audio not available */ }
 }
 
