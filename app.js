@@ -1234,6 +1234,10 @@ function savePlayerName() {
   if (val) { playerName = val; localStorage.setItem('chess_player_name', playerName); }
 }
 
+function saveLeaderboard() {
+  localStorage.setItem('chess_leaderboard', JSON.stringify(leaderboard));
+}
+
 function recordWin() {
   savePlayerName();
   if (!playerName) return;
@@ -1241,7 +1245,14 @@ function recordWin() {
   if (entry) { entry.wins++; } else { leaderboard.push({ name: playerName, wins: 1 }); }
   leaderboard.sort((a, b) => b.wins - a.wins);
   if (leaderboard.length > 100) leaderboard.length = 100;
-  localStorage.setItem('chess_leaderboard', JSON.stringify(leaderboard));
+  saveLeaderboard();
+}
+
+function resetLeaderboard() {
+  if (!confirm('Reset the leaderboard? This cannot be undone.')) return;
+  leaderboard = [];
+  saveLeaderboard();
+  renderLeaderboard();
 }
 
 function renderLeaderboard() {
@@ -1297,6 +1308,11 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ─── Auto-join from URL ───────────────────────────────────────────────────────
+
+window.addEventListener('beforeunload', () => {
+  saveLeaderboard();
+  localStorage.setItem('chess_player_name', playerName);
+});
 
 window.addEventListener('DOMContentLoaded', () => {
   renderLeaderboard();

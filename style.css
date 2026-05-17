@@ -136,6 +136,14 @@ html, body {
 .lb-wins { color: var(--accent2); font-weight: 700; text-align: right; }
 .lb-entry.lb-you .lb-name { color: var(--accent2); }
 .lb-empty { font-size: .82rem; color: var(--text-dim); text-align: center; padding: 20px 4px; line-height: 1.7; }
+.btn-lb-reset {
+  display: block; width: 100%; margin-top: 10px;
+  padding: 6px; background: transparent;
+  border: 1px solid rgba(255,255,255,.1); border-radius: 6px;
+  color: var(--text-dim); font-size: .75rem; cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.btn-lb-reset:hover { background: rgba(233,69,96,.15); color: var(--accent); border-color: var(--accent); }
 
 @media (max-width: 640px) {
   .home-body { flex-direction: column; align-items: center; }
