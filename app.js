@@ -455,9 +455,9 @@ function playDunDunDun() {
         osc.stop(start + dur + 0.05);
       };
 
-      dun(220, t,        0.35, 0.7);  // Dun
-      dun(220, t + 0.42, 0.35, 0.7);  // Dun
-      dun(165, t + 0.84, 0.75, 0.9);  // Duuun (lower, louder, longer)
+      dun(220, t,        0.35, 1.4);  // Dun
+      dun(220, t + 0.42, 0.35, 1.4);  // Dun
+      dun(165, t + 0.84, 0.75, 1.8);  // Duuun (lower, louder, longer)
     };
 
     if (ctx.state === 'suspended') { ctx.resume().then(go); } else { go(); }
