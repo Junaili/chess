@@ -768,7 +768,7 @@ function createOnlineRoom() {
     };
 
     const base = window.location.href.split('?')[0];
-    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname) || window.location.port === '8000';
 
     if (isLocal) {
       fetch('https://api4.ipify.org')
