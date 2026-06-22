@@ -22,7 +22,7 @@ function clearTransientSessionState() {
 }
 
 function clearAuthCallbackUrl(preSearch = '') {
-  window.history.replaceState({}, '', window.location.pathname + (preSearch || '') + window.location.hash)
+  window.history.replaceState({}, '', window.location.pathname + (preSearch || ''))
 }
 
 function isPrivateIpHost(hostname) {
@@ -125,26 +125,32 @@ export async function loginWithGoogle() {
   }
   sessionStorage.setItem(GOOGLE_FLAG, '1')
 
+  // Use id_token implicit flow — AGS can verify the ID token directly using
+  // Google's public keys, so no server-side code exchange is needed.
+  const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
+  sessionStorage.setItem('ags_google_nonce', nonce)
   const params = new URLSearchParams({
     client_id: import.meta.env.VITE_ACCELBYTE_GOOGLE_CLIENT_ID,
     redirect_uri: redirectUri,
-    response_type: 'code',
+    response_type: 'id_token',
     scope: 'openid email profile',
-    access_type: 'offline',
+    nonce,
     prompt: 'select_account',
   })
   window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`
 }
 
 export async function handleCallback() {
-  const params = new URLSearchParams(window.location.search)
-  const code = params.get('code')
-  const error = params.get('error')
+  // id_token arrives in the URL hash (implicit flow); errors may be in hash or query
+  const hashParams = new URLSearchParams(window.location.hash.slice(1))
+  const idToken = hashParams.get('id_token')
+  const error = hashParams.get('error') || new URLSearchParams(window.location.search).get('error')
 
-  if (!code && !error) return null
+  if (!idToken && !error) return null
 
   const isGoogle = sessionStorage.getItem(GOOGLE_FLAG)
   sessionStorage.removeItem(GOOGLE_FLAG)
+  sessionStorage.removeItem('ags_google_nonce')
 
   const pre = sessionStorage.getItem('ags_pre_login_search')
   sessionStorage.removeItem('ags_pre_login_search')
@@ -155,7 +161,6 @@ export async function handleCallback() {
   }
 
   const { coreConfig } = sdk.assembly()
-  const redirectUri = getGoogleRedirectUri()
   let tokenData
   try {
     const resp = await fetch(
@@ -167,8 +172,7 @@ export async function handleCallback() {
           Authorization: `Basic ${btoa(coreConfig.clientId + ':')}`,
         },
         body: new URLSearchParams({
-          platform_token: code,
-          redirect_uri: redirectUri,
+          platform_token: idToken,
         }).toString(),
         credentials: 'include',
       }
