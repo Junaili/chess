@@ -20,13 +20,10 @@ jobs:
 
       - run: npm ci
 
+      - name: Inject secrets
+        run: echo "VITE_ACCELBYTE_GOOGLE_CLIENT_ID=${{ secrets.VITE_ACCELBYTE_GOOGLE_CLIENT_ID }}" >> .env.production
+
       - name: Build
-        env:
-          VITE_ACCELBYTE_BASE_URL:         ${{ secrets.VITE_ACCELBYTE_BASE_URL }}
-          VITE_ACCELBYTE_CLIENT_ID:        ${{ secrets.VITE_ACCELBYTE_CLIENT_ID }}
-          VITE_ACCELBYTE_NAMESPACE:        ${{ secrets.VITE_ACCELBYTE_NAMESPACE }}
-          VITE_ACCELBYTE_REDIRECT_URI:     https://junaili.github.io/chess/
-          VITE_ACCELBYTE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_ACCELBYTE_GOOGLE_CLIENT_ID }}
         run: npm run build
 
       - uses: peaceiris/actions-gh-pages@v4
