@@ -38,7 +38,7 @@ function getGoogleRedirectUri() {
   const currentOrigin = window.location.origin
   const currentHost = window.location.hostname
   if (currentOrigin && !isPrivateIpHost(currentHost)) {
-    return currentOrigin + '/'
+    return currentOrigin + import.meta.env.BASE_URL
   }
   return import.meta.env.VITE_ACCELBYTE_REDIRECT_URI || 'https://localhost:8808/'
 }
