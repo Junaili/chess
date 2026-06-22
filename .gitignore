@@ -6,3 +6,9 @@
 
 # macOS
 .DS_Store
+
+# AGS environment config — do not commit
+.env
+
+# Node
+node_modules/

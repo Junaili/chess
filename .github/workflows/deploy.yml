@@ -1,0 +1,35 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build
+        env:
+          VITE_ACCELBYTE_BASE_URL:         ${{ secrets.VITE_ACCELBYTE_BASE_URL }}
+          VITE_ACCELBYTE_CLIENT_ID:        ${{ secrets.VITE_ACCELBYTE_CLIENT_ID }}
+          VITE_ACCELBYTE_NAMESPACE:        ${{ secrets.VITE_ACCELBYTE_NAMESPACE }}
+          VITE_ACCELBYTE_REDIRECT_URI:     https://junaili.github.io/chess/
+          VITE_ACCELBYTE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_ACCELBYTE_GOOGLE_CLIENT_ID }}
+        run: npm run build
+
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist

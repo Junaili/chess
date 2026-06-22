@@ -1,0 +1,404 @@
+import { Lobby } from '@accelbyte/sdk-lobby'
+import { sdk } from './ags-client.js'
+
+const AVAILABILITY = {
+  offline: 0,
+  online: 1,
+  busy: 2,
+}
+
+const ACTIVITY = {
+  online: 'online',
+  inMatch: 'in-match',
+  offline: 'offline',
+}
+
+let lobbyWs = null
+let lobbyConnected = false
+let queuedStatus = null
+let currentStatus = 'offline'
+let openWaiters = []
+let pendingStatusRequests = new Map()
+let pendingPersonalChatRequests = new Map()
+let presenceListeners = new Set()
+let gameInviteListeners = new Set()
+
+const STALE_ONLINE_MS = 120000
+const OFFLINE_FLUSH_MS = 1000
+const CONNECT_TIMEOUT_MS = 2500
+const FRIENDS_STATUS_TIMEOUT_MS = 5000
+
+function debugPresence(...args) {
+  try {
+    if (localStorage.getItem('ags_presence_debug') === '1') {
+      console.debug('[AGS presence]', ...args)
+    }
+  } catch {}
+}
+
+try {
+  window.agsEnablePresenceDebug = () => localStorage.setItem('ags_presence_debug', '1')
+  window.agsDisablePresenceDebug = () => localStorage.removeItem('ags_presence_debug')
+} catch {}
+
+function lobbyId() {
+  if (crypto?.randomUUID) return crypto.randomUUID().replace(/-/g, '')
+  return 'presence-' + Math.random().toString(36).slice(2)
+}
+
+function ensureLobbyConnected() {
+  if (lobbyWs) return lobbyWs
+
+  lobbyWs = Lobby.WebSocket(sdk)
+  lobbyWs.connect()
+  lobbyWs.onMessage(raw => {
+    const message = parseLobbyMessage(raw)
+    debugPresence('message', { raw, message })
+    if (message?.type === 'friendsStatusResponse') {
+      const pending = pendingStatusRequests.get(message.id)
+      if (pending) {
+        pendingStatusRequests.delete(message.id)
+        pending.resolve(message)
+      }
+    } else if (message?.type === 'personalChatResponse') {
+      const pending = pendingPersonalChatRequests.get(message.id)
+      if (pending) {
+        pendingPersonalChatRequests.delete(message.id)
+        pending.resolve(message)
+      }
+    } else if (message?.type === 'personalChatNotif' || message?.type === 'messageNotif') {
+      notifyGameInvite(message)
+    } else if (message?.type === 'userStatusNotif') {
+      notifyPresenceUpdate(message)
+    }
+  }, true)
+  lobbyWs.onOpen(() => {
+    lobbyConnected = true
+    debugPresence('open')
+    openWaiters.splice(0).forEach(resolve => resolve(true))
+    if (queuedStatus) {
+      sendPresence(queuedStatus)
+      queuedStatus = null
+    }
+  })
+  lobbyWs.onClose(() => {
+    debugPresence('close')
+    lobbyConnected = false
+    lobbyWs = null
+    pendingStatusRequests.forEach(pending => pending.resolve(null))
+    pendingStatusRequests.clear()
+    pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
+    pendingPersonalChatRequests.clear()
+  })
+  lobbyWs.onError(err => {
+    console.warn('[AGS presence] lobby websocket:', err?.message || err)
+    debugPresence('error', err)
+    openWaiters.splice(0).forEach(resolve => resolve(false))
+    pendingStatusRequests.forEach(pending => pending.resolve(null))
+    pendingStatusRequests.clear()
+    pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
+    pendingPersonalChatRequests.clear()
+  })
+  return lobbyWs
+}
+
+function waitForLobbyOpen(timeoutMs = CONNECT_TIMEOUT_MS) {
+  if (lobbyConnected) return Promise.resolve(true)
+  ensureLobbyConnected()
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve(false), timeoutMs)
+    openWaiters.push(opened => {
+      clearTimeout(timer)
+      resolve(opened)
+    })
+  })
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function sendPresence(status) {
+  const ws = ensureLobbyConnected()
+  if (!lobbyConnected) {
+    queuedStatus = status
+    debugPresence('queue-status', status)
+    return
+  }
+
+  const inMatch = status === 'in-match'
+  const payload = {
+    id: lobbyId(),
+    availability: status === 'offline'
+      ? AVAILABILITY.offline
+      : inMatch
+        ? AVAILABILITY.busy
+        : AVAILABILITY.online,
+    activity: status === 'offline'
+      ? ACTIVITY.offline
+      : inMatch
+        ? ACTIVITY.inMatch
+        : ACTIVITY.online,
+  }
+  debugPresence('set-status', payload)
+  ws.sendSetUserStatus(payload)
+}
+
+export function setPresenceStatus(status) {
+  const token = sdk.getToken()?.accessToken
+  if (!token) return
+  currentStatus = status === 'in-match'
+    ? 'in-match'
+    : status === 'offline'
+      ? 'offline'
+      : 'online'
+  sendPresence(currentStatus)
+}
+
+export function disconnectPresence() {
+  if (!lobbyWs) return
+  try {
+    if (lobbyConnected) {
+      sendPresence('offline')
+      lobbyWs.sendOfflineNotification({ id: lobbyId() })
+    }
+    lobbyWs.disconnect()
+  } catch (e) {
+    console.warn('[AGS presence] disconnect:', e?.message || e)
+  } finally {
+    currentStatus = 'offline'
+    queuedStatus = null
+    lobbyWs = null
+    lobbyConnected = false
+  }
+}
+
+export async function signOutPresence() {
+  if (!sdk.getToken()?.accessToken) return
+  const opened = await waitForLobbyOpen()
+  if (opened && lobbyWs) {
+    sendPresence('offline')
+    lobbyWs.sendOfflineNotification({ id: lobbyId() })
+    await sleep(OFFLINE_FLUSH_MS)
+  }
+  disconnectPresence()
+}
+
+export function pausePresence() {
+  if (currentStatus === 'offline') return
+  disconnectPresence()
+}
+
+export function resumePresence() {
+  if (!sdk.getToken()?.accessToken) return
+  setPresenceStatus('online')
+}
+
+export function subscribePresenceUpdates(listener) {
+  presenceListeners.add(listener)
+  return () => presenceListeners.delete(listener)
+}
+
+export function subscribeGameInvites(listener) {
+  gameInviteListeners.add(listener)
+  return () => gameInviteListeners.delete(listener)
+}
+
+export async function sendGameInvite({ from, to, payload }) {
+  const opened = await waitForLobbyOpen()
+  if (!opened || !lobbyWs) {
+    return { ok: false, error: 'Could not connect to AGS Lobby.' }
+  }
+
+  const id = lobbyId()
+  const message = {
+    id,
+    from,
+    to,
+    payload: JSON.stringify(payload),
+    receivedAt: new Date().toISOString(),
+  }
+
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      pendingPersonalChatRequests.delete(id)
+      resolve({ ok: false, error: 'Invite request timed out.' })
+    }, FRIENDS_STATUS_TIMEOUT_MS)
+
+    pendingPersonalChatRequests.set(id, {
+      resolve: response => {
+        clearTimeout(timer)
+        if (response?.code === 0) {
+          resolve({ ok: true })
+        } else {
+          resolve({ ok: false, error: 'Could not send match invite.' })
+        }
+      },
+    })
+
+    debugPresence('send-game-invite', message)
+    lobbyWs.sendPersonalChat(message)
+  })
+}
+
+function notifyPresenceUpdate(message) {
+  const userId = message.userId || message.userID
+  if (!userId) return
+  const presence = normalizePresenceStatus(message)
+  debugPresence('presence-update', { userId, presence, message })
+  presenceListeners.forEach(listener => {
+    try {
+      listener(userId, presence)
+    } catch (e) {
+      console.warn('[AGS presence] listener:', e?.message || e)
+    }
+  })
+}
+
+function notifyGameInvite(message) {
+  let payload = null
+  try {
+    payload = JSON.parse(message.payload || '{}')
+  } catch {
+    return
+  }
+  if (payload?.type !== 'chess-match-invite' || !payload.peerId) return
+
+  const invite = {
+    ...payload,
+    fromUserId: payload.fromUserId || message.from,
+    toUserId: message.to,
+    receivedAt: message.receivedAt,
+  }
+  debugPresence('game-invite', invite)
+  gameInviteListeners.forEach(listener => {
+    try {
+      listener(invite)
+    } catch (e) {
+      console.warn('[AGS presence] game invite listener:', e?.message || e)
+    }
+  })
+}
+
+function normalizePresenceStatus(presence) {
+  if (!presence) return { status: 'offline', label: 'Offline', activity: '' }
+
+  const availability = String(presence.availability ?? '0').toLowerCase()
+  const activity = String(presence.activity || '').toLowerCase()
+  const lastSeen = presence.lastSeenAt ? Date.parse(presence.lastSeenAt) : 0
+  const stale = lastSeen > 0 && Date.now() - lastSeen > STALE_ONLINE_MS
+
+  if (
+    availability === '0' ||
+    availability === '3' ||
+    availability === 'offline' ||
+    availability === 'unavailable' ||
+    activity.includes('offline') ||
+    activity.includes('logout') ||
+    activity.includes('signed-out') ||
+    stale
+  ) {
+    return { status: 'offline', label: 'Offline', activity: presence.activity || '' }
+  }
+  if (activity.includes('match')) {
+    return { status: 'in-match', label: 'In Match', activity: presence.activity || '' }
+  }
+  return { status: 'online', label: 'Online', activity: presence.activity || '' }
+}
+
+function parseLobbyValue(value) {
+  const trimmed = String(value || '').trim()
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    return trimmed
+      .slice(1, -1)
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean)
+  }
+  if (/^-?\d+$/.test(trimmed)) return Number(trimmed)
+  return trimmed
+}
+
+function parseLobbyMessage(raw) {
+  if (typeof raw !== 'string') return raw
+  const trimmed = raw.trim()
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      return JSON.parse(trimmed)
+    } catch {}
+  }
+  return raw.split('\n').reduce((message, line) => {
+    const separator = line.indexOf(':')
+    if (separator <= 0) return message
+    const key = line.slice(0, separator).trim()
+    const value = line.slice(separator + 1).trim()
+    message[key] = parseLobbyValue(value)
+    return message
+  }, {})
+}
+
+function normalizeId(id) {
+  return String(id || '').replace(/-/g, '')
+}
+
+function mapFriendsStatusResponse(response, requestedIds) {
+  const byId = {}
+  if (response?.code === 0) {
+    const friendIds = response.friendIds || response.friendsId || response.friendsIds || response.friendID || response.friendIDs || []
+    const availability = response.availability || []
+    const activity = response.activity || []
+    const lastSeenAt = response.lastSeenAt || []
+
+    friendIds.forEach((friendId, index) => {
+      const normalized = normalizeId(friendId)
+      byId[normalized] = normalizePresenceStatus({
+        userID: friendId,
+        availability: availability[index],
+        activity: activity[index],
+        lastSeenAt: lastSeenAt[index],
+      })
+    })
+  }
+
+  const result = {}
+  for (const id of requestedIds) {
+    result[id] = byId[normalizeId(id)] || { status: 'offline', label: 'Offline', activity: '' }
+  }
+  debugPresence('mapped-friends-status', { response, requestedIds, result })
+  return result
+}
+
+async function requestFriendsStatus() {
+  const opened = await waitForLobbyOpen()
+  if (!opened || !lobbyWs) return null
+
+  const id = lobbyId()
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      pendingStatusRequests.delete(id)
+      resolve(null)
+    }, FRIENDS_STATUS_TIMEOUT_MS)
+
+    pendingStatusRequests.set(id, {
+      resolve: message => {
+        clearTimeout(timer)
+        resolve(message)
+      },
+    })
+    debugPresence('friends-status-request', { id })
+    lobbyWs.sendFriendsStatus({ id })
+  })
+}
+
+export async function fetchPresenceMap(userIds) {
+  const ids = [...new Set(userIds.filter(Boolean))]
+  if (!ids.length) return {}
+
+  try {
+    const response = await requestFriendsStatus()
+    return mapFriendsStatusResponse(response, ids)
+  } catch (e) {
+    console.warn('[AGS presence] fetchPresenceMap:', e?.response?.data || e?.message)
+    return Object.fromEntries(ids.map(id => [id, { status: 'offline', label: 'Offline', activity: '' }]))
+  }
+}

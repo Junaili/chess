@@ -31,7 +31,7 @@ fi
 
 # Print access URLs
 for ip in $(ifconfig 2>/dev/null | grep 'inet ' | awk '{print $2}' | grep -v '^127\.'); do
-  echo "  Open this on BOTH devices:  https://$ip:8000/"
+  echo "  Open this on BOTH devices:  https://$ip:8808/"
 done
 
 echo ""
@@ -39,25 +39,5 @@ echo "  First visit: click Advanced → Proceed to $LOCAL_IP (unsafe)"
 echo "  Press Ctrl+C to stop."
 echo ""
 
-# Serve via Ruby WEBrick (uses LibreSSL 3.x — compatible with modern browsers)
-ruby -e "
-require 'webrick'
-require 'webrick/https'
-require 'openssl'
-
-server = WEBrick::HTTPServer.new(
-  Port:           8000,
-  DocumentRoot:   Dir.pwd,
-  SSLEnable:      true,
-  SSLCertificate: OpenSSL::X509::Certificate.new(File.read('cert.pem')),
-  SSLPrivateKey:  OpenSSL::PKey::RSA.new(File.read('key.pem')),
-  AccessLog:      [],
-  Logger:         WEBrick::Log.new('/dev/null')
-)
-
-puts '  Server running — press Ctrl+C to stop.'
-\$stdout.flush
-
-trap('INT') { server.shutdown }
-server.start
-"
+# Serve through Vite so AGS API requests are proxied from the same HTTPS origin.
+npm run dev

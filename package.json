@@ -1,0 +1,37 @@
+{
+  "name": "chess-ethan",
+  "version": "1.0.0",
+  "description": "I made this game so that I can play chess with friends and family who could be on the other side of the world. I also added extra features such as video call so that I can see and hear the person that I am playing against and a side bar to show me how many pieces I have captured and how many pieces my opponent captured. I also give credit to my dad who helped my come up with ideas and helped me understand things better. If you want to play my chess game, then here is the URL: https://ethanlie.github.io/chess/",
+  "main": "ai-engine.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EthanLie/chess.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/EthanLie/chess/issues"
+  },
+  "homepage": "https://github.com/EthanLie/chess#readme",
+  "devDependencies": {
+    "vite": "^8.0.16"
+  },
+  "dependencies": {
+    "@accelbyte/sdk": "^4.3.1",
+    "@accelbyte/sdk-cloudsave": "^6.3.4",
+    "@accelbyte/sdk-iam": "^6.3.4",
+    "@accelbyte/sdk-leaderboard": "^5.3.4",
+    "@accelbyte/sdk-lobby": "^5.2.6",
+    "@accelbyte/sdk-matchmaking": "^5.3.4",
+    "@accelbyte/sdk-session": "^5.3.4",
+    "@accelbyte/sdk-social": "^6.3.4"
+  }
+}

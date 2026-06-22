@@ -46,6 +46,13 @@ let contacts = JSON.parse(localStorage.getItem('chess_contacts') || '[]');
 let playerName = localStorage.getItem('chess_player_name') || '';
 let leaderboard = JSON.parse(localStorage.getItem('chess_leaderboard') || '[]');
 
+window.setPlayerFromAGS = function(name) {
+  playerName = name;
+  localStorage.setItem('chess_player_name', name);
+  const nameInput = document.getElementById('player-name-input');
+  if (nameInput) nameInput.value = name;
+};
+
 // ─── Online / PeerJS State ────────────────────────────────────────────────────
 
 let peer = null;
@@ -60,6 +67,14 @@ let moveQueue      = [];     // moves queued while connection is down
 let moveLog        = [];     // host-only: all moves sent, used for resync
 let connectionLost = false;
 let rematchPending = false;  // true while waiting for opponent to respond to our rematch request
+let matchmakingActive = false;
+let chatMessages   = [];
+let currentOpponent = null;
+let pendingFriendMatchInvite = null;
+let matchStartedAt = null;
+let matchHistoryRecorded = false;
+let gameOverCountdownTimer = null;
+let gameOverCountdownRemaining = 0;
 
 // ─── Audio State ──────────────────────────────────────────────────────────────
 
@@ -80,7 +95,16 @@ function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const el = document.getElementById('screen-' + name);
   if (el) el.classList.add('active');
-  if (name === 'home') renderLeaderboard();
+  if (name === 'home') {
+    if (typeof window.agsSetPresence === 'function') {
+      window.agsSetPresence('online');
+    }
+    if (typeof window.agsRefreshLeaderboard === 'function') {
+      window.agsRefreshLeaderboard()
+    } else {
+      renderLeaderboard()
+    }
+  }
 }
 
 // ─── Home / Setup screens ─────────────────────────────────────────────────────
@@ -181,7 +205,24 @@ function startVsComputer(diff) {
 
 // ─── Game init ────────────────────────────────────────────────────────────────
 
+function setPlayerInfo(color, name, userId) {
+  const nameEl = document.getElementById(color + '-player-name');
+  const idEl   = document.getElementById(color + '-player-id');
+  if (nameEl) nameEl.textContent = name;
+  if (idEl)   idEl.textContent   = userId ? 'ID: ' + userId : '';
+}
+
+function setCurrentOpponent(name, userId) {
+  currentOpponent = userId ? { name: name || 'Opponent', userId } : null;
+  window.agsLastOpponent = currentOpponent;
+}
+
 function startGame() {
+  if (typeof window.agsSetPresence === 'function') {
+    window.agsSetPresence('in-match');
+  }
+  matchStartedAt = new Date();
+  matchHistoryRecorded = false;
   game = new ChessGame();
   selectedSquare = null;
   validMoves = [];
@@ -196,18 +237,33 @@ function startGame() {
   document.getElementById('captured-by-black').innerHTML = '';
   document.getElementById('black-score').textContent = '0';
   document.getElementById('white-score').textContent = '0';
+  resetChatState();
 
   const isOnline = gameMode === 'online';
-  document.getElementById('white-player-name').textContent =
-    isOnline   ? (playerColor === 'white' ? 'You' : 'Opponent') :
-    gameMode === 'computer' ? (playerColor === 'white' ? 'You' : 'Computer') : 'White';
-  document.getElementById('black-player-name').textContent =
-    isOnline   ? (playerColor === 'black' ? 'You' : 'Opponent') :
-    gameMode === 'computer' ? (playerColor === 'black' ? 'You' : 'Computer') : 'Black';
+  const myName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'You';
+  const myId   = window.agsCurrentUserId || '';
+
+  if (isOnline) {
+    setPlayerInfo(playerColor, myName, myId);
+    if (currentOpponent) {
+      setPlayerInfo(playerColor === 'white' ? 'black' : 'white', currentOpponent.name, currentOpponent.userId);
+    } else {
+      setPlayerInfo(playerColor === 'white' ? 'black' : 'white', 'Opponent', '');
+    }
+  } else if (gameMode === 'computer') {
+    setCurrentOpponent('', '');
+    setPlayerInfo(playerColor, myName, myId);
+    setPlayerInfo(playerColor === 'white' ? 'black' : 'white', 'Computer AI', '');
+  } else {
+    setPlayerInfo('white', 'White', '');
+    setPlayerInfo('black', 'Black', '');
+  }
 
   // Hide hint button during online games; show video chat button instead
   document.getElementById('btn-hint').style.display = isOnline ? 'none' : '';
   document.getElementById('btn-video-chat').style.display = isOnline ? '' : 'none';
+  document.getElementById('online-chat').style.display = isOnline ? 'flex' : 'none';
+  updateChatAvailability();
 
   showScreen('game');
   renderBoard();
@@ -240,6 +296,7 @@ function renderBoard() {
       sq.className = 'square ' + ((r + c) % 2 === 0 ? 'light' : 'dark');
       sq.dataset.r = r;
       sq.dataset.c = c;
+      addCoordinateLabels(sq, r, c, ri, ci);
 
       if (selectedSquare?.r === r && selectedSquare?.c === c)
         sq.classList.add('selected');
@@ -247,8 +304,14 @@ function renderBoard() {
         sq.classList.add('valid-move');
       if (game.moveHistory.length > 0) {
         const last = game.moveHistory[game.moveHistory.length - 1];
-        if ((last.fr === r && last.fc === c) || (last.toR === r && last.toC === c))
+        if (last.fr === r && last.fc === c) {
           sq.classList.add('last-move');
+          sq.classList.add('last-move-from');
+        }
+        if (last.toR === r && last.toC === c) {
+          sq.classList.add('last-move');
+          sq.classList.add('last-move-to');
+        }
       }
       if (game.status === 'check' || game.status === 'checkmate') {
         const king = game.findKing(game.currentTurn);
@@ -271,6 +334,45 @@ function renderBoard() {
       boardEl.appendChild(sq);
     }
   }
+
+  renderLastMoveArrow(boardEl, flipped);
+}
+
+function addCoordinateLabels(squareEl, r, c, displayRow, displayCol) {
+  if (displayCol === 0) {
+    const rank = document.createElement('span');
+    rank.className = 'coord-label coord-rank';
+    rank.textContent = String(8 - r);
+    squareEl.appendChild(rank);
+  }
+  if (displayRow === 7) {
+    const file = document.createElement('span');
+    file.className = 'coord-label coord-file';
+    file.textContent = 'abcdefgh'[c];
+    squareEl.appendChild(file);
+  }
+}
+
+function renderLastMoveArrow(boardEl, flipped) {
+  if (!game?.moveHistory.length) return;
+
+  const last = game.moveHistory[game.moveHistory.length - 1];
+  const fromCol = flipped ? 7 - last.fc : last.fc;
+  const fromRow = flipped ? 7 - last.fr : last.fr;
+  const toCol = flipped ? 7 - last.toC : last.toC;
+  const toRow = flipped ? 7 - last.toR : last.toR;
+  const dx = toCol - fromCol;
+  const dy = toRow - fromRow;
+  const length = Math.hypot(dx, dy);
+  if (!length) return;
+
+  const arrow = document.createElement('div');
+  arrow.className = 'last-move-arrow';
+  arrow.style.left = `${fromCol * 12.5 + 6.25}%`;
+  arrow.style.top = `${fromRow * 12.5 + 6.25}%`;
+  arrow.style.width = `${length * 12.5}%`;
+  arrow.style.transform = `translateY(-50%) rotate(${Math.atan2(dy, dx)}rad)`;
+  boardEl.appendChild(arrow);
 }
 
 // ─── Input handling ───────────────────────────────────────────────────────────
@@ -357,10 +459,11 @@ function executeMove(fr, fc, toR, toC, promType) {
 
   addMoveToList(notation, game.currentTurn === 'white' ? 'black' : 'white');
   updateCapturedPieces();
-  updateStatus();
+  updateStatus({ notation, actor: getMoveActor(movingColor, true) });
   renderBoard();
   showMoveHint(fr, fc, toR, toC);
   suggestedMoveBeforePlay = null;
+  if (gameMode === 'online') window.agsPublishLiveMove?.()
 
   if (game.status === 'checkmate' || game.status === 'stalemate') {
     setTimeout(showGameOver, 600);
@@ -382,8 +485,9 @@ function applyOpponentMove(fr, fc, toR, toC, promType = 'queen') {
   validMoves = [];
   addMoveToList(notation, game.currentTurn === 'white' ? 'black' : 'white');
   updateCapturedPieces();
-  updateStatus();
+  updateStatus({ notation, actor: getMoveActor(game.currentTurn === 'white' ? 'black' : 'white', false) });
   renderBoard();
+  window.agsPublishLiveMove?.()
 
   if (game.status === 'checkmate' || game.status === 'stalemate')
     setTimeout(showGameOver, 600);
@@ -514,21 +618,50 @@ function showHint() {
 
 // ─── UI updates ───────────────────────────────────────────────────────────────
 
-function updateStatus() {
-  const el = document.getElementById('turn-indicator');
+function getMoveActor(moveColor, isLocalMove) {
+  if (gameMode === 'computer') return isLocalMove ? 'You' : 'Computer';
+  if (gameMode === 'online') return isLocalMove ? 'You' : 'Opponent';
+  return moveColor === 'white' ? 'White' : 'Black';
+}
+
+function getTurnStatusText() {
   if (game.status === 'checkmate') {
-    el.textContent = `${game.winner === 'white' ? 'White' : 'Black'} wins by checkmate!`;
-  } else if (game.status === 'stalemate') {
-    el.textContent = 'Stalemate — Draw!';
-  } else if (game.status === 'check') {
-    el.textContent = `${game.currentTurn === 'white' ? 'White' : 'Black'} is in check!`;
-  } else if (gameMode === 'computer' && !aiThinking) {
-    el.textContent = game.currentTurn === playerColor ? 'Your turn' : "Computer's turn";
-  } else if (gameMode === 'online') {
-    el.textContent = game.currentTurn === playerColor ? 'Your turn' : "Opponent's turn";
-  } else {
-    el.textContent = (game.currentTurn === 'white' ? 'White' : 'Black') + "'s turn";
+    return `${game.winner === 'white' ? 'White' : 'Black'} wins by checkmate!`;
   }
+  if (game.status === 'stalemate') return 'Stalemate — Draw!';
+  if (game.status === 'check') {
+    return `${game.currentTurn === 'white' ? 'White' : 'Black'} is in check!`;
+  }
+  if (gameMode === 'computer' && !aiThinking) {
+    return game.currentTurn === playerColor ? 'Your turn' : "Computer's turn";
+  }
+  if (gameMode === 'online') {
+    return game.currentTurn === playerColor ? 'Your turn' : "Opponent's turn";
+  }
+  return (game.currentTurn === 'white' ? 'White' : 'Black') + "'s turn";
+}
+
+function updateStatus(lastMove = null) {
+  const el = document.getElementById('turn-indicator');
+  updateActivePlayerCards();
+  const stateText = getTurnStatusText();
+  el.textContent = lastMove?.notation
+    ? `${lastMove.actor} played ${lastMove.notation} · ${stateText}`
+    : stateText;
+}
+
+function updateActivePlayerCards() {
+  const whiteCard = document.getElementById('white-player-card');
+  const blackCard = document.getElementById('black-player-card');
+  if (!whiteCard || !blackCard || !game) return;
+
+  const active = game.status === 'playing' || game.status === 'check';
+  whiteCard.classList.toggle('active-player', active && game.currentTurn === 'white');
+  blackCard.classList.toggle('active-player', active && game.currentTurn === 'black');
+  whiteCard.classList.toggle('waiting-player', active && game.currentTurn !== 'white');
+  blackCard.classList.toggle('waiting-player', active && game.currentTurn !== 'black');
+  whiteCard.dataset.turnLabel = active && game.currentTurn === 'white' ? 'To move' : '';
+  blackCard.dataset.turnLabel = active && game.currentTurn === 'black' ? 'To move' : '';
 }
 
 function updateCapturedPieces() {
@@ -553,19 +686,30 @@ function updateCapturedPieces() {
 function addMoveToList(notation, color) {
   const listEl = document.getElementById('move-list');
   const moveNum = Math.ceil(game.moveHistory.length / 2);
+  listEl.querySelectorAll('.latest-move, .latest-ply').forEach(el => {
+    el.classList.remove('latest-move', 'latest-ply');
+  });
+
+  let latestEl = null;
   if (color === 'white') {
     const row = document.createElement('div');
-    row.className = 'move-row';
+    row.className = 'move-row latest-move';
     row.id = `move-row-${moveNum}`;
     row.innerHTML = `<span class="move-num">${moveNum}.</span>
-      <span class="move-white">${notation}</span><span class="move-black"></span>`;
+      <span class="move-white latest-ply">${notation}</span><span class="move-black"></span>`;
     listEl.appendChild(row);
+    latestEl = row;
   } else {
-    document.getElementById(`move-row-${moveNum}`)?.querySelector('.move-black')
-      ?.textContent !== undefined &&
-      (document.getElementById(`move-row-${moveNum}`).querySelector('.move-black').textContent = notation);
+    const row = document.getElementById(`move-row-${moveNum}`);
+    const blackMove = row?.querySelector('.move-black');
+    if (row && blackMove) {
+      row.classList.add('latest-move');
+      blackMove.classList.add('latest-ply');
+      blackMove.textContent = notation;
+      latestEl = row;
+    }
   }
-  listEl.scrollTop = listEl.scrollHeight;
+  latestEl?.scrollIntoView({ block: 'nearest' });
 }
 
 // ─── Promotion modal ──────────────────────────────────────────────────────────
@@ -594,8 +738,14 @@ function showPromotionModal(color) {
 // ─── Game over modal ──────────────────────────────────────────────────────────
 
 function showGameOver() {
+  recordMatchHistoryOnce();
+  window.agsClearLiveMatch?.()
+
   if (game.status === 'checkmate' && game.winner === playerColor) {
     recordWin();
+    if (typeof window.agsIncrementWin === 'function') window.agsIncrementWin();
+  } else if (game.status === 'checkmate' && game.winner && game.winner !== playerColor) {
+    if (typeof window.agsIncrementLoss === 'function') window.agsIncrementLoss();
   }
 
   const title = document.getElementById('game-over-title');
@@ -620,25 +770,117 @@ function showGameOver() {
   rematchBtn.style.display = isOnline ? '' : 'none';
   rematchBtn.textContent = 'Rematch';
   rematchBtn.disabled = false;
+  setRematchMessage('');
+
+  const addFriendBtn = document.getElementById('btn-add-match-friend');
+  if (addFriendBtn) addFriendBtn.style.display = isOnline && currentOpponent?.userId ? '' : 'none';
+  const matchFriendMessage = document.getElementById('match-friend-message');
+  if (matchFriendMessage) matchFriendMessage.textContent = '';
+  if (isOnline && currentOpponent?.userId && typeof window.agsUpdateMatchFriendAction === 'function') {
+    window.agsUpdateMatchFriendAction(currentOpponent);
+  }
 
   document.getElementById('game-over-modal').style.display = 'flex';
+  startGameOverCountdown();
 }
 
-function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+function recordMatchHistoryOnce() {
+  if (matchHistoryRecorded || typeof window.agsRecordMatchHistory !== 'function') return;
+  matchHistoryRecorded = true;
+
+  const endedAt = new Date();
+  const startedAt = matchStartedAt || endedAt;
+  const result = game.status === 'stalemate'
+    ? 'draw'
+    : game.winner === playerColor
+      ? 'win'
+      : 'loss';
+
+  const opponentName = gameMode === 'computer'
+    ? 'Computer AI'
+    : currentOpponent?.name || 'Opponent';
+  const opponentUserId = gameMode === 'online'
+    ? currentOpponent?.userId || ''
+    : '';
+
+  window.agsRecordMatchHistory({
+    id: 'match-' + endedAt.getTime() + '-' + Math.random().toString(36).slice(2, 8),
+    mode: gameMode,
+    opponentName,
+    opponentUserId,
+    result,
+    startedAt: startedAt.toISOString(),
+    endedAt: endedAt.toISOString(),
+    durationMs: endedAt.getTime() - startedAt.getTime(),
+    moves: game.moveHistory.map(m => ({ fr: m.fr, fc: m.fc, toR: m.toR, toC: m.toC, promType: m.promType || 'queen' })),
+    whiteName: document.getElementById('white-player-name')?.textContent || 'White',
+    blackName: document.getElementById('black-player-name')?.textContent || 'Black',
+  });
+}
+
+function closeModal(id) {
+  if (id === 'game-over-modal') stopGameOverCountdown();
+  document.getElementById(id).style.display = 'none';
+}
+
+function startGameOverCountdown() {
+  stopGameOverCountdown();
+  gameOverCountdownRemaining = 10;
+  updateGameOverCountdown();
+  gameOverCountdownTimer = setInterval(() => {
+    gameOverCountdownRemaining--;
+    updateGameOverCountdown();
+    if (gameOverCountdownRemaining <= 0) {
+      stopGameOverCountdown();
+      endOnlineAndGoHome();
+    }
+  }, 1000);
+}
+
+function stopGameOverCountdown() {
+  if (gameOverCountdownTimer) {
+    clearInterval(gameOverCountdownTimer);
+    gameOverCountdownTimer = null;
+  }
+  const el = document.getElementById('game-over-countdown');
+  if (el) el.textContent = '';
+}
+
+function updateGameOverCountdown() {
+  const el = document.getElementById('game-over-countdown');
+  if (!el) return;
+  const seconds = Math.max(0, gameOverCountdownRemaining);
+  el.textContent = `Returning to Main Menu in ${seconds}s`;
+}
 
 // ─── Rematch ──────────────────────────────────────────────────────────────────
 
+function setRematchMessage(text, tone = '') {
+  const el = document.getElementById('rematch-message');
+  if (!el) return;
+  el.className = `rematch-message${tone ? ' ' + tone : ''}`;
+  el.textContent = text || '';
+}
+
 function requestRematch() {
+  if (document.getElementById('rematch-notification').style.display === 'flex') {
+    acceptRematch();
+    return;
+  }
   if (!peerConn?.open || rematchPending) return;
+  stopGameOverCountdown();
   rematchPending = true;
   const btn = document.getElementById('btn-rematch');
   btn.textContent = 'Waiting for opponent…';
   btn.disabled = true;
+  setRematchMessage('Rematch request sent. Waiting for your opponent...', 'pending');
   peerConn.send({ type: 'rematch_request' });
 }
 
 function acceptRematch() {
+  stopGameOverCountdown();
   document.getElementById('rematch-notification').style.display = 'none';
+  setRematchMessage('Rematch accepted. Starting...', 'success');
   if (connRole === 'host') {
     sendRematchStart();
   } else {
@@ -651,6 +893,8 @@ function acceptRematch() {
 function declineRematch() {
   document.getElementById('rematch-notification').style.display = 'none';
   if (peerConn?.open) peerConn.send({ type: 'rematch_decline' });
+  setRematchMessage('You declined the rematch request.', 'muted');
+  if (document.getElementById('game-over-modal').style.display === 'flex') startGameOverCountdown();
 }
 
 function sendRematchStart() {
@@ -663,6 +907,7 @@ function sendRematchStart() {
 
 function startRematch() {
   rematchPending = false;
+  setRematchMessage('');
   closeModal('game-over-modal');
   document.getElementById('rematch-notification').style.display = 'none';
   moveLog   = [];
@@ -671,6 +916,7 @@ function startRematch() {
 }
 
 function endOnlineAndGoHome() {
+  closeModal('game-over-modal');
   destroyPeer();
   showScreen('home');
 }
@@ -689,9 +935,12 @@ function destroyPeer() {
   moveQueue = [];
   moveLog   = [];
   remotePeerId = null;
+  setCurrentOpponent('', '');
   if (peerConn) { try { peerConn.close(); } catch {} peerConn = null; }
   if (peer)     { try { peer.destroy();   } catch {} peer = null; }
   currentInviteLink = '';
+  resetChatState();
+  updateChatAvailability();
   hideConnBanner();
 }
 
@@ -736,6 +985,83 @@ function sendOrQueue(msg) {
   moveQueue.push(msg);
 }
 
+function getCurrentPlayerDisplayName() {
+  return document.getElementById('ags-signedin-name')?.textContent || playerName || 'You';
+}
+
+function resetChatState() {
+  chatMessages = [];
+  const messagesEl = document.getElementById('online-chat-messages');
+  const inputEl = document.getElementById('online-chat-input');
+  if (messagesEl) {
+    messagesEl.innerHTML = '<div class="chat-empty">Chat is available while playing another person online.</div>';
+  }
+  if (inputEl) inputEl.value = '';
+}
+
+function updateChatAvailability() {
+  const statusEl = document.getElementById('online-chat-status');
+  const inputEl = document.getElementById('online-chat-input');
+  const sendBtn = document.getElementById('btn-chat-send');
+  const isOnline = gameMode === 'online';
+  const connected = !!peerConn?.open && !connectionLost;
+  const enabled = isOnline && connected;
+
+  if (statusEl) statusEl.textContent = enabled ? 'Connected' : 'Reconnecting…';
+  if (inputEl) inputEl.disabled = !enabled;
+  if (sendBtn) sendBtn.disabled = !enabled;
+}
+
+function renderChatMessages() {
+  const messagesEl = document.getElementById('online-chat-messages');
+  if (!messagesEl) return;
+
+  if (chatMessages.length === 0) {
+    messagesEl.innerHTML = '<div class="chat-empty">Chat is available while playing another person online.</div>';
+    return;
+  }
+
+  messagesEl.innerHTML = chatMessages.map(message => `
+    <div class="chat-message ${message.side}">
+      <span class="chat-message-meta">${escapeHtml(message.name)}</span>
+      <div class="chat-message-body">${escapeHtml(message.text)}</div>
+    </div>
+  `).join('');
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function appendChatMessage(side, name, text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return;
+  chatMessages.push({ side, name: name || (side === 'self' ? 'You' : 'Opponent'), text: trimmed });
+  if (chatMessages.length > 100) chatMessages = chatMessages.slice(-100);
+  renderChatMessages();
+}
+
+function sendChatMessage() {
+  if (gameMode !== 'online' || !peerConn?.open || connectionLost) return;
+  const inputEl = document.getElementById('online-chat-input');
+  if (!inputEl) return;
+
+  const text = inputEl.value.trim();
+  if (!text) return;
+
+  const name = getCurrentPlayerDisplayName();
+  appendChatMessage('self', name, text);
+  sendOrQueue({ type: 'chat', name, text });
+  inputEl.value = '';
+  inputEl.focus();
+}
+
+function handleChatInputKeydown(event) {
+  if (event.key !== 'Enter' || event.shiftKey) return;
+  event.preventDefault();
+  sendChatMessage();
+}
+
+window.sendChatMessage = sendChatMessage;
+window.handleChatInputKeydown = handleChatInputKeydown;
+
 function flushMoveQueue(conn) {
   while (moveQueue.length > 0 && conn?.open) {
     try { conn.send(moveQueue.shift()); } catch { break; }
@@ -743,39 +1069,17 @@ function flushMoveQueue(conn) {
 }
 
 function handleConnectionLost() {
-  if (reconnectCount >= MAX_RECONNECTS) {
-    showConnBanner('Connection lost. Please start a new game.', 'error');
-    connectionLost = true;
-    return;
-  }
-
-  if (peerConn) { try { peerConn.close(); } catch {} peerConn = null; }
-  stopHeartbeat();
+  if (connectionLost) return;  // already handling
   connectionLost = true;
-
-  if (connRole === 'joiner') {
-    showConnBanner('Connection lost — reconnecting…', 'warning');
-    reconnectCount++;
-    reconnectTimer = setTimeout(attemptReconnect, reconnectCount * 2000);
-  } else {
-    showConnBanner('Opponent disconnected — waiting for them to reconnect…', 'warning');
-  }
-}
-
-function attemptReconnect() {
-  if (!peer || !remotePeerId) return;
-  try {
-    const conn = peer.connect(remotePeerId, { reliable: true });
-    peerConn = conn;
-    setupPeerConnection(conn, 'joiner');
-  } catch {
-    if (reconnectCount < MAX_RECONNECTS) {
-      reconnectCount++;
-      reconnectTimer = setTimeout(attemptReconnect, reconnectCount * 2000);
-    } else {
-      showConnBanner('Could not reconnect. Please start a new game.', 'error');
-    }
-  }
+  stopHeartbeat();
+  if (peerConn) { try { peerConn.close(); } catch {} peerConn = null; }
+  updateChatAvailability();
+  showConnBanner('Opponent disconnected — returning to menu…', 'error');
+  setTimeout(() => {
+    closeModal('game-over-modal');
+    destroyPeer();
+    showScreen('home');
+  }, 2500);
 }
 
 function setupCallHandler() {
@@ -786,7 +1090,7 @@ function setupCallHandler() {
   });
 }
 
-function createOnlineRoom() {
+function createOnlineRoom(options = {}) {
   destroyPeer();
   showWaitingScreen('host');
 
@@ -794,11 +1098,17 @@ function createOnlineRoom() {
   setupCallHandler();
 
   peer.on('open', id => {
+    if (options.friendInvite) {
+      sendFriendMatchInvite(options.friendInvite, id);
+    }
+
     const showLink = base => {
       currentInviteLink = `${base}?peer=${id}`;
       document.getElementById('invite-link-text').textContent = currentInviteLink;
       document.getElementById('invite-link-section').style.display = 'block';
-      document.getElementById('waiting-sub').textContent = 'Waiting for your friend to join…';
+      document.getElementById('waiting-sub').textContent = options.friendInvite
+        ? `Invite sent to ${options.friendInvite.displayName || 'your friend'}. Waiting for them to accept…`
+        : 'Waiting for your friend to join…';
       document.getElementById('waiting-spinner').style.display = 'block';
     };
 
@@ -837,6 +1147,65 @@ function createOnlineRoom() {
   });
 }
 
+function startFriendMatchInvite(friend) {
+  if (!friend?.userId) return;
+  if (!window.agsCurrentUserId || typeof window.agsSendMatchInvite !== 'function') {
+    alert('Sign in before inviting a friend.');
+    return;
+  }
+
+  gameMode = 'online';
+  playerColor = 'white';
+  setCurrentOpponent(friend.displayName || 'Friend', friend.userId);
+  createOnlineRoom({ friendInvite: friend });
+}
+
+async function sendFriendMatchInvite(friend, peerId) {
+  const inviteId = 'invite-' + Math.random().toString(36).slice(2);
+  const result = await window.agsSendMatchInvite(friend.userId, {
+    inviteId,
+    peerId,
+    sentAt: new Date().toISOString(),
+  });
+
+  const sub = document.getElementById('waiting-sub');
+  if (!result?.ok) {
+    if (sub) sub.textContent = result?.error || 'Could not send the match invite. You can still share the link below.';
+    return;
+  }
+  if (sub) sub.textContent = `Invite sent to ${friend.displayName || 'your friend'}. Waiting for them to accept…`;
+}
+
+function showFriendMatchInvite(invite) {
+  pendingFriendMatchInvite = invite;
+  const fromName = invite.fromName || 'A friend';
+  const nameEl = document.getElementById('friend-match-invite-name');
+  const detailEl = document.getElementById('friend-match-invite-detail');
+  if (nameEl) nameEl.textContent = `${fromName} invited you to play`;
+  if (detailEl) detailEl.textContent = 'Accept to join the match now.';
+  document.getElementById('friend-match-invite-notification').style.display = 'flex';
+}
+
+function acceptFriendMatchInvite() {
+  const invite = pendingFriendMatchInvite;
+  pendingFriendMatchInvite = null;
+  document.getElementById('friend-match-invite-notification').style.display = 'none';
+  if (!invite?.peerId) return;
+  gameMode = 'online';
+  setCurrentOpponent(invite.fromName || 'Friend', invite.fromUserId || '');
+  joinOnlineRoom(invite.peerId);
+}
+
+function declineFriendMatchInvite() {
+  pendingFriendMatchInvite = null;
+  document.getElementById('friend-match-invite-notification').style.display = 'none';
+}
+
+window.startFriendMatchInvite = startFriendMatchInvite;
+window.showFriendMatchInvite = showFriendMatchInvite;
+window.acceptFriendMatchInvite = acceptFriendMatchInvite;
+window.declineFriendMatchInvite = declineFriendMatchInvite;
+
 function joinOnlineRoom(hostPeerId) {
   destroyPeer();
   showWaitingScreen('joiner');
@@ -873,20 +1242,27 @@ function setupPeerConnection(conn, role) {
       if (game) {
         // Reconnect — joiner will send reconnect_req, then we send resync
         connectionLost = false;
+        updateChatAvailability();
         hideConnBanner();
       } else {
         const joinerColor = playerColor === 'white' ? 'black' : 'white';
-        conn.send({ type: 'game_start', yourColor: joinerColor });
+        const myName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'Opponent';
+        const myId   = window.agsCurrentUserId || '';
+        conn.send({ type: 'game_start', yourColor: joinerColor, opponentName: myName, opponentId: myId });
         startGame();
       }
     } else {
       connectionLost = false;   // unlock the board as soon as the connection re-opens
+      updateChatAvailability();
       if (game) {
         // Reconnect — signal host to send resync
         try { conn.send({ type: 'reconnect_req' }); } catch {}
       }
       // First connection: wait for game_start from host
     }
+
+    flushMoveQueue(conn);
+    updateChatAvailability();
   });
 
   conn.on('data', data => {
@@ -901,14 +1277,35 @@ function setupPeerConnection(conn, role) {
 
     if (data.type === 'game_start') {
       playerColor = data.yourColor;
+      setCurrentOpponent(data.opponentName || 'Opponent', data.opponentId || '');
+      if (data.opponentId && data.opponentName) {
+        if (typeof window.cacheDisplayName === 'function') window.cacheDisplayName(data.opponentId, data.opponentName);
+      }
       startGame();
+      // Show host's identity as our opponent
+      const oppColor = data.yourColor === 'white' ? 'black' : 'white';
+      setPlayerInfo(oppColor, data.opponentName || 'Opponent', data.opponentId || '');
+      // Send back our own identity
+      const myName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'Opponent';
+      const myId   = window.agsCurrentUserId || '';
+      try { conn.send({ type: 'player_info', name: myName, userId: myId }); } catch {}
+    } else if (data.type === 'player_info') {
+      setCurrentOpponent(data.name || 'Opponent', data.userId || '');
+      if (data.userId && data.name) {
+        if (typeof window.cacheDisplayName === 'function') window.cacheDisplayName(data.userId, data.name);
+      }
+      const oppColor = playerColor === 'white' ? 'black' : 'white';
+      setPlayerInfo(oppColor, data.name || 'Opponent', data.userId || '');
+    } else if (data.type === 'chat') {
+      appendChatMessage('opponent', data.name || 'Opponent', data.text || '');
     } else if (data.type === 'move') {
       applyOpponentMove(data.fr, data.fc, data.toR, data.toC, data.promType || 'queen');
     } else if (data.type === 'reconnect_req') {
       // Joiner reconnected — send full game state so they can resync
-      try { conn.send({ type: 'resync', moves: moveLog }); } catch {}
+      try { conn.send({ type: 'resync', moves: moveLog, chatMessages }); } catch {}
       connectionLost = false;
       reconnectCount = 0;
+      updateChatAvailability();
       hideConnBanner();
       showConnBanner('Opponent reconnected!', 'success');
     } else if (data.type === 'resync') {
@@ -920,6 +1317,7 @@ function setupPeerConnection(conn, role) {
       document.getElementById('move-list').innerHTML = '';
       document.getElementById('captured-by-white').innerHTML = '';
       document.getElementById('captured-by-black').innerHTML = '';
+      chatMessages = Array.isArray(data.chatMessages) ? data.chatMessages.slice(-100) : [];
       for (const m of data.moves) {
         const notation = game.getMoveNotation(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen');
         game.makeMove(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen');
@@ -928,15 +1326,32 @@ function setupPeerConnection(conn, role) {
       updateCapturedPieces();
       updateStatus();
       renderBoard();
+      renderChatMessages();
+      updateChatAvailability();
       showConnBanner('Reconnected!', 'success');
     } else if (data.type === 'resign') {
-      alert('Your opponent resigned. You win!');
-      showGameOver();
+      showConnBanner('Opponent resigned — returning to menu…', 'success');
+      connectionLost = true;
+      stopHeartbeat();
+      updateChatAvailability();
+      setTimeout(() => {
+        closeModal('game-over-modal');
+        destroyPeer();
+        showScreen('home');
+      }, 2500);
     } else if (data.type === 'rematch_request') {
       if (rematchPending && connRole === 'host') {
         // Both clicked Rematch simultaneously — host takes initiative
         sendRematchStart();
+      } else if (rematchPending && connRole === 'joiner') {
+        // Joiner already requested a rematch; acknowledge host's matching request
+        try { conn.send({ type: 'rematch_accept' }); } catch {}
+        setRematchMessage('Both players requested a rematch. Starting...', 'success');
+        closeModal('game-over-modal');
+        document.getElementById('rematch-notification').style.display = 'none';
       } else if (!rematchPending) {
+        stopGameOverCountdown();
+        setRematchMessage('Your opponent requested a rematch. Choose Rematch to accept.', 'pending');
         document.getElementById('rematch-notification').style.display = 'flex';
       }
       // If rematchPending && joiner, just wait — host will send rematch_start
@@ -947,6 +1362,8 @@ function setupPeerConnection(conn, role) {
       rematchPending = false;
       const btn = document.getElementById('btn-rematch');
       if (btn) { btn.textContent = 'Opponent declined'; btn.disabled = true; }
+      setRematchMessage('Your opponent declined the rematch request.', 'muted');
+      if (document.getElementById('game-over-modal').style.display === 'flex') startGameOverCountdown();
     } else if (data.type === 'rematch_start') {
       playerColor = data.yourColor;
       startRematch();
@@ -973,24 +1390,107 @@ function setupPeerConnection(conn, role) {
 
 function showWaitingScreen(role) {
   showScreen('waiting');
-  if (role === 'host') {
-    document.getElementById('waiting-icon').textContent = '🎮';
-    document.getElementById('waiting-title').textContent = 'Invite your friend';
-    document.getElementById('waiting-sub').textContent = 'Share the link below. The game starts when they open it.';
-    document.getElementById('invite-link-section').style.display = 'none'; // shown after peer opens
-    document.getElementById('waiting-spinner').style.display = 'block';
-  } else {
-    document.getElementById('waiting-icon').textContent = '⏳';
-    document.getElementById('waiting-title').textContent = 'Joining game…';
-    document.getElementById('waiting-sub').textContent = 'Connecting to your friend. Please wait.';
-    document.getElementById('invite-link-section').style.display = 'none';
-    document.getElementById('waiting-spinner').style.display = 'block';
-  }
+  const messages = {
+    'host':               ['🎮', 'Invite your friend',      'Share the link below. The game starts when they open it.'],
+    'joiner':             ['⏳', 'Joining game…',           'Connecting to your friend. Please wait.'],
+    'matchmaking':        ['🔍', 'Finding opponent…',       'Searching for a random opponent. This may take a moment.'],
+    'matchmaking-host':   ['⚡', 'Match found!',            'Setting up the connection — you play as White.'],
+    'matchmaking-joiner': ['⚡', 'Match found!',            'Connecting to opponent — you play as Black.'],
+  };
+  const [icon, title, sub] = messages[role] || messages['joiner'];
+  document.getElementById('waiting-icon').textContent = icon;
+  document.getElementById('waiting-title').textContent = title;
+  document.getElementById('waiting-sub').textContent = sub;
+  document.getElementById('invite-link-section').style.display = 'none';
+  document.getElementById('waiting-spinner').style.display = 'block';
 }
 
 function cancelOnlineGame() {
   destroyPeer();
   showScreen('home');
+}
+
+function cancelWaiting() {
+  if (matchmakingActive) {
+    matchmakingActive = false;
+    if (typeof window.agsCancelMatchmaking === 'function') {
+      window.agsCancelMatchmaking();
+    }
+    destroyPeer();
+    showScreen('home');
+  } else {
+    cancelOnlineGame();
+  }
+}
+
+function startRandomMatchmaking() {
+  if (typeof window.agsStartMatchmaking !== 'function') {
+    alert('Sign in to play against random players.');
+    return;
+  }
+  matchmakingActive = true;
+  gameMode = 'online';
+  showWaitingScreen('matchmaking');
+  window.agsStartMatchmaking(
+    function onFound(memberUserIds) {
+      if (!matchmakingActive) return;
+      const sorted = memberUserIds.slice().sort();
+      const myId   = window.agsCurrentUserId;
+      const isHost = myId === sorted[0];
+      const hostId = sorted[0];
+      const peerId = hostId.replace(/-/g, '');
+
+      playerColor = isHost ? 'white' : 'black';
+      matchmakingActive = false;
+      showWaitingScreen(isHost ? 'matchmaking-host' : 'matchmaking-joiner');
+
+      destroyPeer();
+      peer = new Peer(isHost ? peerId : undefined);
+      setupCallHandler();
+
+      if (isHost) {
+        peer.on('open', () => {
+          peer.on('connection', conn => {
+            if (peerConn) return;
+            peerConn = conn;
+            setupPeerConnection(conn, 'host');
+          });
+        });
+      } else {
+        peer.on('open', () => {
+          setTimeout(() => {
+            const conn = peer.connect(peerId, { reliable: true });
+            peerConn = conn;
+            setupPeerConnection(conn, 'joiner');
+          }, 1500);
+        });
+      }
+
+      peer.on('error', err => {
+        if (game && gameMode === 'online') {
+          handleConnectionLost();
+        } else {
+          alert('P2P connection failed: ' + err.message + '\nPlease try again.');
+          destroyPeer();
+          showScreen('home');
+        }
+      });
+    },
+    function onTimeout() {
+      if (!matchmakingActive) return;
+      matchmakingActive = false;
+      destroyPeer();
+      showScreen('home');
+      alert('No opponent found. Try again in a moment.');
+    },
+    function onError(msg) {
+      if (!matchmakingActive) return;
+      matchmakingActive = false;
+      destroyPeer();
+      showScreen('home');
+      alert(msg);
+    }
+  );
 }
 
 // ─── Invite link actions ──────────────────────────────────────────────────────
@@ -1286,7 +1786,7 @@ function renderLeaderboard() {
 }
 
 function escapeHtml(str) {
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
             .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
@@ -1316,6 +1816,23 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ─── Auto-join from URL ───────────────────────────────────────────────────────
+
+window.getSpectatorMatchData = function() {
+  if (!game || gameMode !== 'online') return null
+  const myName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'Player'
+  const myUserId = window.agsCurrentUserId || ''
+  return {
+    active: game.status === 'playing' || game.status === 'check',
+    moves: game.moveHistory.map(m => ({ fr: m.fr, fc: m.fc, toR: m.toR, toC: m.toC, promType: m.promType })),
+    whiteName: playerColor === 'white' ? myName : (currentOpponent?.name || 'Opponent'),
+    blackName: playerColor === 'black' ? myName : (currentOpponent?.name || 'Opponent'),
+    whiteUserId: playerColor === 'white' ? myUserId : (currentOpponent?.userId || ''),
+    blackUserId: playerColor === 'black' ? myUserId : (currentOpponent?.userId || ''),
+    startedAt: matchStartedAt?.toISOString() || new Date().toISOString(),
+    status: game.status,
+    winner: game.winner || null,
+  }
+}
 
 window.addEventListener('beforeunload', () => {
   saveLeaderboard();
