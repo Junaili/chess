@@ -812,8 +812,11 @@ function updateAuthUI(loggedIn, name, userId) {
   const nameInput = document.getElementById('player-name-input')
   const signInBtn = document.getElementById('ags-signin-btn')
   const authActions = document.getElementById('ags-auth-actions')
+  const authOrDivider = document.getElementById('ags-auth-or-divider')
+  const guestDivider = document.getElementById('ags-guest-divider')
   const signedInInfo = document.getElementById('ags-signedin-info')
   const signedInName = document.getElementById('ags-signedin-name')
+  const lbCta = document.getElementById('lb-signin-cta')
 
   if (!nameInput || !signInBtn || !signedInInfo) return
 
@@ -821,12 +824,18 @@ function updateAuthUI(loggedIn, name, userId) {
     nameInput.style.display = 'none'
     signInBtn.style.display = 'none'
     if (authActions) authActions.style.display = 'none'
+    if (authOrDivider) authOrDivider.style.display = 'none'
+    if (guestDivider) guestDivider.style.display = 'none'
+    if (lbCta) lbCta.style.display = 'none'
     signedInInfo.style.display = 'flex'
     if (signedInName) signedInName.textContent = name || 'Player'
   } else {
     nameInput.style.display = ''
     signInBtn.style.display = ''
     if (authActions) authActions.style.display = 'flex'
+    if (authOrDivider) authOrDivider.style.display = ''
+    if (guestDivider) guestDivider.style.display = ''
+    if (lbCta) lbCta.style.display = ''
     signedInInfo.style.display = 'none'
     const randomBtn = document.getElementById('btn-play-random')
     if (randomBtn) randomBtn.style.display = 'none'

@@ -305,14 +305,14 @@ input[type="checkbox"] {
   line-height: 0.92;
   font-weight: 700;
   letter-spacing: -0.03em;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   color: #fff7ee;
   text-shadow: 0 6px 28px rgba(0, 0, 0, 0.3);
 }
 
 .home-subtitle {
   width: min(700px, 100%);
-  margin: 0 auto 18px;
+  margin: 0 auto 12px;
   text-align: center;
   color: var(--text-dim);
   font-size: 1.02rem;
@@ -324,7 +324,7 @@ input[type="checkbox"] {
   flex-wrap: wrap;
   justify-content: center;
   gap: 10px;
-  margin-bottom: 30px;
+  margin-bottom: 22px;
 }
 
 .home-highlights span {
@@ -389,11 +389,47 @@ input[type="checkbox"] {
 
 .auth-actions {
   display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
 .auth-actions .btn {
+  width: 100%;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
   flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.auth-divider span {
+  color: var(--text-soft);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.btn-register {
+  color: var(--accent-2);
+  background: rgba(240, 195, 122, 0.1);
+  border: 1.5px solid rgba(240, 195, 122, 0.36);
+}
+
+.btn-register:hover {
+  background: rgba(240, 195, 122, 0.18);
+  border-color: rgba(240, 195, 122, 0.58);
+  box-shadow: 0 10px 24px rgba(194, 106, 61, 0.16);
 }
 
 .btn-google {
@@ -1052,6 +1088,26 @@ input[type="checkbox"] {
   color: var(--text-soft);
   line-height: 1.7;
   font-size: 0.86rem;
+}
+
+.lb-signin-cta {
+  margin-top: 14px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  background: rgba(240, 195, 122, 0.07);
+  border: 1px solid rgba(240, 195, 122, 0.16);
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.lb-signin-cta:hover {
+  background: rgba(240, 195, 122, 0.13);
+  border-color: rgba(240, 195, 122, 0.28);
+  color: var(--accent-2);
 }
 
 /* ─── Setup Screens ───────────────────────────────────────────────────────── */
