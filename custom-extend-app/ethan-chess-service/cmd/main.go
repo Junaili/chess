@@ -8,8 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
-	"github.com/junaili/ethan-chess/pkg/handler"
-	"github.com/junaili/ethan-chess/pkg/middleware"
+	"github.com/junaili/ethan-chess-service/pkg/handler"
+	"github.com/junaili/ethan-chess-service/pkg/middleware"
 )
 
 func main() {

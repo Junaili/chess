@@ -1,4 +1,4 @@
-module github.com/junaili/ethan-chess
+module github.com/junaili/ethan-chess-service
 
 go 1.20
 
