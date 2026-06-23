@@ -155,20 +155,24 @@ function iamUsersApi() {
 export async function lookupUserByEmail(email) {
   if (!email?.includes('@')) return { ok: false, error: 'Invalid email address.' }
   try {
-    const res = await iamUsersApi().getUsers_v3({ query: email })
-    const users = res.data?.data || []
-    if (!users.length) return { ok: true, found: false }
-    const exact = users.find(u => u.emailAddress?.toLowerCase() === email.toLowerCase())
-    const user = exact || users[0]
+    const extendBase = import.meta.env.VITE_EXTEND_EMAIL_URL || '/extend'
+    const token = sdk.getToken()?.accessToken ?? null
+    const res = await fetch(
+      `${extendBase}/lookup/email?email=${encodeURIComponent(email)}`,
+      { headers: token ? { Authorization: 'Bearer ' + token } : {} }
+    )
+    if (!res.ok) throw new Error('status ' + res.status)
+    const data = await res.json()
+    if (!data.found) return { ok: true, found: false }
     return {
       ok: true,
       found: true,
-      userId: user.userId,
-      displayName: user.displayName || user.uniqueDisplayName || user.userId?.slice(0, 8),
+      userId: data.userId,
+      displayName: data.displayName || data.userId?.slice(0, 8),
     }
   } catch (e) {
-    console.warn('[AGS friends] lookupUserByEmail:', e?.response?.data || e?.message)
-    return { ok: false, error: getErrorMessage(e, 'Could not search for user.') }
+    console.warn('[AGS friends] lookupUserByEmail:', e?.message)
+    return { ok: false, error: 'Could not search for user.' }
   }
 }
 

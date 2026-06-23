@@ -49,6 +49,7 @@ func main() {
 	api := r.Group("/", auth.Validate())
 	{
 		api.POST("/invite/email", handler.SendInvite)
+		api.GET("/lookup/email", handler.LookupByEmail)
 	}
 
 	port := os.Getenv("PORT")
