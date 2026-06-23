@@ -3,10 +3,10 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /ethan-chess ./cmd/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /ethan-chess-service ./cmd/main.go
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
-COPY --from=builder /ethan-chess /ethan-chess
+COPY --from=builder /ethan-chess-service /ethan-chess-service
 EXPOSE 8080
-ENTRYPOINT ["/ethan-chess"]
+ENTRYPOINT ["/ethan-chess-service"]
