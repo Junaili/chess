@@ -17,13 +17,17 @@ let lobbyWs = null
 let lobbyConnected = false
 let queuedStatus = null
 let currentStatus = 'offline'
+let heartbeatTimer = null
+let reconnectTimer = null
 let openWaiters = []
 let pendingStatusRequests = new Map()
 let pendingPersonalChatRequests = new Map()
 let presenceListeners = new Set()
 let gameInviteListeners = new Set()
 
-const STALE_ONLINE_MS = 120000
+const STALE_ONLINE_MS = 600000   // 10 min — covers genuine ghost connections
+const HEARTBEAT_MS    = 45000    // re-send presence every 45 s to keep lastSeenAt fresh + prevent server idle timeout
+const RECONNECT_DELAY_MS = 1500  // wait before reconnecting after unexpected close
 const OFFLINE_FLUSH_MS = 1000
 const CONNECT_TIMEOUT_MS = 2500
 const FRIENDS_STATUS_TIMEOUT_MS = 5000
@@ -89,6 +93,17 @@ function ensureLobbyConnected() {
     pendingStatusRequests.clear()
     pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
     pendingPersonalChatRequests.clear()
+    // If we're supposed to be online, reconnect immediately rather than waiting
+    // for the next heartbeat — this minimises the window where friends see us offline.
+    if (currentStatus !== 'offline' && !reconnectTimer) {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        if (currentStatus !== 'offline' && !lobbyWs && sdk.getToken()?.accessToken) {
+          debugPresence('auto-reconnect')
+          sendPresence(currentStatus)
+        }
+      }, RECONNECT_DELAY_MS)
+    }
   })
   lobbyWs.onError(err => {
     console.warn('[AGS presence] lobby websocket:', err?.message || err)
@@ -144,6 +159,19 @@ function sendPresence(status) {
   ws.sendSetUserStatus(payload)
 }
 
+function startHeartbeat() {
+  stopHeartbeat()
+  heartbeatTimer = setInterval(() => {
+    if (currentStatus !== 'offline' && sdk.getToken()?.accessToken) {
+      sendPresence(currentStatus)
+    }
+  }, HEARTBEAT_MS)
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null }
+}
+
 export function setPresenceStatus(status) {
   const token = sdk.getToken()?.accessToken
   if (!token) return
@@ -153,9 +181,16 @@ export function setPresenceStatus(status) {
       ? 'offline'
       : 'online'
   sendPresence(currentStatus)
+  if (currentStatus !== 'offline') {
+    startHeartbeat()
+  } else {
+    stopHeartbeat()
+  }
 }
 
 export function disconnectPresence() {
+  stopHeartbeat()
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
   if (!lobbyWs) return
   try {
     if (lobbyConnected) {
