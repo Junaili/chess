@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-Czk8ErUA.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-DLLW4zdU.css">
+  <script type="module" crossorigin src="/chess/assets/index-BU6m7Umb.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-5mT2p-dp.css">
 </head>
 <body>
 
@@ -39,7 +39,7 @@
             <span class="signedin-greeting">Signed in as</span>
             <div class="signedin-name-row">
               <span id="ags-signedin-name" class="signedin-name"></span>
-              <button class="btn-edit-name" id="btn-edit-name" title="Edit display name" onclick="window.agsEditName && window.agsEditName()">✏</button>
+              <button class="btn-edit-name" id="btn-edit-name" title="Edit display name" aria-label="Edit display name" onclick="window.agsEditName && window.agsEditName()">✏</button>
             </div>
             <div id="name-edit-form" style="display:none">
               <input type="text" id="name-edit-input" class="name-edit-input" maxlength="48" placeholder="New display name"
@@ -54,6 +54,12 @@
             </div>
           </div>
           <div id="ags-stats" class="ags-stats" style="display:none"></div>
+          <div class="menu-buttons">
+            <button class="btn btn-primary"   onclick="showColorSelect('computer')">Play vs Computer</button>
+            <button class="btn btn-secondary" onclick="showColorSelect('online')">Invite Friend</button>
+            <button class="btn btn-matchmake" id="btn-play-random" style="display:none" onclick="startRandomMatchmaking()">Play vs Random</button>
+          </div>
+          <p class="menu-note">Choose your color, customize your pieces, and start from the board you actually want to play on.</p>
           <section id="ags-friends-panel" class="friends-panel" style="display:none">
             <div class="friends-header">
               <h3>Friends</h3>
@@ -95,12 +101,6 @@
             </div>
             <div id="ags-add-friend-result" style="margin-top:6px"></div>
           </section>
-          <div class="menu-buttons">
-            <button class="btn btn-primary"   onclick="showColorSelect('computer')">Play vs Computer</button>
-            <button class="btn btn-secondary" onclick="showColorSelect('online')">Invite Friend</button>
-            <button class="btn btn-matchmake" id="btn-play-random" style="display:none" onclick="startRandomMatchmaking()">Play vs Random</button>
-          </div>
-          <p class="menu-note">Choose your color, customize your pieces, and start from the board you actually want to play on.</p>
         </div>
         <div class="leaderboard-panel">
           <h3 class="lb-heading">Leaderboard</h3>
@@ -119,7 +119,7 @@
           <p class="auth-eyebrow">Player Profile</p>
           <div class="profile-name-row">
             <h2 id="profile-display-name">Player</h2>
-            <button class="btn-edit-name" id="profile-btn-edit-name" style="display:none" title="Edit display name" onclick="window.agsProfileEditName && window.agsProfileEditName()">✏</button>
+            <button class="btn-edit-name" id="profile-btn-edit-name" style="display:none" title="Edit display name" aria-label="Edit display name" onclick="window.agsProfileEditName && window.agsProfileEditName()">✏</button>
           </div>
           <div id="profile-name-edit-form" style="display:none;margin-top:8px">
             <input type="text" id="profile-name-edit-input" class="name-edit-input" maxlength="48" placeholder="New display name"
@@ -307,7 +307,7 @@
           </div>
         </div>
         <div class="game-status">
-          <span id="turn-indicator">White's turn</span>
+          <span id="turn-indicator" aria-live="polite" aria-atomic="true">White's turn</span>
         </div>
         <div class="hint-box" id="hint-box" style="display:none">
           <strong>Tip:</strong>
@@ -482,9 +482,9 @@
       <div class="video-status" id="video-status">Calling…</div>
     </div>
     <div class="video-controls">
-      <button class="video-ctrl-btn" id="btn-toggle-audio" onclick="toggleAudio()" title="Mute mic">🎤</button>
-      <button class="video-ctrl-btn" id="btn-toggle-cam"   onclick="toggleVideoFeed()" title="Toggle camera">📹</button>
-      <button class="video-ctrl-btn danger" onclick="endVideoChat()" title="End call">📵</button>
+      <button class="video-ctrl-btn" id="btn-toggle-audio" onclick="toggleAudio()" title="Mute mic" aria-label="Mute mic">🎤</button>
+      <button class="video-ctrl-btn" id="btn-toggle-cam"   onclick="toggleVideoFeed()" title="Toggle camera" aria-label="Toggle camera">📹</button>
+      <button class="video-ctrl-btn danger" onclick="endVideoChat()" title="End call" aria-label="End call">📵</button>
     </div>
   </div>
 
