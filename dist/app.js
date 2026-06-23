@@ -578,7 +578,8 @@ function scheduleAIMove() {
     aiThinking = false;
     if (move) {
       const piece = game.board[move.fr][move.fc];
-      executeMove(move.fr, move.fc, move.toR, move.toC, 'queen');
+      const isPromo = piece.type === 'pawn' && (move.toR === 0 || move.toR === 7);
+      executeMove(move.fr, move.fc, move.toR, move.toC, isPromo ? 'queen' : 'queen');
     }
   }, 400);
 }
@@ -647,12 +648,6 @@ function updateStatus(lastMove = null) {
   el.textContent = lastMove?.notation
     ? `${lastMove.actor} played ${lastMove.notation} · ${stateText}`
     : stateText;
-  const statusBar = el.closest('.game-status');
-  if (statusBar) {
-    statusBar.classList.toggle('status-check', game.status === 'check');
-    statusBar.classList.toggle('status-checkmate', game.status === 'checkmate');
-    statusBar.classList.toggle('status-stalemate', game.status === 'stalemate');
-  }
 }
 
 function updateActivePlayerCards() {
@@ -786,7 +781,7 @@ function showGameOver() {
   }
 
   document.getElementById('game-over-modal').style.display = 'flex';
-  if (gameMode === 'online') startGameOverCountdown();
+  startGameOverCountdown();
 }
 
 function recordMatchHistoryOnce() {
@@ -1079,7 +1074,7 @@ function handleConnectionLost() {
   stopHeartbeat();
   if (peerConn) { try { peerConn.close(); } catch {} peerConn = null; }
   updateChatAvailability();
-  showConnBanner('Connection lost — returning to menu…', 'error');
+  showConnBanner('Opponent disconnected — returning to menu…', 'error');
   setTimeout(() => {
     closeModal('game-over-modal');
     destroyPeer();
@@ -1118,14 +1113,14 @@ function createOnlineRoom(options = {}) {
     };
 
     const base = window.location.href.split('?')[0];
-    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname) || window.location.port === '8000';
 
     if (isLocal) {
       fetch('https://api4.ipify.org')
         .then(r => r.text())
         .then(ip => {
-          const portSuffix = window.location.port ? `:${window.location.port}` : '';
-          showLink(`${window.location.protocol}//${ip.trim()}${portSuffix}${window.location.pathname}`);
+          const port = window.location.port || '8000';
+          showLink(`${window.location.protocol}//${ip.trim()}:${port}${window.location.pathname}`);
         })
         .catch(() => showLink(base));
     } else {
