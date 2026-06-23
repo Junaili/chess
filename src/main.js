@@ -423,6 +423,7 @@ async function initAuth() {
     await updatePostMatchFriendAction(opponent)
   }
   window.agsGetStats = (userId) => fetchStats(userId)
+  window.agsGetToken = () => sdk.getToken()?.accessToken ?? null
   window.agsIncrementWin = async () => {
     if (!currentUserId) return
     const displayName = document.getElementById('ags-signedin-name')?.textContent || ''

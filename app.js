@@ -1768,11 +1768,31 @@ function removeContact(address) {
   renderContacts(!!currentInviteLink);
 }
 
-function sendInviteToContact(name, address, link) {
-  const msg = `Hey ${name}! Let's play chess. Open this link to join my game: ${link}`;
+async function sendInviteToContact(name, address, link) {
   if (address.includes('@')) {
-    window.open(`mailto:${encodeURIComponent(address)}?subject=${encodeURIComponent("Chess Game — Join me!")}&body=${encodeURIComponent(msg)}`);
+    const fromName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'A friend';
+    const token = typeof window.agsGetToken === 'function' ? window.agsGetToken() : null;
+    const extendBase = (typeof __EXTEND_EMAIL_URL__ !== 'undefined' && __EXTEND_EMAIL_URL__)
+      ? __EXTEND_EMAIL_URL__
+      : '/extend';
+
+    try {
+      const res = await fetch(`${extendBase}/invite/email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: 'Bearer ' + token } : {}),
+        },
+        body: JSON.stringify({ to: address, from_name: fromName, invite_link: link }),
+      });
+      if (!res.ok) throw new Error('status ' + res.status);
+      showConnBanner(`Invite sent to ${name}!`, 'success');
+    } catch (err) {
+      console.warn('[invite] email send failed:', err);
+      showConnBanner('Could not send email — share the link below manually.', 'error');
+    }
   } else {
+    const msg = `Hey ${name}! Let's play chess. Open this link to join my game: ${link}`;
     window.open(`sms:${address}?&body=${encodeURIComponent(msg)}`);
   }
   showScreen('waiting');
