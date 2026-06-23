@@ -971,6 +971,7 @@ function renderFriendsListOnlineFirst(friends) {
     return
   }
 
+  const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
   const online = friends.filter(f => ['online', 'in-match'].includes(f.presence?.status))
   const offline = friends.filter(f => !['online', 'in-match'].includes(f.presence?.status))
   let html = ''
@@ -978,9 +979,10 @@ function renderFriendsListOnlineFirst(friends) {
     html += `<div class="friends-group-divider"><span>Online · ${online.length}</span></div>`
     html += online.map(item => {
       const inMatch = item.presence?.status === 'in-match'
+      // Use data attributes — never put user-controlled strings into inline event handlers.
       const action = inMatch
-        ? `<button class="btn-mini spectator" onclick="window.agsWatchFriend && window.agsWatchFriend('${item.userId}', '${(item.displayName || '').replace(/'/g, '')}')">Watch</button>`
-        : `<button class="btn-mini success" onclick="window.agsInviteFriend && window.agsInviteFriend('${item.userId}')">Invite</button>`
+        ? `<button class="btn-mini spectator" data-action="watch" data-user-id="${esc(item.userId)}" data-display-name="${esc(item.displayName || '')}">Watch</button>`
+        : `<button class="btn-mini success" data-action="invite" data-user-id="${esc(item.userId)}">Invite</button>`
       return friendRow(item, action)
     }).join('')
   }
@@ -989,9 +991,18 @@ function renderFriendsListOnlineFirst(friends) {
     html += offline.map(item => friendRow(item, '')).join('')
   }
   el.innerHTML = html
+
+  el.querySelectorAll('button[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const { action, userId, displayName } = btn.dataset
+      if (action === 'watch') window.agsWatchFriend?.(userId, displayName || '')
+      else if (action === 'invite') window.agsInviteFriend?.(userId)
+    })
+  })
 }
 
-function renderCountedSection(sectionId, countId, listId, items, actionBuilder) {
+// onAction(action, userId) is called when any data-action button is clicked.
+function renderCountedSection(sectionId, countId, listId, items, actionBuilder, onAction) {
   const sectionEl = document.getElementById(sectionId)
   const countEl = document.getElementById(countId)
   const listEl = document.getElementById(listId)
@@ -1003,6 +1014,11 @@ function renderCountedSection(sectionId, countId, listId, items, actionBuilder) 
   sectionEl.style.display = ''
   if (countEl) countEl.textContent = items.length
   listEl.innerHTML = items.map(item => friendRow(item, actionBuilder(item))).join('')
+  if (onAction) {
+    listEl.querySelectorAll('button[data-action]').forEach(btn => {
+      btn.addEventListener('click', () => onAction(btn.dataset.action, btn.dataset.userId))
+    })
+  }
 }
 
 function renderFriendsPanel(loggedIn) {
@@ -1011,16 +1027,27 @@ function renderFriendsPanel(loggedIn) {
   panel.style.display = loggedIn ? '' : 'none'
   if (!loggedIn) return
 
+  const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
+
   renderFriendsListOnlineFirst(friendsState.friends)
   renderCountedSection('ags-section-incoming', 'ags-count-incoming', 'ags-friends-incoming',
-    friendsState.incoming, item => `
-      <button class="btn-mini success" onclick="window.agsAcceptFriend && window.agsAcceptFriend('${item.userId}')">Accept</button>
-      <button class="btn-mini" onclick="window.agsRejectFriend && window.agsRejectFriend('${item.userId}')">Reject</button>
-    `)
+    friendsState.incoming,
+    item => `
+      <button class="btn-mini success" data-action="accept" data-user-id="${esc(item.userId)}">Accept</button>
+      <button class="btn-mini" data-action="reject" data-user-id="${esc(item.userId)}">Reject</button>
+    `,
+    (action, userId) => {
+      if (action === 'accept') window.agsAcceptFriend?.(userId)
+      else if (action === 'reject') window.agsRejectFriend?.(userId)
+    }
+  )
   renderCountedSection('ags-section-outgoing', 'ags-count-outgoing', 'ags-friends-outgoing',
-    friendsState.outgoing, item => `
-      <button class="btn-mini" onclick="window.agsCancelFriendRequest && window.agsCancelFriendRequest('${item.userId}')">Cancel</button>
-    `)
+    friendsState.outgoing,
+    item => `<button class="btn-mini" data-action="cancel" data-user-id="${esc(item.userId)}">Cancel</button>`,
+    (action, userId) => {
+      if (action === 'cancel') window.agsCancelFriendRequest?.(userId)
+    }
+  )
 }
 
 async function updatePostMatchFriendAction(opponent) {

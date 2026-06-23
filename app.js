@@ -578,8 +578,7 @@ function scheduleAIMove() {
     aiThinking = false;
     if (move) {
       const piece = game.board[move.fr][move.fc];
-      const isPromo = piece.type === 'pawn' && (move.toR === 0 || move.toR === 7);
-      executeMove(move.fr, move.fc, move.toR, move.toC, isPromo ? 'queen' : 'queen');
+      executeMove(move.fr, move.fc, move.toR, move.toC, 'queen');
     }
   }, 400);
 }
@@ -1074,7 +1073,7 @@ function handleConnectionLost() {
   stopHeartbeat();
   if (peerConn) { try { peerConn.close(); } catch {} peerConn = null; }
   updateChatAvailability();
-  showConnBanner('Opponent disconnected — returning to menu…', 'error');
+  showConnBanner('Connection lost — returning to menu…', 'error');
   setTimeout(() => {
     closeModal('game-over-modal');
     destroyPeer();
