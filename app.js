@@ -293,10 +293,11 @@ function startNewGame() {
 
 // ─── Board rendering ──────────────────────────────────────────────────────────
 
-function renderBoard() {
+function initBoard() {
   const boardEl = document.getElementById('chess-board');
   boardEl.innerHTML = '';
   const flipped = playerColor === 'black';
+  boardEl.dataset.flipped = flipped;
 
   for (let ri = 0; ri < 8; ri++) {
     for (let ci = 0; ci < 8; ci++) {
@@ -308,44 +309,66 @@ function renderBoard() {
       sq.dataset.r = r;
       sq.dataset.c = c;
       addCoordinateLabels(sq, r, c, ri, ci);
-
-      if (selectedSquare?.r === r && selectedSquare?.c === c)
-        sq.classList.add('selected');
-      if (validMoves.some(m => m.toR === r && m.toC === c))
-        sq.classList.add('valid-move');
-      if (game.moveHistory.length > 0) {
-        const last = game.moveHistory[game.moveHistory.length - 1];
-        if (last.fr === r && last.fc === c) {
-          sq.classList.add('last-move');
-          sq.classList.add('last-move-from');
-        }
-        if (last.toR === r && last.toC === c) {
-          sq.classList.add('last-move');
-          sq.classList.add('last-move-to');
-        }
-      }
-      if (game.status === 'check' || game.status === 'checkmate') {
-        const king = game.findKing(game.currentTurn);
-        if (king?.r === r && king?.c === c) sq.classList.add('in-check');
-      }
-
-      const piece = game.board[r][c];
-      if (piece) {
-        const pieceEl = document.createElement('div');
-        pieceEl.className = 'piece ' + piece.color;
-        pieceEl.textContent = SYMBOLS[piece.color][piece.type];
-        pieceEl.draggable = true;
-        pieceEl.addEventListener('dragstart', e => onDragStart(e, r, c));
-        sq.appendChild(pieceEl);
-      }
-
       sq.addEventListener('click', () => onSquareClick(r, c));
       sq.addEventListener('dragover', e => e.preventDefault());
       sq.addEventListener('drop', e => onDrop(e, r, c));
       boardEl.appendChild(sq);
     }
   }
+}
 
+function renderBoard() {
+  const boardEl = document.getElementById('chess-board');
+  const flipped = playerColor === 'black';
+
+  // Rebuild DOM only when orientation changes or board is not yet initialized
+  if (boardEl.children.length !== 64 || boardEl.dataset.flipped !== String(flipped)) {
+    initBoard();
+  }
+
+  const last = game.moveHistory.length > 0 ? game.moveHistory[game.moveHistory.length - 1] : null;
+  let checkKing = null;
+  if (game.status === 'check' || game.status === 'checkmate') {
+    checkKing = game.findKing(game.currentTurn);
+  }
+
+  const squares = boardEl.children;
+  for (let i = 0; i < 64; i++) {
+    const sq = squares[i];
+    const r = +sq.dataset.r;
+    const c = +sq.dataset.c;
+
+    const isSelected  = selectedSquare?.r === r && selectedSquare?.c === c;
+    const isValid     = validMoves.some(m => m.toR === r && m.toC === c);
+    const isLastFrom  = !!last && last.fr === r && last.fc === c;
+    const isLastTo    = !!last && last.toR === r && last.toC === c;
+    const isInCheck   = !!checkKing && checkKing.r === r && checkKing.c === c;
+
+    sq.classList.toggle('selected',       isSelected);
+    sq.classList.toggle('valid-move',     isValid);
+    sq.classList.toggle('last-move',      isLastFrom || isLastTo);
+    sq.classList.toggle('last-move-from', isLastFrom);
+    sq.classList.toggle('last-move-to',   isLastTo);
+    sq.classList.toggle('in-check',       isInCheck);
+
+    const piece = game.board[r][c];
+    let pieceEl = sq.querySelector('.piece');
+    if (piece) {
+      if (!pieceEl) {
+        pieceEl = document.createElement('div');
+        pieceEl.draggable = true;
+        pieceEl.addEventListener('dragstart', e => onDragStart(e, r, c));
+        sq.appendChild(pieceEl);
+      }
+      pieceEl.className = 'piece ' + piece.color;
+      pieceEl.textContent = SYMBOLS[piece.color][piece.type];
+    } else if (pieceEl) {
+      pieceEl.remove();
+    }
+  }
+
+  const existingArrow = boardEl.querySelector('.last-move-arrow');
+  if (existingArrow) existingArrow.remove();
   renderLastMoveArrow(boardEl, flipped);
 }
 
@@ -464,7 +487,10 @@ function executeMove(fr, fc, toR, toC, promType) {
   // Relay to opponent
   if (gameMode === 'online') {
     const msg = { type: 'move', fr, fc, toR, toC, promType };
-    if (connRole === 'host') moveLog.push(msg);
+    if (connRole === 'host') {
+      moveLog.push(msg);
+      if (moveLog.length > 500) moveLog = moveLog.slice(-500);
+    }
     sendOrQueue(msg);
   }
 
@@ -683,18 +709,17 @@ function updateActivePlayerCards() {
 function updateCapturedPieces() {
   const VALS = { pawn:1, knight:3, bishop:3, rook:5, queen:9, king:0 };
   let wScore = 0, bScore = 0;
-  const wEl = document.getElementById('captured-by-white');
-  const bEl = document.getElementById('captured-by-black');
-  wEl.innerHTML = '';
-  bEl.innerHTML = '';
+  let wHtml = '', bHtml = '';
   for (const p of game.capturedByWhite) {
-    wEl.innerHTML += `<span class="cap-piece">${SYMBOLS[p.color][p.type]}</span>`;
+    wHtml += `<span class="cap-piece">${SYMBOLS[p.color][p.type]}</span>`;
     wScore += VALS[p.type];
   }
   for (const p of game.capturedByBlack) {
-    bEl.innerHTML += `<span class="cap-piece">${SYMBOLS[p.color][p.type]}</span>`;
+    bHtml += `<span class="cap-piece">${SYMBOLS[p.color][p.type]}</span>`;
     bScore += VALS[p.type];
   }
+  document.getElementById('captured-by-white').innerHTML = wHtml;
+  document.getElementById('captured-by-black').innerHTML = bHtml;
   document.getElementById('white-score').textContent = wScore;
   document.getElementById('black-score').textContent = bScore;
 }
@@ -1037,21 +1062,34 @@ function renderChatMessages() {
     return;
   }
 
-  messagesEl.innerHTML = chatMessages.map(message => `
-    <div class="chat-message ${message.side}">
-      <span class="chat-message-meta">${escapeHtml(message.name)}</span>
-      <div class="chat-message-body">${escapeHtml(message.text)}</div>
+  messagesEl.innerHTML = chatMessages.map(m => `
+    <div class="chat-message ${m.side}">
+      <span class="chat-message-meta">${escapeHtml(m.name)}</span>
+      <div class="chat-message-body">${escapeHtml(m.text)}</div>
     </div>
   `).join('');
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function appendChatMessageToDOM(message) {
+  const messagesEl = document.getElementById('online-chat-messages');
+  if (!messagesEl) return;
+  const empty = messagesEl.querySelector('.chat-empty');
+  if (empty) empty.remove();
+  const div = document.createElement('div');
+  div.className = 'chat-message ' + message.side;
+  div.innerHTML = `<span class="chat-message-meta">${escapeHtml(message.name)}</span><div class="chat-message-body">${escapeHtml(message.text)}</div>`;
+  messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function appendChatMessage(side, name, text) {
   const trimmed = String(text || '').trim();
   if (!trimmed) return;
-  chatMessages.push({ side, name: name || (side === 'self' ? 'You' : 'Opponent'), text: trimmed });
+  const message = { side, name: name || (side === 'self' ? 'You' : 'Opponent'), text: trimmed };
+  chatMessages.push(message);
   if (chatMessages.length > 100) chatMessages = chatMessages.slice(-100);
-  renderChatMessages();
+  appendChatMessageToDOM(message);
 }
 
 function sendChatMessage() {
@@ -1132,13 +1170,16 @@ function createOnlineRoom(options = {}) {
     const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
     if (isLocal) {
-      fetch('https://api4.ipify.org')
+      const ac = new AbortController();
+      const ipTimeout = setTimeout(() => ac.abort(), 3000);
+      fetch('https://api4.ipify.org', { signal: ac.signal })
         .then(r => r.text())
         .then(ip => {
+          clearTimeout(ipTimeout);
           const portSuffix = window.location.port ? `:${window.location.port}` : '';
           showLink(`${window.location.protocol}//${ip.trim()}${portSuffix}${window.location.pathname}`);
         })
-        .catch(() => showLink(base));
+        .catch(() => { clearTimeout(ipTimeout); showLink(base); });
     } else {
       showLink(base);
     }
@@ -1156,9 +1197,10 @@ function createOnlineRoom(options = {}) {
       console.warn('Peer error during game:', err.type, err.message);
       handleConnectionLost();
     } else {
-      alert('Connection error: ' + err.message + '\n\nMake sure both devices are online.');
-      destroyPeer();
-      showScreen('home');
+      console.warn('Connection error:', err.type, err.message);
+      const sub = document.getElementById('waiting-sub');
+      if (sub) sub.textContent = 'Connection error — ' + (err.message || 'Could not connect.');
+      setTimeout(() => { destroyPeer(); showScreen('home'); }, 2000);
     }
   });
 }
@@ -1240,9 +1282,10 @@ function joinOnlineRoom(hostPeerId) {
       console.warn('Peer error during game:', err.type, err.message);
       handleConnectionLost();
     } else {
-      alert('Could not connect to the game: ' + err.message + '\n\nThe link may have expired.');
-      destroyPeer();
-      showScreen('home');
+      console.warn('Join error:', err.type, err.message);
+      const sub = document.getElementById('waiting-sub');
+      if (sub) sub.textContent = 'Could not connect — ' + (err.message || 'The link may have expired.');
+      setTimeout(() => { destroyPeer(); showScreen('home'); }, 2000);
     }
   });
 }
