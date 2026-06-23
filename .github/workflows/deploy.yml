@@ -21,7 +21,9 @@ jobs:
       - run: npm ci
 
       - name: Inject secrets
-        run: echo "VITE_ACCELBYTE_GOOGLE_CLIENT_ID=${{ secrets.VITE_ACCELBYTE_GOOGLE_CLIENT_ID }}" >> .env.production
+        run: |
+          echo "VITE_ACCELBYTE_GOOGLE_CLIENT_ID=${{ secrets.VITE_ACCELBYTE_GOOGLE_CLIENT_ID }}" >> .env.production
+          echo "VITE_EXTEND_EMAIL_URL=https://seal-chessags.prod.gamingservices.accelbyte.io/ext-seal-chessags-ethan-chess-service" >> .env.production
 
       - name: Build
         run: npm run build
