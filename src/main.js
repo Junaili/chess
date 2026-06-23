@@ -1,4 +1,5 @@
 import { loginWithGoogle, loginWithPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
+import { sdk } from './ags-client.js'
 import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
 import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory } from './stats.js'
 import { sendTelemetryEvent } from './telemetry.js'
