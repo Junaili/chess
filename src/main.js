@@ -381,17 +381,40 @@ async function initAuth() {
     // User not found — store pending invite and show invite link
     storePendingInvite(email, currentUserId)
     const inviteUrl = window.location.origin + window.location.pathname + '?invitedBy=' + encodeURIComponent(currentUserId)
-    const mailtoBody = `Come play chess with me! Click here to create an account and we'll automatically become friends:\n\n${inviteUrl}`
-    const mailtoHref = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("You're invited to play chess!")}&body=${encodeURIComponent(mailtoBody)}`
     const safeUrl = inviteUrl.replace(/'/g, '%27')
-    if (resultEl) resultEl.innerHTML = `
-      <span class="auth-message">No account found. Share this invite:</span>
-      <div class="invite-link-box" style="margin:6px 0">
-        <span class="invite-link-text">${esc(inviteUrl)}</span>
-        <button class="btn-copy" onclick="navigator.clipboard.writeText('${safeUrl}').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
-      </div>
-      <a href="${mailtoHref}" class="btn btn-secondary btn-mini" style="display:inline-block;margin-top:4px;text-decoration:none">Email Invite</a>
-    `
+    if (resultEl) {
+      resultEl.innerHTML = `
+        <span class="auth-message">No account found. Share this invite:</span>
+        <div class="invite-link-box" style="margin:6px 0">
+          <span class="invite-link-text">${esc(inviteUrl)}</span>
+          <button class="btn-copy" onclick="navigator.clipboard.writeText('${safeUrl}').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
+        </div>
+        <button id="ags-email-invite-btn" class="btn btn-secondary btn-mini" style="display:inline-block;margin-top:4px">Email Invite</button>
+      `
+      resultEl.querySelector('#ags-email-invite-btn')?.addEventListener('click', async function () {
+        this.disabled = true
+        this.textContent = 'Sending…'
+        const fromName = document.getElementById('ags-signedin-name')?.textContent || 'A friend'
+        const token = sdk.getToken()?.accessToken ?? null
+        const extendBase = import.meta.env.VITE_EXTEND_EMAIL_URL || '/extend'
+        try {
+          const res = await fetch(`${extendBase}/invite/email`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: 'Bearer ' + token } : {}),
+            },
+            body: JSON.stringify({ to: email, from_name: fromName, invite_link: inviteUrl }),
+          })
+          if (!res.ok) throw new Error('status ' + res.status)
+          this.textContent = 'Sent!'
+        } catch (err) {
+          console.warn('[invite] email send failed:', err)
+          this.disabled = false
+          this.textContent = 'Failed — copy link above'
+        }
+      })
+    }
   }
   window.agsToggleAddFriend = () => {
     const form = document.getElementById('ags-add-friend-form')
