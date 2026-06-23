@@ -422,6 +422,7 @@ async function initAuth() {
     await runFriendAction(() => requestFriend(opponent.userId), 'Friend request sent.')
     await updatePostMatchFriendAction(opponent)
   }
+  window.agsGetStats = (userId) => fetchStats(userId)
   window.agsIncrementWin = async () => {
     if (!currentUserId) return
     const displayName = document.getElementById('ags-signedin-name')?.textContent || ''

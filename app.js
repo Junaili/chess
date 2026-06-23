@@ -209,7 +209,18 @@ function setPlayerInfo(color, name, userId) {
   const nameEl = document.getElementById(color + '-player-name');
   const idEl   = document.getElementById(color + '-player-id');
   if (nameEl) nameEl.textContent = name;
-  if (idEl)   idEl.textContent   = userId ? 'ID: ' + userId : '';
+  if (idEl)   idEl.textContent   = '';
+  if (userId) loadPlayerStats(color, userId);
+}
+
+async function loadPlayerStats(color, userId) {
+  const idEl = document.getElementById(color + '-player-id');
+  if (!idEl || !userId) return;
+  if (typeof window.agsGetStats !== 'function') return;
+  idEl.textContent = '…';
+  const stats = await window.agsGetStats(userId);
+  if (idEl !== document.getElementById(color + '-player-id')) return; // guard stale update
+  idEl.textContent = stats ? `W ${stats.wins}  ·  L ${stats.losses}` : '';
 }
 
 function setCurrentOpponent(name, userId) {

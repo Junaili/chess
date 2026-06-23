@@ -687,7 +687,6 @@ input[type="checkbox"] {
 }
 
 .signedin-userid,
-.player-id,
 .invite-link-text,
 .move-white,
 .move-black {
@@ -1666,9 +1665,11 @@ input[type="checkbox"] {
 
 .player-id {
   grid-area: id;
-  font-size: 0.72rem;
-  color: var(--text-soft);
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-dim);
   min-height: 0.9rem;
+  letter-spacing: 0.03em;
 }
 
 .player-score {
