@@ -142,7 +142,9 @@ async function initAuth() {
   window.cacheDisplayName = cacheDisplayName
 
   const params = new URLSearchParams(window.location.search)
-  const hasCallback = params.has('code') || params.has('error')
+  const hashParams = new URLSearchParams(window.location.hash.slice(1))
+  const hasCallback = params.has('code') || params.has('error') ||
+                      hashParams.has('id_token') || hashParams.has('error')
 
   let profile = null
   let tokenData = null
