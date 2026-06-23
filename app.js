@@ -780,7 +780,7 @@ function showGameOver() {
   }
 
   document.getElementById('game-over-modal').style.display = 'flex';
-  startGameOverCountdown();
+  if (gameMode === 'online') startGameOverCountdown();
 }
 
 function recordMatchHistoryOnce() {
@@ -1112,14 +1112,14 @@ function createOnlineRoom(options = {}) {
     };
 
     const base = window.location.href.split('?')[0];
-    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname) || window.location.port === '8000';
+    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
     if (isLocal) {
       fetch('https://api4.ipify.org')
         .then(r => r.text())
         .then(ip => {
-          const port = window.location.port || '8000';
-          showLink(`${window.location.protocol}//${ip.trim()}:${port}${window.location.pathname}`);
+          const portSuffix = window.location.port ? `:${window.location.port}` : '';
+          showLink(`${window.location.protocol}//${ip.trim()}${portSuffix}${window.location.pathname}`);
         })
         .catch(() => showLink(base));
     } else {

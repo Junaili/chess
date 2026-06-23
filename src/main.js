@@ -1119,13 +1119,14 @@ function replayMatchHistoryAt(index) {
 
   spectatorPrevScreen = 'profile'
   spectatorReplayIndex = match.moves.length - 1
+  const finalGame = buildReplayPosition(match.moves, match.moves.length - 1)
   spectatorLastMatchData = {
     active: false,
     moves: match.moves,
     whiteName: match.whiteName || 'White',
     blackName: match.blackName || 'Black',
-    status: match.result || 'completed',
-    winner: null,
+    status: finalGame.status || 'completed',
+    winner: finalGame.winner || null,
     startedAt: match.startedAt,
   }
   switchToSpectatorScreen('spectator')
