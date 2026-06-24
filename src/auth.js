@@ -140,6 +140,15 @@ export async function loginWithGoogle() {
   window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`
 }
 
+function decodeJwtPayload(token) {
+  try {
+    const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    return JSON.parse(atob(b64))
+  } catch {
+    return null
+  }
+}
+
 export async function handleCallback() {
   // id_token arrives in the URL hash (implicit flow); errors may be in hash or query
   const hashParams = new URLSearchParams(window.location.hash.slice(1))
@@ -149,6 +158,8 @@ export async function handleCallback() {
   if (!idToken && !error) return null
 
   const isGoogle = sessionStorage.getItem(GOOGLE_FLAG)
+  // Read nonce BEFORE clearing it so we can verify below.
+  const storedNonce = sessionStorage.getItem('ags_google_nonce')
   sessionStorage.removeItem(GOOGLE_FLAG)
   sessionStorage.removeItem('ags_google_nonce')
 
@@ -158,6 +169,18 @@ export async function handleCallback() {
   if (!isGoogle) {
     clearAuthCallbackUrl(pre || '')
     return null
+  }
+
+  // Verify the nonce in the id_token matches what we sent to Google.
+  // This prevents replay attacks where a captured token is used in a different session.
+  if (idToken) {
+    const payload = decodeJwtPayload(idToken)
+    if (!payload || !storedNonce || payload.nonce !== storedNonce) {
+      console.error('[AGS] id_token nonce mismatch — possible replay attack')
+      clearTransientSessionState()
+      clearAuthCallbackUrl(pre || '')
+      return null
+    }
   }
 
   const { coreConfig } = sdk.assembly()

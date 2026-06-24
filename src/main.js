@@ -34,6 +34,35 @@ function clearAuthMessages() {
   setAuthMessage('register', '')
 }
 
+function showInviteConfirmation(invitedBy, onAccept) {
+  const el = document.getElementById('ags-friends-message')
+  if (!el) return
+  el.className = 'auth-message'
+  el.textContent = ''
+
+  const msg = document.createElement('span')
+  msg.textContent = 'You were invited by a friend. Add them?'
+
+  const acceptBtn = document.createElement('button')
+  acceptBtn.className = 'btn-mini success'
+  acceptBtn.textContent = 'Yes, add friend'
+  acceptBtn.style.marginLeft = '8px'
+
+  const declineBtn = document.createElement('button')
+  declineBtn.className = 'btn-mini'
+  declineBtn.textContent = 'No thanks'
+  declineBtn.style.marginLeft = '4px'
+
+  const dismiss = () => { el.textContent = '' }
+
+  acceptBtn.addEventListener('click', () => { dismiss(); onAccept() })
+  declineBtn.addEventListener('click', dismiss)
+
+  el.appendChild(msg)
+  el.appendChild(acceptBtn)
+  el.appendChild(declineBtn)
+}
+
 async function hydrateAuthenticatedUser(profile) {
   currentUserId = profile.userId
   window.agsCurrentUserId = currentUserId
@@ -54,16 +83,18 @@ async function hydrateAuthenticatedUser(profile) {
   const invitedBy = urlParams.get('invitedBy')
   if (invitedBy && invitedBy !== currentUserId) {
     window.history.replaceState({}, '', window.location.pathname + window.location.hash)
-    const state = await fetchFriendState()
-    const hasIncomingFromInviter = state.ok && state.incoming?.some(r => r.userId === invitedBy)
-    if (hasIncomingFromInviter) {
-      const result = await acceptFriend(invitedBy)
-      if (result.ok) setFriendsMessage('Invite accepted! You are now friends.', 'success')
-    } else {
-      const result = await requestFriend(invitedBy)
-      if (result.ok) setFriendsMessage('Almost there — you\'ll be friends automatically once your inviter is online.', 'success')
-    }
-    await refreshFriendsUI(false)
+    showInviteConfirmation(invitedBy, async () => {
+      const state = await fetchFriendState()
+      const hasIncomingFromInviter = state.ok && state.incoming?.some(r => r.userId === invitedBy)
+      if (hasIncomingFromInviter) {
+        const result = await acceptFriend(invitedBy)
+        if (result.ok) setFriendsMessage('Invite accepted! You are now friends.', 'success')
+      } else {
+        const result = await requestFriend(invitedBy)
+        if (result.ok) setFriendsMessage('Almost there — you\'ll be friends automatically once your inviter is online.', 'success')
+      }
+      await refreshFriendsUI(false)
+    })
   }
 
   await initStats(currentUserId)

@@ -3,8 +3,10 @@ package handler
 import (
 	"crypto/tls"
 	"fmt"
+	"html"
 	"log"
 	"net/smtp"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -18,6 +20,11 @@ type InviteRequest struct {
 func SendInviteEmail(req InviteRequest) error {
 	if !strings.Contains(req.To, "@") {
 		return fmt.Errorf("invalid email address")
+	}
+	// Reject any invite_link that is not a plain https:// URL to prevent href injection.
+	parsed, err := url.ParseRequestURI(req.InviteLink)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return fmt.Errorf("invite_link must be an https URL")
 	}
 	if err := sendGmail(req); err != nil {
 		log.Printf("[email] send failed: %v", err)
@@ -34,7 +41,11 @@ func sendGmail(req InviteRequest) error {
 		return fmt.Errorf("GMAIL_USER or GMAIL_APP_PW not set")
 	}
 
-	subject := fmt.Sprintf("%s challenged you to a chess game!", req.FromName)
+	// HTML-escape user-controlled strings before embedding in the email body.
+	safeName := html.EscapeString(req.FromName)
+	safeLink := html.EscapeString(req.InviteLink)
+
+	subject := fmt.Sprintf("%s challenged you to a chess game!", safeName)
 	htmlBody := fmt.Sprintf(`<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px">
   <h2 style="color:#2a1f1a">&#9823; You've been challenged!</h2>
   <p style="font-size:16px;color:#3a2f2a">
@@ -50,7 +61,7 @@ func sendGmail(req InviteRequest) error {
     This link is valid while %s is waiting in the game lobby.
     Open it in a browser to join instantly.
   </p>
-</div>`, req.FromName, req.InviteLink, req.FromName)
+</div>`, safeName, safeLink, safeName)
 
 	message := fmt.Sprintf(
 		"From: Chess Game <%s>\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=\"utf-8\"\r\n\r\n%s",

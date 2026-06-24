@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-"fmt"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -13,7 +13,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 	"google.golang.org/grpc"
@@ -71,6 +73,8 @@ func main() {
 		log.Fatalf("failed to create HTTP gateway: %v", err)
 	}
 
+	allowedOrigins := parseAllowedOrigins(os.Getenv("ALLOWED_ORIGIN"))
+
 	auth := newAuthMiddleware(
 		strings.TrimRight(os.Getenv("AB_BASE_URL"), "/"),
 		os.Getenv("AB_CLIENT_ID"),
@@ -94,7 +98,7 @@ func main() {
 	mux.HandleFunc(basePath+"/apidocs/api.json", makeSwaggerJSONHandler(basePath))
 
 	// API routes (auth required)
-	mux.Handle("/", corsMiddleware(auth.wrap(gateway)))
+	mux.Handle("/", corsMiddleware(allowedOrigins, auth.wrap(gateway)))
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", gatewayPort),
@@ -114,9 +118,33 @@ func main() {
 	_ = httpServer.Shutdown(context.Background())
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+// parseAllowedOrigins splits a comma-separated ALLOWED_ORIGIN env var into a set.
+// Falls back to the GitHub Pages origin when the env var is empty.
+func parseAllowedOrigins(raw string) map[string]struct{} {
+	defaults := []string{"https://junaili.github.io", "https://localhost:8808"}
+	set := make(map[string]struct{})
+	if raw == "" {
+		for _, o := range defaults {
+			set[o] = struct{}{}
+		}
+		return set
+	}
+	for _, o := range strings.Split(raw, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			set[o] = struct{}{}
+		}
+	}
+	return set
+}
+
+func corsMiddleware(allowed map[string]struct{}, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if _, ok := allowed[origin]; ok {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		if r.Method == http.MethodOptions {
@@ -153,15 +181,55 @@ func makeSwaggerJSONHandler(basePath string) http.HandlerFunc {
 	}
 }
 
+// emailRateLimiter enforces a per-user cap on email sends.
+// max sends are allowed per window; old timestamps are pruned on each check.
+type emailRateLimiter struct {
+	mu      sync.Mutex
+	records map[string][]time.Time
+	window  time.Duration
+	max     int
+}
+
+func newEmailRateLimiter(max int, window time.Duration) *emailRateLimiter {
+	return &emailRateLimiter{records: make(map[string][]time.Time), window: window, max: max}
+}
+
+// allow returns true and records the attempt when the user is within their quota.
+func (rl *emailRateLimiter) allow(userSub string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-rl.window)
+	prev := rl.records[userSub]
+	var recent []time.Time
+	for _, t := range prev {
+		if t.After(cutoff) {
+			recent = append(recent, t)
+		}
+	}
+	if len(recent) >= rl.max {
+		rl.records[userSub] = recent
+		return false
+	}
+	rl.records[userSub] = append(recent, now)
+	return true
+}
+
 // authMiddleware validates Bearer tokens using IAM token introspection.
 type authMiddleware struct {
 	baseURL      string
 	clientID     string
 	clientSecret string
+	emailLimiter *emailRateLimiter
 }
 
 func newAuthMiddleware(baseURL, clientID, clientSecret string) *authMiddleware {
-	return &authMiddleware{baseURL: baseURL, clientID: clientID, clientSecret: clientSecret}
+	return &authMiddleware{
+		baseURL:      baseURL,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		emailLimiter: newEmailRateLimiter(5, time.Hour),
+	}
 }
 
 func (a *authMiddleware) wrap(next http.Handler) http.Handler {
@@ -179,16 +247,25 @@ func (a *authMiddleware) wrap(next http.Handler) http.Handler {
 		}
 		token := strings.TrimPrefix(header, "Bearer ")
 
-		active, err := a.introspect(token)
+		sub, active, err := a.introspect(token)
 		if err != nil || !active {
 			http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
 			return
 		}
+
+		// Rate-limit the email send endpoint: 5 per user per hour.
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/invite/email") {
+			if !a.emailLimiter.allow(sub) {
+				http.Error(w, `{"error":"too many invite emails, try again later"}`, http.StatusTooManyRequests)
+				return
+			}
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
 
-func (a *authMiddleware) introspect(token string) (bool, error) {
+func (a *authMiddleware) introspect(token string) (sub string, active bool, err error) {
 	endpoint := a.baseURL + "/iam/v3/oauth/introspect"
 
 	body := url.Values{}
@@ -196,28 +273,29 @@ func (a *authMiddleware) introspect(token string) (bool, error) {
 
 	req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(body.Encode()))
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.SetBasicAuth(a.clientID, a.clientSecret)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 
 	var result struct {
-		Active bool `json:"active"`
+		Active bool   `json:"active"`
+		Sub    string `json:"sub"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return false, err
+		return "", false, err
 	}
-	return result.Active, nil
+	return result.Sub, result.Active, nil
 }
 
