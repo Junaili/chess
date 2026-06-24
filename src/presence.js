@@ -64,15 +64,25 @@ function ensureLobbyConnected() {
     const message = parseLobbyMessage(raw)
     debugPresence('message', { raw, message })
     if (message?.type === 'friendsStatusResponse') {
-      const pending = pendingStatusRequests.get(message.id)
+      console.log('[AGS presence] friendsStatusResponse received:', {
+        responseId: message.id,
+        code: message.code,
+        friendIds: message.friendIds || message.friendsId,
+        availability: message.availability,
+        pendingKeys: [...pendingStatusRequests.keys()],
+      })
+      const key = normalizeId(message.id)
+      const pending = pendingStatusRequests.get(key)
       if (pending) {
-        pendingStatusRequests.delete(message.id)
+        pendingStatusRequests.delete(key)
         pending.resolve(message)
+      } else {
+        console.warn('[AGS presence] friendsStatusResponse ID not matched — dropped:', message.id)
       }
     } else if (message?.type === 'personalChatResponse') {
-      const pending = pendingPersonalChatRequests.get(message.id)
+      const pending = pendingPersonalChatRequests.get(normalizeId(message.id))
       if (pending) {
-        pendingPersonalChatRequests.delete(message.id)
+        pendingPersonalChatRequests.delete(normalizeId(message.id))
         pending.resolve(message)
       }
     } else if (message?.type === 'personalChatNotif' || message?.type === 'messageNotif') {
@@ -450,23 +460,26 @@ async function requestFriendsStatus() {
   if (!opened || !lobbyWs || !isWsOpen(lobbyWs)) return null
 
   const id = lobbyId()
+  const key = normalizeId(id)
   return new Promise(resolve => {
     const timer = setTimeout(() => {
-      pendingStatusRequests.delete(id)
+      pendingStatusRequests.delete(key)
+      console.warn('[AGS presence] friendsStatusRequest timed out — no response for id:', id)
       resolve(null)
     }, FRIENDS_STATUS_TIMEOUT_MS)
 
-    pendingStatusRequests.set(id, {
+    pendingStatusRequests.set(key, {
       resolve: message => {
         clearTimeout(timer)
         resolve(message)
       },
     })
+    console.log('[AGS presence] sendFriendsStatus, id:', id, 'key:', key)
     debugPresence('friends-status-request', { id })
     try {
       lobbyWs.sendFriendsStatus({ id })
     } catch (e) {
-      pendingStatusRequests.delete(id)
+      pendingStatusRequests.delete(key)
       clearTimeout(timer)
       resolve(null)
     }
