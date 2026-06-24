@@ -19,6 +19,7 @@ let queuedStatus = null
 let currentStatus = 'offline'
 let heartbeatTimer = null
 let reconnectTimer = null
+let reconnectAttempts = 0
 let openWaiters = []
 let pendingStatusRequests = new Map()
 let pendingPersonalChatRequests = new Map()
@@ -27,7 +28,9 @@ let gameInviteListeners = new Set()
 
 const STALE_ONLINE_MS = 600000   // 10 min — covers genuine ghost connections
 const HEARTBEAT_MS    = 45000    // re-send presence every 45 s to keep lastSeenAt fresh + prevent server idle timeout
-const RECONNECT_DELAY_MS = 1500  // wait before reconnecting after unexpected close
+const RECONNECT_DELAY_MS = 1500  // initial backoff; doubles on each consecutive failure, capped at 60s
+const RECONNECT_MAX_MS = 60000
+const RECONNECT_MAX_ATTEMPTS = 8 // give up after this many consecutive failures
 const OFFLINE_FLUSH_MS = 1000
 const CONNECT_TIMEOUT_MS = 2500
 const FRIENDS_STATUS_TIMEOUT_MS = 5000
@@ -78,6 +81,7 @@ function ensureLobbyConnected() {
   }, true)
   lobbyWs.onOpen(() => {
     lobbyConnected = true
+    reconnectAttempts = 0
     debugPresence('open')
     openWaiters.splice(0).forEach(resolve => resolve(true))
     if (queuedStatus) {
@@ -93,20 +97,32 @@ function ensureLobbyConnected() {
     pendingStatusRequests.clear()
     pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
     pendingPersonalChatRequests.clear()
-    // If we're supposed to be online, reconnect immediately rather than waiting
-    // for the next heartbeat — this minimises the window where friends see us offline.
+    // Reconnect with exponential backoff if we're supposed to be online.
     if (currentStatus !== 'offline' && !reconnectTimer) {
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null
-        if (currentStatus !== 'offline' && !lobbyWs && sdk.getToken()?.accessToken) {
-          debugPresence('auto-reconnect')
-          sendPresence(currentStatus)
-        }
-      }, RECONNECT_DELAY_MS)
+      if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+        console.warn('[AGS presence] giving up reconnect after', reconnectAttempts, 'attempts')
+        reconnectAttempts = 0
+      } else {
+        const delay = Math.min(RECONNECT_DELAY_MS * (2 ** reconnectAttempts), RECONNECT_MAX_MS)
+        reconnectAttempts++
+        debugPresence('schedule-reconnect', { attempt: reconnectAttempts, delay })
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null
+          if (currentStatus !== 'offline' && !lobbyWs && sdk.getToken()?.accessToken) {
+            debugPresence('auto-reconnect')
+            sendPresence(currentStatus)
+          }
+        }, delay)
+      }
     }
   })
   lobbyWs.onError(err => {
-    console.warn('[AGS presence] lobby websocket:', err?.message || err)
+    const detail = err instanceof ErrorEvent
+      ? err.message
+      : err instanceof Event
+        ? `WebSocket ${err.type} — readyState=${err.target?.readyState}, url=${err.target?.url}`
+        : (err?.message || String(err))
+    console.warn('[AGS presence] lobby websocket error:', detail)
     debugPresence('error', err)
     openWaiters.splice(0).forEach(resolve => resolve(false))
     pendingStatusRequests.forEach(pending => pending.resolve(null))
