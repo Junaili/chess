@@ -28,8 +28,7 @@ let gameInviteListeners = new Set()
 let lobbyOpenListeners = new Set()
 const knownPresence = new Map()  // userId (normalised) → last confirmed presence
 
-const STALE_ONLINE_MS = 600000   // 10 min — covers genuine ghost connections
-const HEARTBEAT_MS    = 45000    // re-send presence every 45 s to keep lastSeenAt fresh + prevent server idle timeout
+const HEARTBEAT_MS    = 45000    // re-send presence every 45 s to prevent server idle timeout
 const RECONNECT_DELAY_MS = 1500  // initial backoff; doubles on each consecutive failure, capped at 60s
 const RECONNECT_MAX_MS = 60000
 const RECONNECT_MAX_ATTEMPTS = 8 // give up after this many consecutive failures
@@ -370,8 +369,6 @@ function normalizePresenceStatus(presence) {
 
   const availability = String(presence.availability ?? '0').toLowerCase()
   const activity = String(presence.activity || '').toLowerCase()
-  const lastSeen = presence.lastSeenAt ? Date.parse(presence.lastSeenAt) : 0
-  const stale = lastSeen > 0 && Date.now() - lastSeen > STALE_ONLINE_MS
 
   if (
     availability === '0' ||
@@ -380,8 +377,7 @@ function normalizePresenceStatus(presence) {
     availability === 'unavailable' ||
     activity.includes('offline') ||
     activity.includes('logout') ||
-    activity.includes('signed-out') ||
-    stale
+    activity.includes('signed-out')
   ) {
     return { status: 'offline', label: 'Offline', activity: presence.activity || '' }
   }
