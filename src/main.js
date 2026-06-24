@@ -7,7 +7,7 @@ import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from '.
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName } from './leaderboard.js'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
-import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, sendGameInvite } from './presence.js'
+import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite } from './presence.js'
 
 let currentUserId = null
 let currentUserWins = 0
@@ -17,6 +17,7 @@ let friendsState = { friends: [], incoming: [], outgoing: [] }
 let friendsRefreshTimer = null
 let unsubscribePresenceUpdates = null
 let unsubscribeGameInvites = null
+let unsubscribeLobbyOpen = null
 let pendingInvitesChecked = false
 let activeProfileUser = null
 let spectatorPrevScreen = null
@@ -957,12 +958,19 @@ function startPresenceUpdates() {
       renderFriendsPanel(true)
     }
   })
+  unsubscribeLobbyOpen = subscribeLobbyOpen(() => {
+    if (currentUserId) refreshFriendsUI(false)
+  })
 }
 
 function stopPresenceUpdates() {
   if (unsubscribePresenceUpdates) {
     unsubscribePresenceUpdates()
     unsubscribePresenceUpdates = null
+  }
+  if (unsubscribeLobbyOpen) {
+    unsubscribeLobbyOpen()
+    unsubscribeLobbyOpen = null
   }
 }
 

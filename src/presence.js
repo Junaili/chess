@@ -25,6 +25,7 @@ let pendingStatusRequests = new Map()
 let pendingPersonalChatRequests = new Map()
 let presenceListeners = new Set()
 let gameInviteListeners = new Set()
+let lobbyOpenListeners = new Set()
 const knownPresence = new Map()  // userId (normalised) → last confirmed presence
 
 const STALE_ONLINE_MS = 600000   // 10 min — covers genuine ghost connections
@@ -89,6 +90,7 @@ function ensureLobbyConnected() {
       sendPresence(queuedStatus)
       queuedStatus = null
     }
+    lobbyOpenListeners.forEach(cb => { try { cb() } catch {} })
   })
   lobbyWs.onClose(() => {
     debugPresence('close')
@@ -263,6 +265,11 @@ export function subscribePresenceUpdates(listener) {
 export function subscribeGameInvites(listener) {
   gameInviteListeners.add(listener)
   return () => gameInviteListeners.delete(listener)
+}
+
+export function subscribeLobbyOpen(listener) {
+  lobbyOpenListeners.add(listener)
+  return () => lobbyOpenListeners.delete(listener)
 }
 
 export async function sendGameInvite({ from, to, payload }) {
