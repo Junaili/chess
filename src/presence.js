@@ -161,13 +161,9 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-function isWsOpen(ws) {
-  return ws?.instance?.readyState === WebSocket.OPEN
-}
-
 function sendPresence(status) {
   const ws = ensureLobbyConnected()
-  if (!lobbyConnected || !isWsOpen(ws)) {
+  if (!lobbyConnected) {
     queuedStatus = status
     debugPresence('queue-status', status)
     return
@@ -283,7 +279,7 @@ export function subscribeLobbyOpen(listener) {
 
 export async function sendGameInvite({ from, to, payload }) {
   const opened = await waitForLobbyOpen()
-  if (!opened || !lobbyWs || !isWsOpen(lobbyWs)) {
+  if (!opened || !lobbyWs) {
     return { ok: false, error: 'Could not connect to AGS Lobby.' }
   }
 
@@ -453,7 +449,7 @@ function mapFriendsStatusResponse(response, requestedIds) {
 
 async function requestFriendsStatus() {
   const opened = await waitForLobbyOpen()
-  if (!opened || !lobbyWs || !isWsOpen(lobbyWs)) return null
+  if (!opened || !lobbyWs) return null
 
   const id = lobbyId()
   const key = normalizeId(id)
