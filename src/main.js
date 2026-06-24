@@ -184,6 +184,8 @@ async function initAuth() {
   const hasCallback = params.has('code') || params.has('error') ||
                       hashParams.has('id_token') || hashParams.has('error')
 
+  const prefilledEmail = params.get('email') || ''
+
   let profile = null
   let tokenData = null
   if (hasCallback) {
@@ -238,6 +240,10 @@ async function initAuth() {
   window.agsOpenRegister = () => {
     clearAuthMessages()
     if (typeof window.showScreen === 'function') window.showScreen('register')
+    if (prefilledEmail) {
+      const emailField = document.getElementById('ags-register-email')
+      if (emailField && !emailField.value) emailField.value = prefilledEmail
+    }
   }
   window.agsPasswordLogin = async () => {
     const identifier = document.getElementById('ags-login-identifier')?.value.trim() || ''
@@ -430,7 +436,7 @@ async function initAuth() {
 
     // User not found — store pending invite and show invite link
     storePendingInvite(email, currentUserId)
-    const inviteUrl = window.location.origin + window.location.pathname + '?invitedBy=' + encodeURIComponent(currentUserId)
+    const inviteUrl = window.location.origin + window.location.pathname + '?invitedBy=' + encodeURIComponent(currentUserId) + '&email=' + encodeURIComponent(email)
     const safeUrl = inviteUrl.replace(/'/g, '%27')
     if (resultEl) {
       resultEl.innerHTML = `
