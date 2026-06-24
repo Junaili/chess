@@ -18,7 +18,6 @@ let friendsRefreshTimer = null
 let unsubscribePresenceUpdates = null
 let unsubscribeGameInvites = null
 let unsubscribeLobbyOpen = null
-let pendingInvitesChecked = false
 let activeProfileUser = null
 let spectatorPrevScreen = null
 let profileMatchHistoryRows = []
@@ -48,7 +47,6 @@ async function hydrateAuthenticatedUser(profile) {
   setPresenceStatus('online')
   startPresenceUpdates()
   startGameInviteUpdates()
-  pendingInvitesChecked = false
   startFriendsRefresh()
   await refreshFriendsUI()
 
@@ -63,7 +61,7 @@ async function hydrateAuthenticatedUser(profile) {
       if (result.ok) setFriendsMessage('Invite accepted! You are now friends.', 'success')
     } else {
       const result = await requestFriend(invitedBy)
-      if (result.ok) setFriendsMessage('Friend request sent to your inviter!', 'success')
+      if (result.ok) setFriendsMessage('Almost there — you\'ll be friends automatically once your inviter is online.', 'success')
     }
     await refreshFriendsUI(false)
   }
@@ -873,7 +871,6 @@ function updateAuthUI(loggedIn, name, userId) {
     const randomBtn = document.getElementById('btn-play-random')
     if (randomBtn) randomBtn.style.display = 'none'
     friendsState = { friends: [], incoming: [], outgoing: [] }
-    pendingInvitesChecked = false
     renderFriendsPanel(false)
   }
 }
@@ -924,11 +921,8 @@ async function refreshFriendsUI(showLoading = true) {
   setFriendsMessage('')
   renderFriendsPanel(true)
 
-  if (!pendingInvitesChecked) {
-    pendingInvitesChecked = true
-    const anyAccepted = await processIncomingInviteAcceptances(state.incoming)
-    if (anyAccepted) await refreshFriendsUI(false)
-  }
+  const anyAccepted = await processIncomingInviteAcceptances(state.incoming)
+  if (anyAccepted) await refreshFriendsUI(false)
 }
 
 function startFriendsRefresh() {
