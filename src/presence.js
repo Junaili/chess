@@ -156,7 +156,12 @@ function sendPresence(status) {
         : ACTIVITY.online,
   }
   debugPresence('set-status', payload)
-  ws.sendSetUserStatus(payload)
+  try {
+    ws.sendSetUserStatus(payload)
+  } catch (e) {
+    debugPresence('set-status-error', e?.message || e)
+    queuedStatus = status
+  }
 }
 
 function startHeartbeat() {
@@ -272,7 +277,13 @@ export async function sendGameInvite({ from, to, payload }) {
     })
 
     debugPresence('send-game-invite', message)
-    lobbyWs.sendPersonalChat(message)
+    try {
+      lobbyWs.sendPersonalChat(message)
+    } catch (e) {
+      pendingPersonalChatRequests.delete(id)
+      clearTimeout(timer)
+      resolve({ ok: false, error: 'Connection lost while sending invite.' })
+    }
   })
 }
 
@@ -421,7 +432,13 @@ async function requestFriendsStatus() {
       },
     })
     debugPresence('friends-status-request', { id })
-    lobbyWs.sendFriendsStatus({ id })
+    try {
+      lobbyWs.sendFriendsStatus({ id })
+    } catch (e) {
+      pendingStatusRequests.delete(id)
+      clearTimeout(timer)
+      resolve(null)
+    }
   })
 }
 
