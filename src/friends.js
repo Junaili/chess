@@ -58,7 +58,28 @@ async function withNames(items) {
   if (!items.length) return items
   const entries = items.map(item => ({ userId: item.userId }))
   await enrichDisplayNames(entries)
-  const nameMap = resolveDisplayNames(entries)
+  let nameMap = resolveDisplayNames(entries)
+
+  // For any item still missing a name, bulk-fetch from IAM directly
+  const stillMissing = items.filter(item => !nameMap[item.userId])
+  if (stillMissing.length) {
+    try {
+      const res = await iamUsersApi().createUserBulkBasic_v3({ userIds: stillMissing.map(i => i.userId) })
+      const bulkUsers = res?.data?.data || []
+      for (const u of bulkUsers) {
+        const name = u.displayName || u.userName
+        if (name) {
+          // Re-use the leaderboard cache so future calls don't hit the network
+          const { cacheDisplayName } = await import('./leaderboard.js')
+          cacheDisplayName(u.userId, name)
+          nameMap = { ...nameMap, [u.userId]: name }
+        }
+      }
+    } catch (e) {
+      console.warn('[AGS friends] withNames bulk IAM fetch:', e?.response?.data || e?.message)
+    }
+  }
+
   return items.map(item => ({
     ...item,
     displayName: nameMap[item.userId] || item.raw?.displayName || item.raw?.name || item.userId,

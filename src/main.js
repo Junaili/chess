@@ -342,6 +342,18 @@ async function initAuth() {
       },
     })
   }
+  window.agsSendMatchDecline = async (toUserId, inviteId) => {
+    if (!currentUserId || !toUserId) return
+    return sendGameInvite({
+      from: currentUserId,
+      to: toUserId,
+      payload: {
+        type: 'chess-match-declined',
+        inviteId,
+        fromUserId: currentUserId,
+      },
+    })
+  }
   window.agsSetPresence = status => {
     setPresenceStatus(status)
     if (status === 'online') refreshFriendsUI(false)
@@ -978,6 +990,12 @@ function stopPresenceUpdates() {
 function startGameInviteUpdates() {
   stopGameInviteUpdates()
   unsubscribeGameInvites = subscribeGameInvites(invite => {
+    if (invite?.type === 'chess-match-declined') {
+      if (typeof window.handleMatchDeclined === 'function') {
+        window.handleMatchDeclined(invite)
+      }
+      return
+    }
     if (typeof window.showFriendMatchInvite === 'function') {
       window.showFriendMatchInvite(invite)
     }

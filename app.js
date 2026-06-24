@@ -1255,14 +1255,28 @@ function acceptFriendMatchInvite() {
 }
 
 function declineFriendMatchInvite() {
+  const invite = pendingFriendMatchInvite;
   pendingFriendMatchInvite = null;
   document.getElementById('friend-match-invite-notification').style.display = 'none';
+  if (invite?.fromUserId && typeof window.agsSendMatchDecline === 'function') {
+    window.agsSendMatchDecline(invite.fromUserId, invite.inviteId);
+  }
+}
+
+function handleMatchDeclined(invite) {
+  const name = invite?.fromName || 'Your friend';
+  const sub = document.getElementById('waiting-sub');
+  if (sub) sub.textContent = `${name} declined your match invite.`;
+  const spinner = document.getElementById('waiting-spinner');
+  if (spinner) spinner.style.display = 'none';
+  setTimeout(() => { destroyPeer(); showScreen('home'); }, 2500);
 }
 
 window.startFriendMatchInvite = startFriendMatchInvite;
 window.showFriendMatchInvite = showFriendMatchInvite;
 window.acceptFriendMatchInvite = acceptFriendMatchInvite;
 window.declineFriendMatchInvite = declineFriendMatchInvite;
+window.handleMatchDeclined = handleMatchDeclined;
 
 function joinOnlineRoom(hostPeerId) {
   destroyPeer();

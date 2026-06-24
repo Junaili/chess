@@ -342,7 +342,9 @@ function notifyGameInvite(message) {
   } catch {
     return
   }
-  if (payload?.type !== 'chess-match-invite' || !payload.peerId) return
+  const knownTypes = ['chess-match-invite', 'chess-match-declined']
+  if (!knownTypes.includes(payload?.type)) return
+  if (payload.type === 'chess-match-invite' && !payload.peerId) return
 
   const invite = {
     ...payload,
