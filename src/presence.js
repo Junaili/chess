@@ -25,6 +25,7 @@ let pendingStatusRequests = new Map()
 let pendingPersonalChatRequests = new Map()
 let presenceListeners = new Set()
 let gameInviteListeners = new Set()
+const knownPresence = new Map()  // userId (normalised) → last confirmed presence
 
 const STALE_ONLINE_MS = 600000   // 10 min — covers genuine ghost connections
 const HEARTBEAT_MS    = 45000    // re-send presence every 45 s to keep lastSeenAt fresh + prevent server idle timeout
@@ -311,6 +312,7 @@ function notifyPresenceUpdate(message) {
   const userId = message.userId || message.userID
   if (!userId) return
   const presence = normalizePresenceStatus(message)
+  knownPresence.set(normalizeId(userId), presence)
   debugPresence('presence-update', { userId, presence, message })
   presenceListeners.forEach(listener => {
     try {
@@ -417,12 +419,14 @@ function mapFriendsStatusResponse(response, requestedIds) {
 
     friendIds.forEach((friendId, index) => {
       const normalized = normalizeId(friendId)
-      byId[normalized] = normalizePresenceStatus({
+      const presence = normalizePresenceStatus({
         userID: friendId,
         availability: availability[index],
         activity: activity[index],
         lastSeenAt: lastSeenAt[index],
       })
+      byId[normalized] = presence
+      knownPresence.set(normalized, presence)
     })
   }
 
@@ -466,11 +470,22 @@ export async function fetchPresenceMap(userIds) {
   const ids = [...new Set(userIds.filter(Boolean))]
   if (!ids.length) return {}
 
+  const fallback = () =>
+    Object.fromEntries(ids.map(id => [
+      id,
+      knownPresence.get(normalizeId(id)) || { status: 'offline', label: 'Offline', activity: '' },
+    ]))
+
   try {
     const response = await requestFriendsStatus()
+    if (response === null) {
+      // WebSocket unavailable — return last-known presence rather than marking everyone offline
+      debugPresence('fetchPresenceMap-fallback', ids)
+      return fallback()
+    }
     return mapFriendsStatusResponse(response, ids)
   } catch (e) {
     console.warn('[AGS presence] fetchPresenceMap:', e?.response?.data || e?.message)
-    return Object.fromEntries(ids.map(id => [id, { status: 'offline', label: 'Offline', activity: '' }]))
+    return fallback()
   }
 }
