@@ -4,40 +4,27 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
-	"net/http"
 	"net/smtp"
 	"os"
 	"strings"
-
-	"github.com/gin-gonic/gin"
 )
 
 type InviteRequest struct {
-	To         string `json:"to"          binding:"required"`
-	FromName   string `json:"from_name"   binding:"required"`
-	InviteLink string `json:"invite_link" binding:"required"`
+	To         string
+	FromName   string
+	InviteLink string
 }
 
-func SendInvite(c *gin.Context) {
-	var req InviteRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
+func SendInviteEmail(req InviteRequest) error {
 	if !strings.Contains(req.To, "@") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid email address"})
-		return
+		return fmt.Errorf("invalid email address")
 	}
-
 	if err := sendGmail(req); err != nil {
 		log.Printf("[email] send failed: %v", err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "email delivery failed"})
-		return
+		return fmt.Errorf("email delivery failed: %w", err)
 	}
-
 	log.Printf("[email] invite sent to %s from %s", req.To, req.FromName)
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	return nil
 }
 
 func sendGmail(req InviteRequest) error {

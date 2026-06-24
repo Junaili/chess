@@ -8,8 +8,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-
-	"github.com/gin-gonic/gin"
 )
 
 type LookupResult struct {
@@ -18,23 +16,7 @@ type LookupResult struct {
 	DisplayName string `json:"displayName,omitempty"`
 }
 
-func LookupByEmail(c *gin.Context) {
-	email := strings.TrimSpace(c.Query("email"))
-	if email == "" || !strings.Contains(email, "@") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "valid email required"})
-		return
-	}
-
-	result, err := lookupEmailInIAM(email)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "lookup failed"})
-		return
-	}
-
-	c.JSON(http.StatusOK, result)
-}
-
-func lookupEmailInIAM(email string) (*LookupResult, error) {
+func LookupEmailInIAM(email string) (*LookupResult, error) {
 	baseURL := strings.TrimRight(os.Getenv("AB_BASE_URL"), "/")
 	clientID := os.Getenv("AB_CLIENT_ID")
 	clientSecret := os.Getenv("AB_CLIENT_SECRET")
@@ -69,21 +51,24 @@ func lookupEmailInIAM(email string) (*LookupResult, error) {
 		return nil, fmt.Errorf("IAM returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	var user struct {
-		UserID      string `json:"userId"`
-		DisplayName string `json:"displayName"`
+	// Admin IAM returns a paginated list: {"data": [...], "paging": {...}}
+	var page struct {
+		Data []struct {
+			UserID      string `json:"userId"`
+			DisplayName string `json:"displayName"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal(body, &user); err != nil {
+	if err := json.Unmarshal(body, &page); err != nil {
 		return nil, err
 	}
-	if user.UserID == "" {
+	if len(page.Data) == 0 || page.Data[0].UserID == "" {
 		return &LookupResult{Found: false}, nil
 	}
 
 	return &LookupResult{
 		Found:       true,
-		UserID:      user.UserID,
-		DisplayName: user.DisplayName,
+		UserID:      page.Data[0].UserID,
+		DisplayName: page.Data[0].DisplayName,
 	}, nil
 }
 

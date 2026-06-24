@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+option go_package = "github.com/junaili/ethan-chess-service/pkg/pb";
+
+package chessservice;
+
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+service ChessService {
+
+  rpc SendInvite(SendInviteRequest) returns (SendInviteResponse) {
+    option (google.api.http) = {
+      post: "/invite/email"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Send email invite"
+      description: "Send a chess invitation email to an unregistered user"
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  rpc LookupByEmail(LookupByEmailRequest) returns (LookupByEmailResponse) {
+    option (google.api.http) = {
+      get: "/lookup/email"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Look up user by email"
+      description: "Look up an AGS user account by email address using the admin IAM API"
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+}
+
+message SendInviteRequest {
+  string to = 1;
+  string from_name = 2;
+  string invite_link = 3;
+}
+
+message SendInviteResponse {
+  bool ok = 1;
+}
+
+message LookupByEmailRequest {
+  string email = 1;
+}
+
+message LookupByEmailResponse {
+  bool found = 1;
+  string user_id = 2;
+  string display_name = 3;
+}
+
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  info: {
+    title: "Ethan Chess Service API";
+    version: "1.0";
+  };
+  base_path: "/service";
+  security_definitions: {
+    security: {
+      key: "Bearer";
+      value: {
+        type: TYPE_API_KEY;
+        in: IN_HEADER;
+        name: "Authorization";
+      }
+    }
+  };
+};

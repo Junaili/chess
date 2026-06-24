@@ -98,8 +98,6 @@ export async function enrichDisplayNames(rankings) {
   let cache
   try { cache = JSON.parse(localStorage.getItem(NAME_CACHE_KEY) || '{}') } catch { cache = {} }
 
-  // additionalData.displayName is written at win-time and goes stale — never use it
-  // to skip or seed the cache. Always re-fetch when the TTL has expired.
   const missing = rankings.filter(entry => !getCachedName(cache, entry.userId))
 
   if (!missing.length) return
@@ -110,25 +108,12 @@ export async function enrichDisplayNames(rankings) {
   const { coreConfig } = sdk.assembly()
   await Promise.allSettled(missing.map(async entry => {
     try {
-      // Try IAM v4 first (requires user token); fall back to Basic public profile
-      const iamResp = await fetch(
-        `${coreConfig.baseURL}/iam/v4/public/namespaces/${coreConfig.namespace}/users/${entry.userId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
-      if (iamResp.ok) {
-        const d = await iamResp.json()
-        const name = d.displayName || d.uniqueDisplayName
-        if (name) { cacheDisplayName(entry.userId, name); return }
-      }
-
-      // Client-credentials tokens are rejected by the IAM v4 endpoint;
-      // fall back to the Basic Service public profile which accepts any token.
-      const basicResp = await fetch(
+      const resp = await fetch(
         `${coreConfig.baseURL}/basic/v1/public/namespaces/${coreConfig.namespace}/users/${entry.userId}/profiles/public`,
         { headers: { Authorization: `Bearer ${token}` } }
       )
-      if (!basicResp.ok) return
-      const b = await basicResp.json()
+      if (!resp.ok) return
+      const b = await resp.json()
       const name = b.customAttributes?.displayName || b.displayName
       if (name) cacheDisplayName(entry.userId, name)
     } catch {}
