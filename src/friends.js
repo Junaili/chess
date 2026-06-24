@@ -1,5 +1,5 @@
 import { FriendsApi } from '@accelbyte/sdk-lobby'
-import { UsersApi } from '@accelbyte/sdk-iam'
+import { UsersV4Api } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
 import { resolveDisplayNames, enrichDisplayNames } from './leaderboard.js'
 import { fetchPresenceMap } from './presence.js'
@@ -60,23 +60,24 @@ async function withNames(items) {
   await enrichDisplayNames(entries)
   let nameMap = resolveDisplayNames(entries)
 
-  // For any item still missing a name, bulk-fetch from IAM directly
+  // For any item still missing a name, fetch from IAM v4 in parallel.
+  // The bulk/basic endpoint was removed in this AGS version; individual v4 calls are the replacement.
   const stillMissing = items.filter(item => !nameMap[item.userId])
   if (stillMissing.length) {
-    try {
-      const res = await iamUsersApi().createUserBulkBasic_v3({ userIds: stillMissing.map(i => i.userId) })
-      const bulkUsers = res?.data?.data || []
-      for (const u of bulkUsers) {
-        const name = u.displayName || u.userName
-        if (name) {
-          // Re-use the leaderboard cache so future calls don't hit the network
-          const { cacheDisplayName } = await import('./leaderboard.js')
-          cacheDisplayName(u.userId, name)
-          nameMap = { ...nameMap, [u.userId]: name }
-        }
+    const { coreConfig } = sdk.assembly()
+    const v4 = UsersV4Api(sdk, { coreConfig: { ...coreConfig, useSchemaValidation: false } })
+    const results = await Promise.allSettled(
+      stillMissing.map(item => v4.getUser_ByUserId_v4(item.userId))
+    )
+    const { cacheDisplayName } = await import('./leaderboard.js')
+    for (const outcome of results) {
+      if (outcome.status !== 'fulfilled') continue
+      const u = outcome.value?.data
+      const name = u?.displayName || u?.uniqueDisplayName
+      if (name && u?.userId) {
+        cacheDisplayName(u.userId, name)
+        nameMap = { ...nameMap, [u.userId]: name }
       }
-    } catch (e) {
-      console.warn('[AGS friends] withNames bulk IAM fetch:', e?.response?.data || e?.message)
     }
   }
 
@@ -168,10 +169,6 @@ export async function getFriendshipStatus(friendId) {
 
 const PENDING_INVITES_KEY = 'ags-pending-invites'
 
-function iamUsersApi() {
-  const { coreConfig } = sdk.assembly()
-  return UsersApi(sdk, { coreConfig: { ...coreConfig, useSchemaValidation: false } })
-}
 
 export async function lookupUserByEmail(email) {
   if (!email?.includes('@')) return { ok: false, error: 'Invalid email address.' }
