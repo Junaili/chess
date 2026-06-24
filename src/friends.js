@@ -1,7 +1,7 @@
 import { FriendsApi } from '@accelbyte/sdk-lobby'
 import { UsersV4Api } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
-import { resolveDisplayNames, enrichDisplayNames } from './leaderboard.js'
+import { resolveDisplayNames } from './leaderboard.js'
 import { fetchPresenceMap } from './presence.js'
 
 const PAGE = { limit: 50, offset: 0 }
@@ -56,12 +56,8 @@ function getErrorMessage(e, fallback) {
 
 async function withNames(items) {
   if (!items.length) return items
-  const entries = items.map(item => ({ userId: item.userId }))
-  await enrichDisplayNames(entries)
-  let nameMap = resolveDisplayNames(entries)
+  let nameMap = resolveDisplayNames(items.map(item => ({ userId: item.userId })))
 
-  // For any item still missing a name, fetch from IAM v4 in parallel.
-  // The bulk/basic endpoint was removed in this AGS version; individual v4 calls are the replacement.
   const stillMissing = items.filter(item => !nameMap[item.userId])
   if (stillMissing.length) {
     const { coreConfig } = sdk.assembly()

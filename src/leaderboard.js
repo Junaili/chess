@@ -39,21 +39,26 @@ async function getToken() {
 }
 
 export function cacheDisplayName(userId, displayName) {
-  if (!userId || !displayName) return
+  if (!userId) return
   try {
     const cache = JSON.parse(localStorage.getItem(NAME_CACHE_KEY) || '{}')
-    cache[userId] = { name: displayName, ts: Date.now() }
+    cache[userId] = { name: displayName ?? null, ts: Date.now() }
     localStorage.setItem(NAME_CACHE_KEY, JSON.stringify(cache))
   } catch {}
 }
 
 function getCachedName(cache, userId) {
-  // Returns null when missing or stale — triggers an API re-fetch
   const entry = cache[userId]
   if (!entry) return null
   if (typeof entry === 'string') return null  // old plain-string format → treat as stale
   if (Date.now() - entry.ts > NAME_CACHE_TTL_MS) return null
-  return entry.name
+  return entry.name  // may be null (negative cache hit)
+}
+
+function hasFreshCacheEntry(cache, userId) {
+  const entry = cache[userId]
+  if (!entry || typeof entry === 'string') return false
+  return Date.now() - entry.ts <= NAME_CACHE_TTL_MS
 }
 
 function getCachedNameAnyAge(cache, userId) {
@@ -98,7 +103,7 @@ export async function enrichDisplayNames(rankings) {
   let cache
   try { cache = JSON.parse(localStorage.getItem(NAME_CACHE_KEY) || '{}') } catch { cache = {} }
 
-  const missing = rankings.filter(entry => !getCachedName(cache, entry.userId))
+  const missing = rankings.filter(entry => !hasFreshCacheEntry(cache, entry.userId))
 
   if (!missing.length) return
 
@@ -112,10 +117,14 @@ export async function enrichDisplayNames(rankings) {
         `${coreConfig.baseURL}/basic/v1/public/namespaces/${coreConfig.namespace}/users/${entry.userId}/profiles/public`,
         { headers: { Authorization: `Bearer ${token}` } }
       )
-      if (!resp.ok) return
+      if (!resp.ok) {
+        // Cache the miss so we don't re-fetch every refresh cycle
+        cacheDisplayName(entry.userId, null)
+        return
+      }
       const b = await resp.json()
       const name = b.customAttributes?.displayName || b.displayName
-      if (name) cacheDisplayName(entry.userId, name)
+      cacheDisplayName(entry.userId, name || null)
     } catch {}
   }))
 }
