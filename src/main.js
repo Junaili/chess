@@ -56,8 +56,15 @@ async function hydrateAuthenticatedUser(profile) {
   const invitedBy = urlParams.get('invitedBy')
   if (invitedBy && invitedBy !== currentUserId) {
     window.history.replaceState({}, '', window.location.pathname + window.location.hash)
-    const sent = await requestFriend(invitedBy)
-    if (sent.ok) setFriendsMessage('Friend request sent to your inviter!', 'success')
+    const state = await fetchFriendState()
+    const hasIncomingFromInviter = state.ok && state.incoming?.some(r => r.userId === invitedBy)
+    if (hasIncomingFromInviter) {
+      const result = await acceptFriend(invitedBy)
+      if (result.ok) setFriendsMessage('Invite accepted! You are now friends.', 'success')
+    } else {
+      const result = await requestFriend(invitedBy)
+      if (result.ok) setFriendsMessage('Friend request sent to your inviter!', 'success')
+    }
     await refreshFriendsUI(false)
   }
 
@@ -409,7 +416,7 @@ async function initAuth() {
             body: JSON.stringify({ to: email, from_name: fromName, invite_link: inviteUrl }),
           })
           if (!res.ok) throw new Error('status ' + res.status)
-          this.textContent = 'Sent!'
+          this.textContent = 'Sent! Ask your friend to check their junk folder if they didn\'t receive the email'
         } catch (err) {
           console.warn('[invite] email send failed:', err)
           this.disabled = false
