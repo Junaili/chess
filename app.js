@@ -209,7 +209,18 @@ function setPlayerInfo(color, name, userId) {
   const nameEl = document.getElementById(color + '-player-name');
   const idEl   = document.getElementById(color + '-player-id');
   if (nameEl) nameEl.textContent = name;
-  if (idEl)   idEl.textContent   = userId ? 'ID: ' + userId : '';
+  if (idEl)   idEl.textContent   = '';
+  if (userId) loadPlayerStats(color, userId);
+}
+
+async function loadPlayerStats(color, userId) {
+  const idEl = document.getElementById(color + '-player-id');
+  if (!idEl || !userId) return;
+  if (typeof window.agsGetStats !== 'function') return;
+  idEl.textContent = '…';
+  const stats = await window.agsGetStats(userId);
+  if (idEl !== document.getElementById(color + '-player-id')) return; // guard stale update
+  idEl.textContent = stats ? `W ${stats.wins}  ·  L ${stats.losses}` : '';
 }
 
 function setCurrentOpponent(name, userId) {
@@ -220,6 +231,9 @@ function setCurrentOpponent(name, userId) {
 function startGame() {
   if (typeof window.agsSetPresence === 'function') {
     window.agsSetPresence('in-match');
+  }
+  if (typeof window.agsSendEvent === 'function') {
+    window.agsSendEvent('game_started', { mode: gameMode, color: playerColor });
   }
   matchStartedAt = new Date();
   matchHistoryRecorded = false;
@@ -282,10 +296,11 @@ function startNewGame() {
 
 // ─── Board rendering ──────────────────────────────────────────────────────────
 
-function renderBoard() {
+function initBoard() {
   const boardEl = document.getElementById('chess-board');
   boardEl.innerHTML = '';
   const flipped = playerColor === 'black';
+  boardEl.dataset.flipped = flipped;
 
   for (let ri = 0; ri < 8; ri++) {
     for (let ci = 0; ci < 8; ci++) {
@@ -297,44 +312,66 @@ function renderBoard() {
       sq.dataset.r = r;
       sq.dataset.c = c;
       addCoordinateLabels(sq, r, c, ri, ci);
-
-      if (selectedSquare?.r === r && selectedSquare?.c === c)
-        sq.classList.add('selected');
-      if (validMoves.some(m => m.toR === r && m.toC === c))
-        sq.classList.add('valid-move');
-      if (game.moveHistory.length > 0) {
-        const last = game.moveHistory[game.moveHistory.length - 1];
-        if (last.fr === r && last.fc === c) {
-          sq.classList.add('last-move');
-          sq.classList.add('last-move-from');
-        }
-        if (last.toR === r && last.toC === c) {
-          sq.classList.add('last-move');
-          sq.classList.add('last-move-to');
-        }
-      }
-      if (game.status === 'check' || game.status === 'checkmate') {
-        const king = game.findKing(game.currentTurn);
-        if (king?.r === r && king?.c === c) sq.classList.add('in-check');
-      }
-
-      const piece = game.board[r][c];
-      if (piece) {
-        const pieceEl = document.createElement('div');
-        pieceEl.className = 'piece ' + piece.color;
-        pieceEl.textContent = SYMBOLS[piece.color][piece.type];
-        pieceEl.draggable = true;
-        pieceEl.addEventListener('dragstart', e => onDragStart(e, r, c));
-        sq.appendChild(pieceEl);
-      }
-
       sq.addEventListener('click', () => onSquareClick(r, c));
       sq.addEventListener('dragover', e => e.preventDefault());
       sq.addEventListener('drop', e => onDrop(e, r, c));
       boardEl.appendChild(sq);
     }
   }
+}
 
+function renderBoard() {
+  const boardEl = document.getElementById('chess-board');
+  const flipped = playerColor === 'black';
+
+  // Rebuild DOM only when orientation changes or board is not yet initialized
+  if (boardEl.children.length !== 64 || boardEl.dataset.flipped !== String(flipped)) {
+    initBoard();
+  }
+
+  const last = game.moveHistory.length > 0 ? game.moveHistory[game.moveHistory.length - 1] : null;
+  let checkKing = null;
+  if (game.status === 'check' || game.status === 'checkmate') {
+    checkKing = game.findKing(game.currentTurn);
+  }
+
+  const squares = boardEl.children;
+  for (let i = 0; i < 64; i++) {
+    const sq = squares[i];
+    const r = +sq.dataset.r;
+    const c = +sq.dataset.c;
+
+    const isSelected  = selectedSquare?.r === r && selectedSquare?.c === c;
+    const isValid     = validMoves.some(m => m.toR === r && m.toC === c);
+    const isLastFrom  = !!last && last.fr === r && last.fc === c;
+    const isLastTo    = !!last && last.toR === r && last.toC === c;
+    const isInCheck   = !!checkKing && checkKing.r === r && checkKing.c === c;
+
+    sq.classList.toggle('selected',       isSelected);
+    sq.classList.toggle('valid-move',     isValid);
+    sq.classList.toggle('last-move',      isLastFrom || isLastTo);
+    sq.classList.toggle('last-move-from', isLastFrom);
+    sq.classList.toggle('last-move-to',   isLastTo);
+    sq.classList.toggle('in-check',       isInCheck);
+
+    const piece = game.board[r][c];
+    let pieceEl = sq.querySelector('.piece');
+    if (piece) {
+      if (!pieceEl) {
+        pieceEl = document.createElement('div');
+        pieceEl.draggable = true;
+        pieceEl.addEventListener('dragstart', e => onDragStart(e, r, c));
+        sq.appendChild(pieceEl);
+      }
+      pieceEl.className = 'piece ' + piece.color;
+      pieceEl.textContent = SYMBOLS[piece.color][piece.type];
+    } else if (pieceEl) {
+      pieceEl.remove();
+    }
+  }
+
+  const existingArrow = boardEl.querySelector('.last-move-arrow');
+  if (existingArrow) existingArrow.remove();
   renderLastMoveArrow(boardEl, flipped);
 }
 
@@ -453,7 +490,10 @@ function executeMove(fr, fc, toR, toC, promType) {
   // Relay to opponent
   if (gameMode === 'online') {
     const msg = { type: 'move', fr, fc, toR, toC, promType };
-    if (connRole === 'host') moveLog.push(msg);
+    if (connRole === 'host') {
+      moveLog.push(msg);
+      if (moveLog.length > 500) moveLog = moveLog.slice(-500);
+    }
     sendOrQueue(msg);
   }
 
@@ -578,8 +618,7 @@ function scheduleAIMove() {
     aiThinking = false;
     if (move) {
       const piece = game.board[move.fr][move.fc];
-      const isPromo = piece.type === 'pawn' && (move.toR === 0 || move.toR === 7);
-      executeMove(move.fr, move.fc, move.toR, move.toC, isPromo ? 'queen' : 'queen');
+      executeMove(move.fr, move.fc, move.toR, move.toC, 'queen');
     }
   }, 400);
 }
@@ -648,6 +687,12 @@ function updateStatus(lastMove = null) {
   el.textContent = lastMove?.notation
     ? `${lastMove.actor} played ${lastMove.notation} · ${stateText}`
     : stateText;
+  const statusBar = el.closest('.game-status');
+  if (statusBar) {
+    statusBar.classList.toggle('status-check', game.status === 'check');
+    statusBar.classList.toggle('status-checkmate', game.status === 'checkmate');
+    statusBar.classList.toggle('status-stalemate', game.status === 'stalemate');
+  }
 }
 
 function updateActivePlayerCards() {
@@ -667,18 +712,17 @@ function updateActivePlayerCards() {
 function updateCapturedPieces() {
   const VALS = { pawn:1, knight:3, bishop:3, rook:5, queen:9, king:0 };
   let wScore = 0, bScore = 0;
-  const wEl = document.getElementById('captured-by-white');
-  const bEl = document.getElementById('captured-by-black');
-  wEl.innerHTML = '';
-  bEl.innerHTML = '';
+  let wHtml = '', bHtml = '';
   for (const p of game.capturedByWhite) {
-    wEl.innerHTML += `<span class="cap-piece">${SYMBOLS[p.color][p.type]}</span>`;
+    wHtml += `<span class="cap-piece">${SYMBOLS[p.color][p.type]}</span>`;
     wScore += VALS[p.type];
   }
   for (const p of game.capturedByBlack) {
-    bEl.innerHTML += `<span class="cap-piece">${SYMBOLS[p.color][p.type]}</span>`;
+    bHtml += `<span class="cap-piece">${SYMBOLS[p.color][p.type]}</span>`;
     bScore += VALS[p.type];
   }
+  document.getElementById('captured-by-white').innerHTML = wHtml;
+  document.getElementById('captured-by-black').innerHTML = bHtml;
   document.getElementById('white-score').textContent = wScore;
   document.getElementById('black-score').textContent = bScore;
 }
@@ -746,7 +790,10 @@ function showGameOver() {
     if (typeof window.agsIncrementWin === 'function') window.agsIncrementWin();
   } else if (game.status === 'checkmate' && game.winner && game.winner !== playerColor) {
     if (typeof window.agsIncrementLoss === 'function') window.agsIncrementLoss();
+  } else if (game.status === 'stalemate') {
+    if (typeof window.agsIncrementDraw === 'function') window.agsIncrementDraw();
   }
+  if (typeof window.agsIncrementGamePlayed === 'function') window.agsIncrementGamePlayed(gameMode);
 
   const title = document.getElementById('game-over-title');
   const msg   = document.getElementById('game-over-message');
@@ -781,7 +828,7 @@ function showGameOver() {
   }
 
   document.getElementById('game-over-modal').style.display = 'flex';
-  startGameOverCountdown();
+  if (gameMode === 'online') startGameOverCountdown();
 }
 
 function recordMatchHistoryOnce() {
@@ -802,6 +849,16 @@ function recordMatchHistoryOnce() {
   const opponentUserId = gameMode === 'online'
     ? currentOpponent?.userId || ''
     : '';
+
+  if (typeof window.agsSendEvent === 'function') {
+    window.agsSendEvent('game_completed', {
+      mode:            gameMode,
+      result,
+      duration_ms:     endedAt.getTime() - startedAt.getTime(),
+      move_count:      game.moveHistory.length,
+      opponent_is_bot: gameMode === 'computer',
+    });
+  }
 
   window.agsRecordMatchHistory({
     id: 'match-' + endedAt.getTime() + '-' + Math.random().toString(36).slice(2, 8),
@@ -1021,21 +1078,34 @@ function renderChatMessages() {
     return;
   }
 
-  messagesEl.innerHTML = chatMessages.map(message => `
-    <div class="chat-message ${message.side}">
-      <span class="chat-message-meta">${escapeHtml(message.name)}</span>
-      <div class="chat-message-body">${escapeHtml(message.text)}</div>
+  messagesEl.innerHTML = chatMessages.map(m => `
+    <div class="chat-message ${m.side}">
+      <span class="chat-message-meta">${escapeHtml(m.name)}</span>
+      <div class="chat-message-body">${escapeHtml(m.text)}</div>
     </div>
   `).join('');
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function appendChatMessageToDOM(message) {
+  const messagesEl = document.getElementById('online-chat-messages');
+  if (!messagesEl) return;
+  const empty = messagesEl.querySelector('.chat-empty');
+  if (empty) empty.remove();
+  const div = document.createElement('div');
+  div.className = 'chat-message ' + message.side;
+  div.innerHTML = `<span class="chat-message-meta">${escapeHtml(message.name)}</span><div class="chat-message-body">${escapeHtml(message.text)}</div>`;
+  messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function appendChatMessage(side, name, text) {
   const trimmed = String(text || '').trim();
   if (!trimmed) return;
-  chatMessages.push({ side, name: name || (side === 'self' ? 'You' : 'Opponent'), text: trimmed });
+  const message = { side, name: name || (side === 'self' ? 'You' : 'Opponent'), text: trimmed };
+  chatMessages.push(message);
   if (chatMessages.length > 100) chatMessages = chatMessages.slice(-100);
-  renderChatMessages();
+  appendChatMessageToDOM(message);
 }
 
 function sendChatMessage() {
@@ -1074,7 +1144,7 @@ function handleConnectionLost() {
   stopHeartbeat();
   if (peerConn) { try { peerConn.close(); } catch {} peerConn = null; }
   updateChatAvailability();
-  showConnBanner('Opponent disconnected — returning to menu…', 'error');
+  showConnBanner('Connection lost — returning to menu…', 'error');
   setTimeout(() => {
     closeModal('game-over-modal');
     destroyPeer();
@@ -1113,16 +1183,19 @@ function createOnlineRoom(options = {}) {
     };
 
     const base = window.location.href.split('?')[0];
-    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname) || window.location.port === '8000';
+    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
     if (isLocal) {
-      fetch('https://api4.ipify.org')
+      const ac = new AbortController();
+      const ipTimeout = setTimeout(() => ac.abort(), 3000);
+      fetch('https://api4.ipify.org', { signal: ac.signal })
         .then(r => r.text())
         .then(ip => {
-          const port = window.location.port || '8000';
-          showLink(`${window.location.protocol}//${ip.trim()}:${port}${window.location.pathname}`);
+          clearTimeout(ipTimeout);
+          const portSuffix = window.location.port ? `:${window.location.port}` : '';
+          showLink(`${window.location.protocol}//${ip.trim()}${portSuffix}${window.location.pathname}`);
         })
-        .catch(() => showLink(base));
+        .catch(() => { clearTimeout(ipTimeout); showLink(base); });
     } else {
       showLink(base);
     }
@@ -1140,9 +1213,10 @@ function createOnlineRoom(options = {}) {
       console.warn('Peer error during game:', err.type, err.message);
       handleConnectionLost();
     } else {
-      alert('Connection error: ' + err.message + '\n\nMake sure both devices are online.');
-      destroyPeer();
-      showScreen('home');
+      console.warn('Connection error:', err.type, err.message);
+      const sub = document.getElementById('waiting-sub');
+      if (sub) sub.textContent = 'Connection error — ' + (err.message || 'Could not connect.');
+      setTimeout(() => { destroyPeer(); showScreen('home'); }, 2000);
     }
   });
 }
@@ -1197,14 +1271,28 @@ function acceptFriendMatchInvite() {
 }
 
 function declineFriendMatchInvite() {
+  const invite = pendingFriendMatchInvite;
   pendingFriendMatchInvite = null;
   document.getElementById('friend-match-invite-notification').style.display = 'none';
+  if (invite?.fromUserId && typeof window.agsSendMatchDecline === 'function') {
+    window.agsSendMatchDecline(invite.fromUserId, invite.inviteId);
+  }
+}
+
+function handleMatchDeclined(invite) {
+  const name = invite?.fromName || 'Your friend';
+  const sub = document.getElementById('waiting-sub');
+  if (sub) sub.textContent = `${name} declined your match invite.`;
+  const spinner = document.getElementById('waiting-spinner');
+  if (spinner) spinner.style.display = 'none';
+  setTimeout(() => { destroyPeer(); showScreen('home'); }, 2500);
 }
 
 window.startFriendMatchInvite = startFriendMatchInvite;
 window.showFriendMatchInvite = showFriendMatchInvite;
 window.acceptFriendMatchInvite = acceptFriendMatchInvite;
 window.declineFriendMatchInvite = declineFriendMatchInvite;
+window.handleMatchDeclined = handleMatchDeclined;
 
 function joinOnlineRoom(hostPeerId) {
   destroyPeer();
@@ -1224,9 +1312,10 @@ function joinOnlineRoom(hostPeerId) {
       console.warn('Peer error during game:', err.type, err.message);
       handleConnectionLost();
     } else {
-      alert('Could not connect to the game: ' + err.message + '\n\nThe link may have expired.');
-      destroyPeer();
-      showScreen('home');
+      console.warn('Join error:', err.type, err.message);
+      const sub = document.getElementById('waiting-sub');
+      if (sub) sub.textContent = 'Could not connect — ' + (err.message || 'The link may have expired.');
+      setTimeout(() => { destroyPeer(); showScreen('home'); }, 2000);
     }
   });
 }
@@ -1431,9 +1520,14 @@ function startRandomMatchmaking() {
   matchmakingActive = true;
   gameMode = 'online';
   showWaitingScreen('matchmaking');
+  const queueStartedAt = Date.now();
+  if (typeof window.agsSendEvent === 'function') window.agsSendEvent('matchmaking_started', {});
   window.agsStartMatchmaking(
     function onFound(memberUserIds) {
       if (!matchmakingActive) return;
+      if (typeof window.agsSendEvent === 'function') {
+        window.agsSendEvent('matchmaking_matched', { wait_time_ms: Date.now() - queueStartedAt });
+      }
       const sorted = memberUserIds.slice().sort();
       const myId   = window.agsCurrentUserId;
       const isHost = myId === sorted[0];
@@ -1479,6 +1573,9 @@ function startRandomMatchmaking() {
     function onTimeout() {
       if (!matchmakingActive) return;
       matchmakingActive = false;
+      if (typeof window.agsSendEvent === 'function') {
+        window.agsSendEvent('matchmaking_timeout', { wait_time_ms: Date.now() - queueStartedAt });
+      }
       destroyPeer();
       showScreen('home');
       alert('No opponent found. Try again in a moment.');
@@ -1709,11 +1806,31 @@ function removeContact(address) {
   renderContacts(!!currentInviteLink);
 }
 
-function sendInviteToContact(name, address, link) {
-  const msg = `Hey ${name}! Let's play chess. Open this link to join my game: ${link}`;
+async function sendInviteToContact(name, address, link) {
   if (address.includes('@')) {
-    window.open(`mailto:${encodeURIComponent(address)}?subject=${encodeURIComponent("Chess Game — Join me!")}&body=${encodeURIComponent(msg)}`);
+    const fromName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'A friend';
+    const token = typeof window.agsGetToken === 'function' ? window.agsGetToken() : null;
+    const extendBase = (typeof __EXTEND_EMAIL_URL__ !== 'undefined' && __EXTEND_EMAIL_URL__)
+      ? __EXTEND_EMAIL_URL__
+      : '/extend';
+
+    try {
+      const res = await fetch(`${extendBase}/invite/email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: 'Bearer ' + token } : {}),
+        },
+        body: JSON.stringify({ to: address, from_name: fromName, invite_link: link }),
+      });
+      if (!res.ok) throw new Error('status ' + res.status);
+      showConnBanner(`Invite sent to ${name}!`, 'success');
+    } catch (err) {
+      console.warn('[invite] email send failed:', err);
+      showConnBanner('Could not send email — share the link below manually.', 'error');
+    }
   } else {
+    const msg = `Hey ${name}! Let's play chess. Open this link to join my game: ${link}`;
     window.open(`sms:${address}?&body=${encodeURIComponent(msg)}`);
   }
   showScreen('waiting');
