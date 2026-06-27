@@ -1646,11 +1646,14 @@ input[type="checkbox"] {
   line-height: 1;
   cursor: grab;
   user-select: none;
+  -webkit-user-drag: none;
   transition: transform 0.12s ease;
 }
 
-.piece:hover {
-  transform: translateY(-1px) scale(1.08);
+@media (hover: hover) {
+  .piece:hover {
+    transform: translateY(-1px) scale(1.08);
+  }
 }
 
 .piece.white {
