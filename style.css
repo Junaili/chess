@@ -102,6 +102,7 @@ button:focus-visible {
 }
 
 #screen-home,
+#screen-invite,
 #screen-legal,
 #screen-color-select,
 #screen-piece-color,
@@ -2823,4 +2824,96 @@ input[type="checkbox"] {
     flex-direction: column;
     gap: 4px;
   }
+}
+
+/* ─── Invite Landing Screen ───────────────────────────────────────────────── */
+.invite-landing {
+  width: min(480px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0;
+  animation: fadeIn 0.45s ease;
+}
+
+.invite-eyebrow {
+  margin-bottom: 24px;
+  font-size: 0.78rem;
+  letter-spacing: 0.24em;
+}
+
+.invite-piece-glow {
+  font-size: 4.8rem;
+  line-height: 1;
+  margin-bottom: 24px;
+  animation: invitePulse 3.2s ease-in-out infinite;
+}
+
+@keyframes invitePulse {
+  0%, 100% { filter: drop-shadow(0 0 14px rgba(240, 195, 122, 0.42)); }
+  50%       { filter: drop-shadow(0 0 38px rgba(240, 195, 122, 0.78)); }
+}
+
+.invite-landing-title {
+  font-family: "Cormorant Garamond", Georgia, serif;
+  font-size: clamp(1.9rem, 4.5vw, 2.9rem);
+  line-height: 1.08;
+  margin-bottom: 12px;
+}
+
+.invite-landing-sub {
+  color: var(--text-dim);
+  font-size: 0.96rem;
+  line-height: 1.65;
+  margin-bottom: 28px;
+  max-width: 340px;
+}
+
+.invite-landing-actions {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.btn-invite-cta {
+  width: 100%;
+  font-size: 1.04rem;
+  padding: 16px 24px;
+}
+
+.invite-divider {
+  width: 100%;
+  margin: 20px 0 18px;
+}
+
+.invite-signin-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 22px;
+}
+
+.invite-google {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.invite-pw {
+  width: 100%;
+}
+
+.invite-back {
+  font-size: 0.88rem;
+  color: var(--text-soft);
+  border-color: transparent;
+  background: transparent;
+}
+
+.invite-back:hover {
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: none;
 }

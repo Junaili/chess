@@ -145,3 +145,28 @@ export function resolveDisplayNames(rankings) {
     return {}
   }
 }
+
+export async function fetchInviterName(userId) {
+  if (!userId) return null
+  try {
+    const cache = JSON.parse(localStorage.getItem(NAME_CACHE_KEY) || '{}')
+    const cached = getCachedNameAnyAge(cache, userId)
+    if (cached) return cached
+  } catch {}
+  const token = await getToken()
+  if (!token) return null
+  try {
+    const { coreConfig } = sdk.assembly()
+    const resp = await fetch(
+      `${coreConfig.baseURL}/basic/v1/public/namespaces/${coreConfig.namespace}/users/${userId}/profiles/public`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    if (!resp.ok) return null
+    const b = await resp.json()
+    const name = b.customAttributes?.displayName || b.displayName || null
+    cacheDisplayName(userId, name)
+    return name
+  } catch {
+    return null
+  }
+}

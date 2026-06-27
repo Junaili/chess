@@ -4,7 +4,7 @@ import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
 import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory } from './stats.js'
 import { sendEvent, flushPendingEvents, captureUtm } from './telemetry.js'
 import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from './spectator.js'
-import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName } from './leaderboard.js'
+import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName } from './leaderboard.js'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite } from './presence.js'
@@ -61,6 +61,16 @@ function showInviteConfirmation(invitedBy, onAccept) {
   el.appendChild(msg)
   el.appendChild(acceptBtn)
   el.appendChild(declineBtn)
+}
+
+function showInviteScreen(inviterName) {
+  const titleEl = document.getElementById('invite-landing-title')
+  if (titleEl) {
+    titleEl.textContent = inviterName
+      ? `${inviterName} challenged you to chess!`
+      : 'A friend challenged you to chess!'
+  }
+  if (typeof window.showScreen === 'function') window.showScreen('invite')
 }
 
 async function hydrateAuthenticatedUser(profile) {
@@ -242,6 +252,15 @@ async function initAuth() {
     updateAuthUI(false, null, null)
     updateStatsUI(null)
     refreshLeaderboard()
+    if (inviteByParam) {
+      showInviteScreen(null)
+      fetchInviterName(inviteByParam).then(name => {
+        if (name) {
+          const titleEl = document.getElementById('invite-landing-title')
+          if (titleEl) titleEl.textContent = `${name} challenged you to chess!`
+        }
+      })
+    }
   }
 
   window.agsLogin = loginWithGoogle
