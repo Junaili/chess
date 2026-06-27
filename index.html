@@ -3,7 +3,42 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Ethan's Chess</title>
+  <title>Ethan's Chess — Play Multiplayer Chess with Friends</title>
+  <meta name="description" content="Play multiplayer chess with friends and family anywhere in the world. Real-time matches, leaderboard rankings, video chat, and more — free to play." />
+  <link rel="canonical" href="https://junaili.github.io/chess/" />
+
+  <!-- Open Graph -->
+  <meta property="og:type"         content="website" />
+  <meta property="og:url"          content="https://junaili.github.io/chess/" />
+  <meta property="og:title"        content="Ethan's Chess — Play with Friends" />
+  <meta property="og:description"  content="Real-time multiplayer chess with friends and family, anywhere in the world. Leaderboards, video chat, random matchmaking — free." />
+  <meta property="og:image"        content="https://junaili.github.io/chess/og-image.png" />
+  <meta property="og:image:width"  content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:site_name"    content="Ethan's Chess" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card"        content="summary_large_image" />
+  <meta name="twitter:title"       content="Ethan's Chess — Play with Friends" />
+  <meta name="twitter:description" content="Real-time multiplayer chess with friends and family, anywhere in the world." />
+  <meta name="twitter:image"       content="https://junaili.github.io/chess/og-image.png" />
+
+  <!-- Structured data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "Ethan's Chess",
+    "description": "Play multiplayer chess with friends and family anywhere in the world. Real-time matches, leaderboard rankings, and video chat.",
+    "url": "https://junaili.github.io/chess/",
+    "applicationCategory": "GameApplication",
+    "genre": "Board Game",
+    "operatingSystem": "Web, iOS",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
+  </script>
+
+  <!-- PWA / iOS -->
   <link rel="manifest" href="/chess/manifest.json" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -102,8 +137,9 @@
             </div>
             <div class="friends-add-row">
               <button class="btn-mini" id="btn-add-friend-expand" onclick="window.agsToggleAddFriend && window.agsToggleAddFriend()">+ Add Friend</button>
-              <button class="btn-mini" id="btn-copy-invite-link" onclick="window.agsCopyInviteLink && window.agsCopyInviteLink()">Copy Invite Link</button>
+              <button class="btn-mini" id="btn-copy-invite-link" onclick="window.agsCopyInviteLink && window.agsCopyInviteLink()">Share Invite Link</button>
             </div>
+            <div id="ags-invite-share-row" style="margin-top:6px"></div>
             <div id="ags-add-friend-form" style="display:none;margin-top:8px">
               <div style="display:flex;gap:6px;align-items:center">
                 <input type="email" id="ags-add-friend-email" class="name-input" placeholder="friend@example.com"
@@ -404,6 +440,7 @@
           <button class="btn btn-secondary" onclick="shareInviteLink()">📤 Share…</button>
           <button class="btn btn-secondary" onclick="showContactsForInvite()">👤 Send to Contact</button>
         </div>
+        <div id="waiting-share-row" style="margin-top:4px"></div>
       </div>
 
       <div id="waiting-spinner" class="waiting-spinner" style="display:none"></div>

@@ -63,6 +63,117 @@ function showInviteConfirmation(invitedBy, onAccept) {
   el.appendChild(declineBtn)
 }
 
+function addUtm(url, medium) {
+  try {
+    const u = new URL(url)
+    u.searchParams.set('utm_source', 'invite')
+    u.searchParams.set('utm_medium', medium)
+    u.searchParams.set('utm_campaign', 'player-invite')
+    return u.toString()
+  } catch {
+    return url
+  }
+}
+
+function mountShareRow(containerEl, url, opts = {}) {
+  const { emailTo = null, fromName = null } = opts
+  const enc = s => encodeURIComponent(s)
+  const linkUrl      = addUtm(url, 'link')
+  const whatsappUrl  = addUtm(url, 'whatsapp')
+  const twitterUrl   = addUtm(url, 'twitter')
+  const emailUrl     = addUtm(url, 'email')
+  const gameText = fromName
+    ? `${fromName} challenged you to chess! Join here: ${linkUrl}`
+    : `Let's play chess! Join my game: ${linkUrl}`
+  const xText = fromName
+    ? `${fromName} challenged me to chess 🎯 — think you can beat them?`
+    : 'Think you can beat me? 🎯 Play chess now'
+
+  const row = document.createElement('div')
+  row.className = 'share-row'
+
+  const copyBtn = document.createElement('button')
+  copyBtn.className = 'share-chip share-chip-copy'
+  copyBtn.textContent = '📋 Copy'
+  copyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(linkUrl).then(() => {
+      copyBtn.textContent = '✅ Copied!'
+      sendEvent('invite_sent', { medium: 'link' })
+      setTimeout(() => { copyBtn.textContent = '📋 Copy' }, 1800)
+    }).catch(() => { copyBtn.textContent = '📋 Copy' })
+  })
+  row.appendChild(copyBtn)
+
+  const wa = document.createElement('a')
+  wa.className = 'share-chip share-chip-whatsapp'
+  wa.href = `https://api.whatsapp.com/send?text=${enc(fromName ? `${fromName} challenged you to chess! Join here: ${whatsappUrl}` : `Let's play chess! Join my game: ${whatsappUrl}`)}`
+  wa.target = '_blank'
+  wa.rel = 'noopener'
+  wa.textContent = '🟢 WhatsApp'
+  wa.addEventListener('click', () => sendEvent('invite_sent', { medium: 'whatsapp' }))
+  row.appendChild(wa)
+
+  const tw = document.createElement('a')
+  tw.className = 'share-chip share-chip-x'
+  tw.href = `https://x.com/intent/tweet?text=${enc(xText)}&url=${enc(twitterUrl)}`
+  tw.target = '_blank'
+  tw.rel = 'noopener'
+  tw.textContent = '𝕏 Post'
+  tw.addEventListener('click', () => sendEvent('invite_sent', { medium: 'twitter' }))
+  row.appendChild(tw)
+
+  if (emailTo) {
+    const emailBtn = document.createElement('button')
+    emailBtn.className = 'share-chip share-chip-email'
+    emailBtn.textContent = '✉️ Email'
+    emailBtn.addEventListener('click', async () => {
+      emailBtn.disabled = true
+      emailBtn.textContent = 'Sending…'
+      try {
+        const token = sdk.getToken()?.accessToken ?? null
+        const extendBase = import.meta.env.VITE_EXTEND_EMAIL_URL || '/extend'
+        const res = await fetch(`${extendBase}/invite/email`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: 'Bearer ' + token } : {}),
+          },
+          body: JSON.stringify({ to: emailTo, from_name: fromName || 'A friend', invite_link: emailUrl }),
+        })
+        if (!res.ok) throw new Error('status ' + res.status)
+        sendEvent('invite_sent', { medium: 'email' })
+        emailBtn.textContent = '✅ Sent!'
+        setTimeout(() => { emailBtn.textContent = '✉️ Email'; emailBtn.disabled = false }, 3000)
+      } catch {
+        emailBtn.textContent = '✉️ Email'
+        emailBtn.disabled = false
+      }
+    })
+    row.appendChild(emailBtn)
+  } else {
+    const emailLink = document.createElement('a')
+    emailLink.className = 'share-chip share-chip-email'
+    emailLink.href = `mailto:?subject=${enc("Chess challenge!")}&body=${enc(`Join my game: ${emailUrl}`)}`
+    emailLink.textContent = '✉️ Email'
+    emailLink.addEventListener('click', () => sendEvent('invite_sent', { medium: 'email' }))
+    row.appendChild(emailLink)
+  }
+
+  if (navigator.share) {
+    const nativeBtn = document.createElement('button')
+    nativeBtn.className = 'share-chip share-chip-native'
+    nativeBtn.textContent = '📤 More…'
+    nativeBtn.addEventListener('click', () => {
+      navigator.share({ title: "Ethan's Chess", text: gameText, url: addUtm(url, 'native') }).catch(() => {})
+      sendEvent('invite_sent', { medium: 'native_share' })
+    })
+    row.appendChild(nativeBtn)
+  }
+
+  containerEl.appendChild(row)
+  return row
+}
+
 function showInviteScreen(inviterName) {
   const titleEl = document.getElementById('invite-landing-title')
   if (titleEl) {
@@ -481,43 +592,18 @@ async function initAuth() {
       return
     }
 
-    // User not found — store pending invite and show invite link
+    // User not found — store pending invite and show share options
     storePendingInvite(email, currentUserId)
-    const inviteUrl = window.location.origin + window.location.pathname + '?invitedBy=' + encodeURIComponent(currentUserId) + '&email=' + encodeURIComponent(email)
-    const safeUrl = inviteUrl.replace(/'/g, '%27')
+    const inviteUrl = addUtm(window.location.origin + window.location.pathname + '?invitedBy=' + encodeURIComponent(currentUserId) + '&email=' + encodeURIComponent(email), 'email')
     if (resultEl) {
       resultEl.innerHTML = `
         <span class="auth-message">No account found. Share this invite:</span>
         <div class="invite-link-box" style="margin:6px 0">
           <span class="invite-link-text">${esc(inviteUrl)}</span>
-          <button class="btn-copy" onclick="navigator.clipboard.writeText('${safeUrl}').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
         </div>
-        <button id="ags-email-invite-btn" class="btn btn-secondary btn-mini" style="display:inline-block;margin-top:4px">Email Invite</button>
       `
-      resultEl.querySelector('#ags-email-invite-btn')?.addEventListener('click', async function () {
-        this.disabled = true
-        this.textContent = 'Sending…'
-        const fromName = document.getElementById('ags-signedin-name')?.textContent || 'A friend'
-        const token = sdk.getToken()?.accessToken ?? null
-        const extendBase = import.meta.env.VITE_EXTEND_EMAIL_URL || '/extend'
-        try {
-          const res = await fetch(`${extendBase}/invite/email`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: 'Bearer ' + token } : {}),
-            },
-            body: JSON.stringify({ to: email, from_name: fromName, invite_link: inviteUrl }),
-          })
-          if (!res.ok) throw new Error('status ' + res.status)
-          sendEvent('invite_sent', { medium: 'email' })
-          this.textContent = 'Sent! Ask your friend to check their junk folder if they didn\'t receive the email'
-        } catch (err) {
-          console.warn('[invite] email send failed:', err)
-          this.disabled = false
-          this.textContent = 'Failed — copy link above'
-        }
-      })
+      const fromName = document.getElementById('ags-signedin-name')?.textContent || 'A friend'
+      mountShareRow(resultEl, inviteUrl, { emailTo: email, fromName })
     }
   }
   window.agsToggleAddFriend = () => {
@@ -534,15 +620,27 @@ async function initAuth() {
       if (result) result.innerHTML = ''
     }
   }
+  window.agsShareRow = mountShareRow
   window.agsCopyInviteLink = () => {
-    const btn = document.getElementById('btn-copy-invite-link')
     const link = window.location.origin + window.location.pathname + (currentUserId ? `?invitedBy=${encodeURIComponent(currentUserId)}` : '')
-    navigator.clipboard.writeText(link).then(() => {
-      sendEvent('invite_sent', { medium: 'link' })
-      if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy Invite Link' }, 1500) }
-    }).catch(() => {
-      if (btn) { btn.textContent = 'Copy failed'; setTimeout(() => { btn.textContent = 'Copy Invite Link' }, 2000) }
-    })
+    const container = document.getElementById('ags-invite-share-row')
+    if (navigator.share) {
+      const fromName = document.getElementById('ags-signedin-name')?.textContent || undefined
+      const nativeLink = addUtm(link, 'native')
+      navigator.share({
+        title: "Ethan's Chess",
+        text: fromName ? `${fromName} challenged you to chess! Join here: ${nativeLink}` : `Let's play chess! Join my game: ${nativeLink}`,
+        url: nativeLink,
+      }).catch(() => {})
+      sendEvent('invite_sent', { medium: 'native_share' })
+      return
+    }
+    if (!container) return
+    if (container.querySelector('.share-row')) {
+      container.innerHTML = ''
+      return
+    }
+    mountShareRow(container, link)
   }
   window.agsRequestLastOpponent = async () => {
     const opponent = window.agsLastOpponent
