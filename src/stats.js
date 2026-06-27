@@ -2,7 +2,7 @@ import { UserStatisticApi } from '@accelbyte/sdk-social'
 import { PublicPlayerRecordApi } from '@accelbyte/sdk-cloudsave'
 import { sdk } from './ags-client.js'
 
-const STAT_CODES = ['chess-wins', 'chess-losses']
+const STAT_CODES = ['chess-wins', 'chess-losses', 'chess-games-played', 'chess-draws', 'chess-online-games']
 const MATCH_HISTORY_KEY = 'chess-match-history'
 const MAX_MATCH_HISTORY = 50
 const MATCH_HISTORY_BUILD = 'cloudsave-v3'
@@ -26,9 +26,13 @@ export async function fetchStats(userId) {
       statCodes: STAT_CODES.join(','),
     })
     const items = res.data?.data || []
+    const get = code => items.find(i => i.statCode === code)?.value ?? 0
     return {
-      wins: items.find(i => i.statCode === 'chess-wins')?.value ?? 0,
-      losses: items.find(i => i.statCode === 'chess-losses')?.value ?? 0,
+      wins:         get('chess-wins'),
+      losses:       get('chess-losses'),
+      gamesPlayed:  get('chess-games-played'),
+      draws:        get('chess-draws'),
+      onlineGames:  get('chess-online-games'),
     }
   } catch (e) {
     console.warn('[AGS stats] fetchStats:', e?.response?.data || e?.message)

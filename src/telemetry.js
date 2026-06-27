@@ -1,51 +1,63 @@
-import { PublicPlayerRecordApi } from '@accelbyte/sdk-cloudsave'
+import { GametelemetryOperationsApi } from '@accelbyte/sdk-gametelemetry'
 import { sdk } from './ags-client.js'
 
-const TELEMETRY_KEY = 'chess-telemetry'
-const MAX_EVENTS = 200
+// Events queued before the user is authenticated; flushed after login.
+let preAuthQueue = []
+
+// Capture UTM params and referrer on first load and persist for the session
+// so they survive the Google OAuth redirect (which clears the URL).
+export function captureUtm() {
+  if (sessionStorage.getItem('chess_utm')) return
+  try {
+    const p = new URLSearchParams(window.location.search)
+    sessionStorage.setItem('chess_utm', JSON.stringify({
+      utm_source:   p.get('utm_source')   || '',
+      utm_medium:   p.get('utm_medium')   || '',
+      utm_campaign: p.get('utm_campaign') || '',
+      referrer:     document.referrer     || '',
+    }))
+  } catch {}
+}
+
+function getUtm() {
+  try { return JSON.parse(sessionStorage.getItem('chess_utm') || '{}') } catch { return {} }
+}
 
 function api() {
   const { coreConfig } = sdk.assembly()
-  return PublicPlayerRecordApi(sdk, {
-    coreConfig: { ...coreConfig, useSchemaValidation: false },
-  })
+  return GametelemetryOperationsApi(sdk, { coreConfig: { ...coreConfig, useSchemaValidation: false } })
 }
 
-async function readEvents(userId) {
+async function dispatch(events) {
   try {
-    const res = await api().getRecord_ByUserId_ByKey(userId, TELEMETRY_KEY)
-    const events = res.data?.value?.events
-    return Array.isArray(events) ? events : []
+    await api().createProtectedEvent(events)
   } catch (e) {
-    if (e?.response?.status === 404) return []
-    throw e
+    console.warn('[telemetry]', e?.response?.data || e?.message)
   }
 }
 
-async function writeEvents(userId, events) {
-  const record = { events, updatedAt: new Date().toISOString() }
-  try {
-    await api().updateRecord_ByUserId_ByKey(userId, TELEMETRY_KEY, record)
-  } catch (e) {
-    if (e?.response?.status !== 404) throw e
-    await api().createRecord_ByUserId_ByKey(userId, TELEMETRY_KEY, record)
+// Send a single event to AGS Game Telemetry. If the user is not yet
+// authenticated the event is queued; call flushPendingEvents() after login.
+export async function sendEvent(eventName, payload = {}) {
+  const { coreConfig } = sdk.assembly()
+  const event = {
+    EventNamespace:  coreConfig.namespace,
+    EventName:       eventName,
+    ClientTimestamp: new Date().toISOString(),
+    Payload:         { ...getUtm(), ...payload },
   }
+  if (!sdk.getToken()?.accessToken) {
+    preAuthQueue.push(event)
+    return
+  }
+  await dispatch([event])
 }
 
-export async function sendTelemetryEvent(eventName, payload) {
-  const token = sdk.getToken()?.accessToken
-  if (!token || !payload?.userId) return
-
-  try {
-    const existing = await readEvents(payload.userId)
-    const event = {
-      eventName,
-      timestamp: new Date().toISOString(),
-      ...payload,
-    }
-    const updated = [event, ...existing].slice(0, MAX_EVENTS)
-    await writeEvents(payload.userId, updated)
-  } catch (e) {
-    console.warn('[AGS telemetry] sendTelemetryEvent:', e?.response?.data || e?.message)
-  }
+// Deliver any events queued before authentication.
+// Call once immediately after the user's session is established.
+export async function flushPendingEvents() {
+  if (!preAuthQueue.length || !sdk.getToken()?.accessToken) return
+  const toSend = preAuthQueue.slice()
+  preAuthQueue = []
+  await dispatch(toSend)
 }

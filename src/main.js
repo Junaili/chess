@@ -2,7 +2,7 @@ import { loginWithGoogle, loginWithPassword, registerWithPassword, handleCallbac
 import { sdk } from './ags-client.js'
 import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
 import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory } from './stats.js'
-import { sendTelemetryEvent } from './telemetry.js'
+import { sendEvent, flushPendingEvents, captureUtm } from './telemetry.js'
 import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from './spectator.js'
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName } from './leaderboard.js'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
@@ -66,6 +66,10 @@ function showInviteConfirmation(invitedBy, onAccept) {
 async function hydrateAuthenticatedUser(profile) {
   currentUserId = profile.userId
   window.agsCurrentUserId = currentUserId
+  // Flush any events queued before authentication (invite_link_clicked, etc.)
+  // and expose the send function to non-module scripts (app.js).
+  await flushPendingEvents()
+  window.agsSendEvent = (name, payload) => sendEvent(name, payload)
   const name = getDisplayName(profile)
   cacheDisplayName(currentUserId, name)
   syncBasicProfile(name)
@@ -102,6 +106,7 @@ async function hydrateAuthenticatedUser(profile) {
   currentUserWins = stats?.wins ?? 0
   updateStatsUI(stats)
   await refreshLeaderboard()
+  sendEvent('leaderboard_viewed', { trigger: 'session_start' })
   const randomBtn = document.getElementById('btn-play-random')
   if (randomBtn) randomBtn.style.display = ''
 }
@@ -186,6 +191,19 @@ async function initAuth() {
 
   const prefilledEmail = params.get('email') || ''
 
+  // Capture UTM/referrer before the Google redirect wipes the URL, then
+  // queue an invite_link_clicked event if this is an invite landing.
+  captureUtm()
+  const inviteByParam = params.get('invitedBy')
+  if (inviteByParam) {
+    sessionStorage.setItem('chess_invite_by', inviteByParam)
+    sessionStorage.setItem('chess_invite_medium', params.get('utm_medium') || 'link')
+    sendEvent('invite_link_clicked', {
+      inviter_user_id: inviteByParam,
+      medium: params.get('utm_medium') || 'link',
+    })
+  }
+
   let profile = null
   let tokenData = null
   if (hasCallback) {
@@ -193,6 +211,7 @@ async function initAuth() {
     if (result?.response) {
       tokenData = result.response.data || null
       profile = await getProfile()
+      if (profile) sendEvent('user_logged_in', { method: 'google' })
     }
   } else if (hasStoredSession()) {
     const refreshed = await refreshSession()
@@ -262,6 +281,7 @@ async function initAuth() {
       return
     }
     clearAuthMessages()
+    sendEvent('user_logged_in', { method: 'email' })
     const completed = await completeAuthenticatedSession({ tokenData: result.data || null })
     if (!completed) {
       if (document.getElementById('screen-legal')?.classList.contains('active')) return
@@ -293,6 +313,11 @@ async function initAuth() {
       if (typeof window.showScreen === 'function') window.showScreen('login')
       return
     }
+    sendEvent('user_registered', {
+      method: 'email',
+      invited_by: sessionStorage.getItem('chess_invite_by') || undefined,
+      invite_medium: sessionStorage.getItem('chess_invite_medium') || undefined,
+    })
     clearAuthMessages()
     const completed = await completeAuthenticatedSession({ tokenData: loggedIn.data || null })
     if (!completed) {
@@ -397,6 +422,7 @@ async function initAuth() {
   }
   window.agsAcceptFriend = async friendId => {
     await runFriendAction(() => acceptFriend(friendId), 'Friend request accepted.')
+    sendEvent('friend_request_accepted', {})
   }
   window.agsRejectFriend = async friendId => {
     await runFriendAction(() => rejectFriend(friendId), 'Friend request rejected.')
@@ -406,6 +432,7 @@ async function initAuth() {
   }
   window.agsRequestFriend = async friendId => {
     await runFriendAction(() => requestFriend(friendId), 'Friend request sent.')
+    sendEvent('friend_request_sent', { source: 'manual' })
   }
   window.agsOpenProfile = openPublicProfile
   window.agsProfileAddFriend = async () => {
@@ -430,6 +457,7 @@ async function initAuth() {
     if (result.found) {
       if (resultEl) resultEl.innerHTML = `<span class="auth-message success">Friend request sent to ${esc(result.displayName)}!</span>`
       if (emailInput) emailInput.value = ''
+      sendEvent('friend_request_sent', { source: 'email_lookup' })
       await refreshFriendsUI(false)
       return
     }
@@ -463,6 +491,7 @@ async function initAuth() {
             body: JSON.stringify({ to: email, from_name: fromName, invite_link: inviteUrl }),
           })
           if (!res.ok) throw new Error('status ' + res.status)
+          sendEvent('invite_sent', { medium: 'email' })
           this.textContent = 'Sent! Ask your friend to check their junk folder if they didn\'t receive the email'
         } catch (err) {
           console.warn('[invite] email send failed:', err)
@@ -490,6 +519,7 @@ async function initAuth() {
     const btn = document.getElementById('btn-copy-invite-link')
     const link = window.location.origin + window.location.pathname + (currentUserId ? `?invitedBy=${encodeURIComponent(currentUserId)}` : '')
     navigator.clipboard.writeText(link).then(() => {
+      sendEvent('invite_sent', { medium: 'link' })
       if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy Invite Link' }, 1500) }
     }).catch(() => {
       if (btn) { btn.textContent = 'Copy failed'; setTimeout(() => { btn.textContent = 'Copy Invite Link' }, 2000) }
@@ -516,15 +546,19 @@ async function initAuth() {
     await incrementStat(currentUserId, 'chess-losses')
     updateStatsUI(await fetchStats(currentUserId))
   }
+  window.agsIncrementDraw = async () => {
+    if (!currentUserId) return
+    await incrementStat(currentUserId, 'chess-draws')
+    updateStatsUI(await fetchStats(currentUserId))
+  }
+  window.agsIncrementGamePlayed = async (mode) => {
+    if (!currentUserId) return
+    await incrementStat(currentUserId, 'chess-games-played')
+    if (mode === 'online') await incrementStat(currentUserId, 'chess-online-games')
+  }
   window.agsRecordMatchHistory = async match => {
     if (!currentUserId) return
-    await Promise.all([
-      recordMatchHistory({ ...match, playerUserId: currentUserId }),
-      sendTelemetryEvent('chess-match-duration', {
-        userId: currentUserId,
-        durationMs: match.durationMs,
-      }),
-    ])
+    await recordMatchHistory({ ...match, playerUserId: currentUserId })
   }
 
   window.agsPublishLiveMove = async () => {

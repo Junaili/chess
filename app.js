@@ -232,6 +232,9 @@ function startGame() {
   if (typeof window.agsSetPresence === 'function') {
     window.agsSetPresence('in-match');
   }
+  if (typeof window.agsSendEvent === 'function') {
+    window.agsSendEvent('game_started', { mode: gameMode, color: playerColor });
+  }
   matchStartedAt = new Date();
   matchHistoryRecorded = false;
   game = new ChessGame();
@@ -787,7 +790,10 @@ function showGameOver() {
     if (typeof window.agsIncrementWin === 'function') window.agsIncrementWin();
   } else if (game.status === 'checkmate' && game.winner && game.winner !== playerColor) {
     if (typeof window.agsIncrementLoss === 'function') window.agsIncrementLoss();
+  } else if (game.status === 'stalemate') {
+    if (typeof window.agsIncrementDraw === 'function') window.agsIncrementDraw();
   }
+  if (typeof window.agsIncrementGamePlayed === 'function') window.agsIncrementGamePlayed(gameMode);
 
   const title = document.getElementById('game-over-title');
   const msg   = document.getElementById('game-over-message');
@@ -843,6 +849,16 @@ function recordMatchHistoryOnce() {
   const opponentUserId = gameMode === 'online'
     ? currentOpponent?.userId || ''
     : '';
+
+  if (typeof window.agsSendEvent === 'function') {
+    window.agsSendEvent('game_completed', {
+      mode:            gameMode,
+      result,
+      duration_ms:     endedAt.getTime() - startedAt.getTime(),
+      move_count:      game.moveHistory.length,
+      opponent_is_bot: gameMode === 'computer',
+    });
+  }
 
   window.agsRecordMatchHistory({
     id: 'match-' + endedAt.getTime() + '-' + Math.random().toString(36).slice(2, 8),
@@ -1504,9 +1520,14 @@ function startRandomMatchmaking() {
   matchmakingActive = true;
   gameMode = 'online';
   showWaitingScreen('matchmaking');
+  const queueStartedAt = Date.now();
+  if (typeof window.agsSendEvent === 'function') window.agsSendEvent('matchmaking_started', {});
   window.agsStartMatchmaking(
     function onFound(memberUserIds) {
       if (!matchmakingActive) return;
+      if (typeof window.agsSendEvent === 'function') {
+        window.agsSendEvent('matchmaking_matched', { wait_time_ms: Date.now() - queueStartedAt });
+      }
       const sorted = memberUserIds.slice().sort();
       const myId   = window.agsCurrentUserId;
       const isHost = myId === sorted[0];
@@ -1552,6 +1573,9 @@ function startRandomMatchmaking() {
     function onTimeout() {
       if (!matchmakingActive) return;
       matchmakingActive = false;
+      if (typeof window.agsSendEvent === 'function') {
+        window.agsSendEvent('matchmaking_timeout', { wait_time_ms: Date.now() - queueStartedAt });
+      }
       destroyPeer();
       showScreen('home');
       alert('No opponent found. Try again in a moment.');
