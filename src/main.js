@@ -8,10 +8,12 @@ import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayName
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite } from './presence.js'
+import { ensureNotificationPermission, notify } from './notifications.js'
 
 let currentUserId = null
 let currentUserWins = 0
 let currentStreak = 0
+let seenIncomingRequestIds = null  // null until first friends load — avoids notifying for pre-existing requests
 let pendingLegalDocuments = []
 let pendingLegalProfile = null
 let friendsState = { friends: [], incoming: [], outgoing: [] }
@@ -381,6 +383,8 @@ async function initAuth() {
     stopFriendsRefresh()
     stopPresenceUpdates()
     stopGameInviteUpdates()
+    seenIncomingRequestIds = null
+    currentStreak = 0
     await signOutPresence()
     await logout()
   }
@@ -511,6 +515,7 @@ async function initAuth() {
   window.agsCancelMatchmaking = cancelMatchmaking
   window.agsRefreshFriends = refreshFriendsUI
   window.agsInviteFriend = friendId => {
+    ensureNotificationPermission()  // user gesture — ask now so they can be notified of the reply
     const friend = friendsState.friends.find(item => item.userId === friendId)
     if (!friend) {
       setFriendsMessage('Friend is not available.', 'error')
@@ -563,6 +568,7 @@ async function initAuth() {
     await runFriendAction(() => cancelFriendRequest(friendId), 'Friend request canceled.')
   }
   window.agsRequestFriend = async friendId => {
+    ensureNotificationPermission()  // user gesture — ask now so they can be notified when accepted
     await runFriendAction(() => requestFriend(friendId), 'Friend request sent.')
     sendEvent('friend_request_sent', { source: 'manual' })
   }
@@ -1137,9 +1143,29 @@ async function refreshFriendsUI(showLoading = true) {
   friendsState = state
   setFriendsMessage('')
   renderFriendsPanel(true)
+  notifyNewFriendRequests(state.incoming)
 
   const anyAccepted = await processIncomingInviteAcceptances(state.incoming)
   if (anyAccepted) await refreshFriendsUI(false)
+}
+
+function notifyNewFriendRequests(incoming = []) {
+  const ids = incoming.map(item => item.userId).filter(Boolean)
+  // First load after login: prime the set silently so we don't notify for
+  // requests that were already pending before this session.
+  if (seenIncomingRequestIds === null) {
+    seenIncomingRequestIds = new Set(ids)
+    return
+  }
+  const fresh = incoming.filter(item => item.userId && !seenIncomingRequestIds.has(item.userId))
+  for (const id of ids) seenIncomingRequestIds.add(id)
+  if (!fresh.length) return
+  if (fresh.length === 1) {
+    const name = fresh[0].displayName || fresh[0].name || 'Someone'
+    notify('New friend request', { body: `${name} wants to be your friend`, tag: 'friend-request' })
+  } else {
+    notify('New friend requests', { body: `You have ${fresh.length} new friend requests`, tag: 'friend-request' })
+  }
 }
 
 function startFriendsRefresh() {
@@ -1201,6 +1227,10 @@ function startGameInviteUpdates() {
       }
       return
     }
+    notify(`${invite?.fromName || 'A friend'} invited you to play`, {
+      body: 'Open Ethan\'s Chess to join the match',
+      tag: 'game-invite',
+    })
     if (typeof window.showFriendMatchInvite === 'function') {
       window.showFriendMatchInvite(invite)
     }
