@@ -26,6 +26,7 @@ let pendingPersonalChatRequests = new Map()
 let presenceListeners = new Set()
 let gameInviteListeners = new Set()
 let lobbyOpenListeners = new Set()
+let inviteJoinListeners = new Set()
 const knownPresence = new Map()  // userId (normalised) → last confirmed presence
 
 const HEARTBEAT_MS    = 45000    // re-send presence every 45 s to prevent server idle timeout
@@ -277,6 +278,29 @@ export function subscribeLobbyOpen(listener) {
   return () => lobbyOpenListeners.delete(listener)
 }
 
+export function subscribeInviteJoins(listener) {
+  inviteJoinListeners.add(listener)
+  return () => inviteJoinListeners.delete(listener)
+}
+
+export async function sendInviteJoinNotification({ to, fromUserId, fromName }) {
+  const opened = await waitForLobbyOpen(5000)
+  if (!opened || !lobbyWs) return { ok: false }
+  const id = lobbyId()
+  try {
+    lobbyWs.sendPersonalChat({
+      id,
+      to,
+      payload: JSON.stringify({ type: 'chess-invite-clicked', fromUserId, fromName }),
+      receivedAt: new Date().toISOString(),
+    })
+    debugPresence('invite-join-sent', { to, fromUserId })
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
+}
+
 export async function sendGameInvite({ from, to, payload }) {
   const opened = await waitForLobbyOpen()
   if (!opened || !lobbyWs) {
@@ -340,6 +364,15 @@ function notifyGameInvite(message) {
   try {
     payload = JSON.parse(message.payload || '{}')
   } catch {
+    return
+  }
+  if (payload?.type === 'chess-invite-clicked') {
+    const join = {
+      fromUserId: payload.fromUserId || message.from,
+      fromName: payload.fromName || null,
+    }
+    debugPresence('invite-join', join)
+    inviteJoinListeners.forEach(listener => { try { listener(join) } catch {} })
     return
   }
   const knownTypes = ['chess-match-invite', 'chess-match-declined']

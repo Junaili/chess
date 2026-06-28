@@ -7,7 +7,7 @@ import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from '.
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName } from './leaderboard.js'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
-import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite } from './presence.js'
+import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
 
 let currentUserId = null
@@ -20,6 +20,7 @@ let friendsState = { friends: [], incoming: [], outgoing: [] }
 let friendsRefreshTimer = null
 let unsubscribePresenceUpdates = null
 let unsubscribeGameInvites = null
+let unsubscribeInviteJoins = null
 let unsubscribeLobbyOpen = null
 let activeProfileUser = null
 let spectatorPrevScreen = null
@@ -204,12 +205,19 @@ async function hydrateAuthenticatedUser(profile) {
   setPresenceStatus('online')
   startPresenceUpdates()
   startGameInviteUpdates()
+  startInviteJoinUpdates()
   startFriendsRefresh()
   await refreshFriendsUI()
 
   const urlParams = new URLSearchParams(window.location.search)
   const invitedBy = urlParams.get('invitedBy')
   if (invitedBy && invitedBy !== currentUserId) {
+    // Notify the inviter in real-time (once per session per inviter)
+    const notifKey = `chess_join_notif_${invitedBy}`
+    if (!sessionStorage.getItem(notifKey)) {
+      sessionStorage.setItem(notifKey, '1')
+      sendInviteJoinNotification({ to: invitedBy, fromUserId: currentUserId, fromName: name }).catch(() => {})
+    }
     window.history.replaceState({}, '', window.location.pathname + window.location.hash)
     showInviteConfirmation(invitedBy, async () => {
       const state = await fetchFriendState()
@@ -352,6 +360,7 @@ async function initAuth() {
       stopFriendsRefresh()
       stopPresenceUpdates()
       stopGameInviteUpdates()
+      stopInviteJoinUpdates()
       currentUserId = null
       window.agsCurrentUserId = null
       updateAuthUI(false, null, null)
@@ -362,6 +371,7 @@ async function initAuth() {
     stopFriendsRefresh()
     stopPresenceUpdates()
     stopGameInviteUpdates()
+    stopInviteJoinUpdates()
     currentUserId = null
     window.agsCurrentUserId = null
     updateAuthUI(false, null, null)
@@ -383,6 +393,7 @@ async function initAuth() {
     stopFriendsRefresh()
     stopPresenceUpdates()
     stopGameInviteUpdates()
+    stopInviteJoinUpdates()
     seenIncomingRequestIds = null
     currentStreak = 0
     await signOutPresence()
@@ -508,6 +519,7 @@ async function initAuth() {
     stopFriendsRefresh()
     stopPresenceUpdates()
     stopGameInviteUpdates()
+    stopInviteJoinUpdates()
     await signOutPresence()
     await logout()
   }
@@ -1242,6 +1254,33 @@ function stopGameInviteUpdates() {
     unsubscribeGameInvites()
     unsubscribeGameInvites = null
   }
+}
+
+function startInviteJoinUpdates() {
+  stopInviteJoinUpdates()
+  unsubscribeInviteJoins = subscribeInviteJoins(join => showInviteJoinToast(join))
+}
+
+function stopInviteJoinUpdates() {
+  if (unsubscribeInviteJoins) {
+    unsubscribeInviteJoins()
+    unsubscribeInviteJoins = null
+  }
+}
+
+function showInviteJoinToast({ fromUserId, fromName }) {
+  const toast = document.getElementById('invite-join-toast')
+  if (!toast) return
+  const nameEl = document.getElementById('invite-join-name')
+  if (nameEl) {
+    nameEl.textContent = fromName
+      ? `${fromName} just signed up via your invite!`
+      : 'Someone just signed up via your invite!'
+  }
+  toast.classList.add('show')
+  clearTimeout(toast._timer)
+  toast._timer = setTimeout(() => toast.classList.remove('show'), 10000)
+  sendEvent('invite_join_notif_shown', { hasName: !!fromName })
 }
 
 function friendRow(item, actions = '') {

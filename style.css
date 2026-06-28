@@ -2830,6 +2830,189 @@ input[type="checkbox"] {
   }
 }
 
+/* ─── Share Row ───────────────────────────────────────────────────────────── */
+.share-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.share-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+  border: 1px solid transparent;
+  line-height: 1;
+  white-space: nowrap;
+  transition: transform 0.14s ease, opacity 0.14s ease;
+}
+
+.share-chip:hover  { transform: translateY(-1px); }
+.share-chip:active { transform: translateY(0); opacity: 0.8; }
+
+.share-chip-copy {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.share-chip-whatsapp {
+  background: #25d366;
+  color: #fff;
+}
+
+.share-chip-x {
+  background: #000;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.share-chip-email {
+  background: rgba(240, 195, 122, 0.14);
+  color: var(--accent-2);
+  border-color: rgba(240, 195, 122, 0.28);
+}
+
+.share-chip-native {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-dim);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* ─── Invite-Join Toast ───────────────────────────────────────────────────── */
+
+.invite-join-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 10000;
+  width: min(340px, calc(100vw - 32px));
+  background: linear-gradient(135deg, rgba(18, 13, 8, 0.97), rgba(28, 20, 12, 0.97));
+  border: 1px solid rgba(194, 106, 61, 0.45);
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transform: translateY(16px);
+  pointer-events: none;
+  transition: opacity 0.28s ease, transform 0.28s ease;
+}
+
+.invite-join-toast.show {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.ijt-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.ijt-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.ijt-title {
+  flex: 1;
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.ijt-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 0 0 0 4px;
+  line-height: 1.4;
+  opacity: 0.6;
+}
+
+.ijt-close:hover { opacity: 1; }
+
+.ijt-sub {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  padding-left: 28px;
+}
+
+/* ─── Contextual Invite Prompts ───────────────────────────────────────────── */
+
+/* Home screen idle nudge */
+.home-idle-prompt {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  animation: idleFadeIn 0.5s ease;
+}
+
+@keyframes idleFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.idle-eyebrow {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-2);
+  margin-bottom: 4px;
+}
+
+.idle-text {
+  margin: 0 0 2px;
+  font-size: 0.88rem;
+  color: var(--text-dim);
+}
+
+/* Game-over invite prompt */
+.game-over-invite-prompt {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.game-over-invite-prompt:empty {
+  display: none;
+}
+
+.invite-nudge-text {
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.01em;
+}
+
+.invite-nudge-cta {
+  cursor: pointer;
+  color: var(--accent-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* ─── Invite Landing Screen ───────────────────────────────────────────────── */
 .invite-landing {
   width: min(480px, 100%);

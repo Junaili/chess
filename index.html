@@ -106,6 +106,12 @@
             <button class="btn btn-matchmake" id="btn-play-random" style="display:none" onclick="startRandomMatchmaking()">Play vs Random</button>
           </div>
           <p class="menu-note">Choose your color, customize your pieces, and start from the board you actually want to play on.</p>
+          <div id="home-idle-prompt" class="home-idle-prompt" style="display:none">
+            <span class="idle-eyebrow">💡 Still here?</span>
+            <p class="idle-text">Invite a friend and play a live game right now.</p>
+            <div id="home-idle-share-row"></div>
+            <button id="home-idle-signup-btn" class="btn btn-primary btn-mini" style="display:none" onclick="window.agsOpenRegister && window.agsOpenRegister()">Create free account →</button>
+          </div>
           <div class="auth-divider" id="ags-guest-divider"><span>or play as guest</span></div>
           <input type="text" id="player-name-input" class="name-input" placeholder="Your name" maxlength="20" />
           <section id="ags-friends-panel" class="friends-panel" style="display:none">
@@ -528,6 +534,7 @@
       <p id="rematch-message" class="rematch-message"></p>
       <p id="game-over-countdown" class="game-over-countdown"></p>
       <p id="match-friend-message" class="auth-message"></p>
+      <div id="game-over-invite-prompt" class="game-over-invite-prompt"></div>
     </div>
   </div>
 
@@ -581,5 +588,15 @@
   <script src="ai-engine.js"></script>
   <script src="app.js"></script>
   <script type="module" src="/src/main.js?v=cloudsave-v3"></script>
+
+  <!-- ── Invite-Join Toast ─────────────────────────────────────────────────── -->
+  <div id="invite-join-toast" class="invite-join-toast" role="status" aria-live="assertive">
+    <div class="ijt-top">
+      <span class="ijt-icon">🎉</span>
+      <p class="ijt-title" id="invite-join-name">Someone signed up via your invite!</p>
+      <button class="ijt-close" aria-label="Dismiss" onclick="this.closest('#invite-join-toast').classList.remove('show')">✕</button>
+    </div>
+    <p class="ijt-sub">They're ready to play — check your Friends panel.</p>
+  </div>
 </body>
 </html>
