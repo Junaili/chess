@@ -1,0 +1,11 @@
+{
+  "appId": "io.github.junaili.chess",
+  "appName": "Ethan's Chess",
+  "webDir": "dist",
+  "server": {
+    "iosScheme": "capacitor"
+  },
+  "ios": {
+    "contentInset": "always"
+  }
+}

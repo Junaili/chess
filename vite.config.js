@@ -4,6 +4,9 @@ import { defineConfig, loadEnv } from 'vite'
 export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const agsTarget = env.ACCELBYTE_BASE_URL || 'https://seal-chessags.prod.gamingservices.accelbyte.io'
+  // Capacitor loads dist/ from local files (capacitor://localhost), so assets
+  // must use relative paths. GitHub Pages serves under the /chess/ subpath.
+  const base = env.VITE_BUILD_TARGET === 'capacitor' ? './' : '/chess/'
 
   const serverConfig = {
     host: '0.0.0.0',
@@ -40,7 +43,7 @@ export default defineConfig(({ mode, command }) => {
   }
 
   return {
-    base: '/chess/',
+    base,
     server: serverConfig,
     define: {
       __EXTEND_EMAIL_URL__: JSON.stringify(env.VITE_EXTEND_EMAIL_URL || ''),

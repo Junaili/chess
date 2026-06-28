@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "cap:build": "VITE_BUILD_TARGET=capacitor vite build",
+    "ios:build": "VITE_BUILD_TARGET=capacitor vite build && npx cap sync ios",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -34,6 +36,10 @@
     "@accelbyte/sdk-lobby": "^5.2.6",
     "@accelbyte/sdk-matchmaking": "^5.3.4",
     "@accelbyte/sdk-session": "^5.3.4",
-    "@accelbyte/sdk-social": "^6.3.4"
+    "@accelbyte/sdk-social": "^6.3.4",
+    "@capacitor/browser": "^8.0.3",
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/ios": "^8.4.1"
   }
 }
