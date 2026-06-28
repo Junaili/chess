@@ -6,6 +6,7 @@ const STAT_CODES = ['chess-wins', 'chess-losses', 'chess-games-played', 'chess-d
 const MATCH_HISTORY_KEY = 'chess-match-history'
 const MAX_MATCH_HISTORY = 50
 const MATCH_HISTORY_BUILD = 'cloudsave-v3'
+const STREAK_KEY = 'chess-streak'
 
 window.agsMatchHistoryBuild = MATCH_HISTORY_BUILD
 
@@ -148,5 +149,70 @@ export async function recordMatchHistory(match) {
     }
   } catch (e) {
     console.warn('[AGS match history] record:', e?.response?.status || '', e?.response?.data || e?.message || e)
+  }
+}
+
+export async function fetchStreak(userId) {
+  if (!userId || !sdk.getToken()?.accessToken) return { streak: 0, longestStreak: 0 }
+  try {
+    const api = cloudSaveApi()
+    let res
+    try {
+      res = await api.getPublic_ByUserId_ByKey(userId, STREAK_KEY)
+    } catch (e) {
+      if (e?.response?.status !== 404) throw e
+      res = await api.getRecord_ByUserId_ByKey(userId, STREAK_KEY)
+    }
+    const v = res.data?.value || {}
+    return { streak: v.streak || 0, longestStreak: v.longestStreak || 0 }
+  } catch (e) {
+    if (e?.response?.status === 404) return { streak: 0, longestStreak: 0 }
+    console.warn('[AGS streak] fetch:', e?.message || e)
+    return { streak: 0, longestStreak: 0 }
+  }
+}
+
+export async function updateStreak(userId) {
+  if (!userId || !sdk.getToken()?.accessToken) return
+  const today = new Date().toISOString().slice(0, 10)
+  try {
+    const api = cloudSaveApi()
+    let current = { streak: 0, longestStreak: 0, lastPlayDate: null }
+    try {
+      let res
+      try {
+        res = await api.getPublic_ByUserId_ByKey(userId, STREAK_KEY)
+      } catch (e) {
+        if (e?.response?.status !== 404) throw e
+        res = await api.getRecord_ByUserId_ByKey(userId, STREAK_KEY)
+      }
+      const v = res.data?.value || {}
+      current = { streak: v.streak || 0, longestStreak: v.longestStreak || 0, lastPlayDate: v.lastPlayDate || null }
+    } catch (e) {
+      if (e?.response?.status !== 404) throw e
+    }
+
+    if (current.lastPlayDate === today) return  // already updated today
+
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+    const newStreak = current.lastPlayDate === yesterday ? current.streak + 1 : 1
+    const newLongest = Math.max(newStreak, current.longestStreak)
+    const record = {
+      __META: { is_public: true },
+      streak: newStreak,
+      longestStreak: newLongest,
+      lastPlayDate: today,
+    }
+
+    try {
+      await api.updateRecord_ByUserId_ByKey(userId, STREAK_KEY, record)
+    } catch (e) {
+      if (e?.response?.status !== 404) throw e
+      await api.createRecord_ByUserId_ByKey(userId, STREAK_KEY, record)
+    }
+
+    return { streak: newStreak, longestStreak: newLongest }
+  } catch (e) {
+    console.warn('[AGS streak] update:', e?.message || e)
   }
 }

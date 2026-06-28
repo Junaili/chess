@@ -1,7 +1,7 @@
 import { loginWithGoogle, loginWithPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
 import { sdk } from './ags-client.js'
 import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
-import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory } from './stats.js'
+import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak } from './stats.js'
 import { sendEvent, flushPendingEvents, captureUtm } from './telemetry.js'
 import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from './spectator.js'
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName } from './leaderboard.js'
@@ -11,6 +11,7 @@ import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, s
 
 let currentUserId = null
 let currentUserWins = 0
+let currentStreak = 0
 let pendingLegalDocuments = []
 let pendingLegalProfile = null
 let friendsState = { friends: [], incoming: [], outgoing: [] }
@@ -223,9 +224,10 @@ async function hydrateAuthenticatedUser(profile) {
   }
 
   await initStats(currentUserId)
-  const stats = await fetchStats(currentUserId)
+  const [stats, streakData] = await Promise.all([fetchStats(currentUserId), fetchStreak(currentUserId)])
   currentUserWins = stats?.wins ?? 0
-  updateStatsUI(stats)
+  currentStreak = streakData?.streak ?? 0
+  updateStatsUI(stats, currentStreak)
   await refreshLeaderboard()
   sendEvent('leaderboard_viewed', { trigger: 'session_start' })
   const randomBtn = document.getElementById('btn-play-random')
@@ -621,6 +623,10 @@ async function initAuth() {
     }
   }
   window.agsShareRow = mountShareRow
+  window.agsGetInviteUrl = () =>
+    currentUserId
+      ? window.location.origin + window.location.pathname + '?invitedBy=' + encodeURIComponent(currentUserId)
+      : null
   window.agsCopyInviteLink = () => {
     const link = window.location.origin + window.location.pathname + (currentUserId ? `?invitedBy=${encodeURIComponent(currentUserId)}` : '')
     const container = document.getElementById('ags-invite-share-row')
@@ -672,6 +678,14 @@ async function initAuth() {
     if (!currentUserId) return
     await incrementStat(currentUserId, 'chess-games-played')
     if (mode === 'online') await incrementStat(currentUserId, 'chess-online-games')
+  }
+  window.agsUpdateStreak = async () => {
+    if (!currentUserId) return
+    const result = await updateStreak(currentUserId)
+    if (result?.streak) {
+      currentStreak = result.streak
+      updateStatsUI(await fetchStats(currentUserId), currentStreak)
+    }
   }
   window.agsRecordMatchHistory = async match => {
     if (!currentUserId) return
@@ -1075,12 +1089,15 @@ function updateAuthUI(loggedIn, name, userId) {
   }
 }
 
-function updateStatsUI(stats) {
+function updateStatsUI(stats, streak) {
   const el = document.getElementById('ags-stats')
   if (!el) return
   if (stats) {
     el.style.display = ''
-    el.textContent = `W ${stats.wins}  ·  L ${stats.losses}`
+    const s = streak ?? currentStreak
+    el.textContent = s > 0
+      ? `W ${stats.wins}  ·  L ${stats.losses}  ·  🔥 ${s}`
+      : `W ${stats.wins}  ·  L ${stats.losses}`
   } else {
     el.style.display = 'none'
   }
