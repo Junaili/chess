@@ -68,12 +68,12 @@ function showInviteConfirmation(invitedBy, onAccept) {
   el.appendChild(declineBtn)
 }
 
-function addUtm(url, medium) {
+function addUtm(url, medium, campaign = 'player-invite') {
   try {
     const u = new URL(url)
     u.searchParams.set('utm_source', 'invite')
     u.searchParams.set('utm_medium', medium)
-    u.searchParams.set('utm_campaign', 'player-invite')
+    u.searchParams.set('utm_campaign', campaign)
     return u.toString()
   } catch {
     return url
@@ -81,18 +81,27 @@ function addUtm(url, medium) {
 }
 
 function mountShareRow(containerEl, url, opts = {}) {
-  const { emailTo = null, fromName = null } = opts
+  const {
+    emailTo = null,
+    fromName = null,
+    campaign = 'player-invite',
+    shareEvent = 'invite_sent',
+    sharePayload = {},
+    emailSubject = 'Chess challenge!',
+  } = opts
   const enc = s => encodeURIComponent(s)
-  const linkUrl      = addUtm(url, 'link')
-  const whatsappUrl  = addUtm(url, 'whatsapp')
-  const twitterUrl   = addUtm(url, 'twitter')
-  const emailUrl     = addUtm(url, 'email')
-  const gameText = fromName
-    ? `${fromName} challenged you to chess! Join here: ${linkUrl}`
-    : `Let's play chess! Join my game: ${linkUrl}`
-  const xText = fromName
-    ? `${fromName} challenged me to chess 🎯 — think you can beat them?`
-    : 'Think you can beat me? 🎯 Play chess now'
+  const linkUrl      = addUtm(url, 'link', campaign)
+  const whatsappUrl  = addUtm(url, 'whatsapp', campaign)
+  const twitterUrl   = addUtm(url, 'twitter', campaign)
+  const emailUrl     = addUtm(url, 'email', campaign)
+  const fire = medium => sendEvent(shareEvent, { ...sharePayload, medium })
+  // opts.gameText(url) and opts.xText override the default invite wording so
+  // achievement shares can say "I just unlocked …" instead.
+  const gameTextFor = u => opts.gameText
+    ? opts.gameText(u)
+    : (fromName ? `${fromName} challenged you to chess! Join here: ${u}` : `Let's play chess! Join my game: ${u}`)
+  const xText = opts.xText
+    || (fromName ? `${fromName} challenged me to chess 🎯 — think you can beat them?` : 'Think you can beat me? 🎯 Play chess now')
 
   const row = document.createElement('div')
   row.className = 'share-row'
@@ -103,7 +112,7 @@ function mountShareRow(containerEl, url, opts = {}) {
   copyBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(linkUrl).then(() => {
       copyBtn.textContent = '✅ Copied!'
-      sendEvent('invite_sent', { medium: 'link' })
+      fire('link')
       setTimeout(() => { copyBtn.textContent = '📋 Copy' }, 1800)
     }).catch(() => { copyBtn.textContent = '📋 Copy' })
   })
@@ -111,11 +120,11 @@ function mountShareRow(containerEl, url, opts = {}) {
 
   const wa = document.createElement('a')
   wa.className = 'share-chip share-chip-whatsapp'
-  wa.href = `https://api.whatsapp.com/send?text=${enc(fromName ? `${fromName} challenged you to chess! Join here: ${whatsappUrl}` : `Let's play chess! Join my game: ${whatsappUrl}`)}`
+  wa.href = `https://api.whatsapp.com/send?text=${enc(gameTextFor(whatsappUrl))}`
   wa.target = '_blank'
   wa.rel = 'noopener'
   wa.textContent = '🟢 WhatsApp'
-  wa.addEventListener('click', () => sendEvent('invite_sent', { medium: 'whatsapp' }))
+  wa.addEventListener('click', () => fire('whatsapp'))
   row.appendChild(wa)
 
   const tw = document.createElement('a')
@@ -124,7 +133,7 @@ function mountShareRow(containerEl, url, opts = {}) {
   tw.target = '_blank'
   tw.rel = 'noopener'
   tw.textContent = '𝕏 Post'
-  tw.addEventListener('click', () => sendEvent('invite_sent', { medium: 'twitter' }))
+  tw.addEventListener('click', () => fire('twitter'))
   row.appendChild(tw)
 
   if (emailTo) {
@@ -146,7 +155,7 @@ function mountShareRow(containerEl, url, opts = {}) {
           body: JSON.stringify({ to: emailTo, from_name: fromName || 'A friend', invite_link: emailUrl }),
         })
         if (!res.ok) throw new Error('status ' + res.status)
-        sendEvent('invite_sent', { medium: 'email' })
+        fire('email')
         emailBtn.textContent = '✅ Sent!'
         setTimeout(() => { emailBtn.textContent = '✉️ Email'; emailBtn.disabled = false }, 3000)
       } catch {
@@ -158,9 +167,9 @@ function mountShareRow(containerEl, url, opts = {}) {
   } else {
     const emailLink = document.createElement('a')
     emailLink.className = 'share-chip share-chip-email'
-    emailLink.href = `mailto:?subject=${enc("Chess challenge!")}&body=${enc(`Join my game: ${emailUrl}`)}`
+    emailLink.href = `mailto:?subject=${enc(emailSubject)}&body=${enc(gameTextFor(emailUrl))}`
     emailLink.textContent = '✉️ Email'
-    emailLink.addEventListener('click', () => sendEvent('invite_sent', { medium: 'email' }))
+    emailLink.addEventListener('click', () => fire('email'))
     row.appendChild(emailLink)
   }
 
@@ -169,8 +178,9 @@ function mountShareRow(containerEl, url, opts = {}) {
     nativeBtn.className = 'share-chip share-chip-native'
     nativeBtn.textContent = '📤 More…'
     nativeBtn.addEventListener('click', () => {
-      navigator.share({ title: "Ethan's Chess", text: gameText, url: addUtm(url, 'native') }).catch(() => {})
-      sendEvent('invite_sent', { medium: 'native_share' })
+      const nativeUrl = addUtm(url, 'native', campaign)
+      navigator.share({ title: "Ethan's Chess", text: gameTextFor(nativeUrl), url: nativeUrl }).catch(() => {})
+      fire('native_share')
     })
     row.appendChild(nativeBtn)
   }
@@ -1201,8 +1211,10 @@ function renderAchievementPanel(list) {
     `<div class="ach-cards">` +
     list.map(a => {
       const pct = a.goalValue ? Math.round((a.progress / a.goalValue) * 100) : 0
-      const progressBar = a.unlocked
-        ? '<span class="ach-card-done">✓ Unlocked</span>'
+      const footer = a.unlocked
+        ? `<span class="ach-card-done">✓ Unlocked</span>` +
+          `<button class="ach-share-btn" data-code="${escAch(a.code)}">📤 Share</button>` +
+          `<div class="ach-share-slot"></div>`
         : `<div class="ach-progress"><div class="ach-progress-fill" style="width:${pct}%"></div></div>` +
           `<span class="ach-progress-text">${a.progress} / ${a.goalValue}</span>`
       return (
@@ -1210,11 +1222,36 @@ function renderAchievementPanel(list) {
           `${a.icon ? `<img src="${escAch(a.icon)}" alt="" class="ach-card-icon">` : '<span class="ach-card-icon">🏆</span>'}` +
           `<span class="ach-card-name">${escAch(a.name)}</span>` +
           `<span class="ach-card-desc">${escAch(a.description)}</span>` +
-          progressBar +
+          footer +
         `</div>`
       )
     }).join('') +
     `</div>`
+
+  const byCode = {}
+  for (const a of list) byCode[a.code] = a
+  grid.querySelectorAll('.ach-share-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const slot = btn.parentElement.querySelector('.ach-share-slot')
+      if (!slot) return
+      if (slot.querySelector('.share-row')) { slot.innerHTML = ''; return }  // toggle off
+      shareAchievement(byCode[btn.dataset.code], slot)
+    })
+  })
+}
+
+function shareAchievement(a, slot) {
+  if (!a || !slot) return
+  const inviteUrl = window.agsGetInviteUrl?.()
+  if (!inviteUrl) { slot.innerHTML = '<p class="ach-share-hint">Sign in to share.</p>'; return }
+  mountShareRow(slot, inviteUrl, {
+    campaign: 'achievement-share',
+    shareEvent: 'achievement_shared',
+    sharePayload: { code: a.code },
+    emailSubject: `I unlocked "${a.name}" in Ethan's Chess!`,
+    gameText: u => `I just unlocked "${a.name}" in Ethan's Chess 🏆 — play with me: ${u}`,
+    xText: `I just unlocked "${a.name}" 🏆 in Ethan's Chess — think you can?`,
+  })
 }
 
 function setFriendsMessage(text, tone = '') {
