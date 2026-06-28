@@ -586,6 +586,7 @@ async function initAuth() {
   window.agsAcceptFriend = async friendId => {
     await runFriendAction(() => acceptFriend(friendId), 'Friend request accepted.')
     sendEvent('friend_request_accepted', {})
+    unlockEventAchievement(currentUserId, 'chess-first-friend')  // first accepted friend (repeats are 409 no-ops)
   }
   window.agsRejectFriend = async friendId => {
     await runFriendAction(() => rejectFriend(friendId), 'Friend request rejected.')
@@ -1289,6 +1290,7 @@ async function refreshFriendsUI(showLoading = true) {
   setFriendsMessage('')
   renderFriendsPanel(true)
   notifyNewFriendRequests(state.incoming)
+  if ((state.friends?.length || 0) >= 5) unlockEventAchievement(currentUserId, 'chess-social-5')  // 5+ friends (409 no-op if already unlocked)
 
   const anyAccepted = await processIncomingInviteAcceptances(state.incoming)
   if (anyAccepted) await refreshFriendsUI(false)

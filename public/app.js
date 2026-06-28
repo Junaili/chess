@@ -73,6 +73,7 @@ let currentOpponent = null;
 let pendingFriendMatchInvite = null;
 let matchStartedAt = null;
 let matchHistoryRecorded = false;
+let playerWasInCheck = false;
 let gameOverCountdownTimer = null;
 let gameOverCountdownRemaining = 0;
 let homeIdleTimer = null;
@@ -259,6 +260,7 @@ function startGame() {
   }
   matchStartedAt = new Date();
   matchHistoryRecorded = false;
+  playerWasInCheck = false;
   game = new ChessGame();
   selectedSquare = null;
   validMoves = [];
@@ -356,6 +358,8 @@ function renderBoard() {
   if (game.status === 'check' || game.status === 'checkmate') {
     checkKing = game.findKing(game.currentTurn);
   }
+  // Track whether the player was ever in check this game (for the comeback achievement)
+  if (game.status === 'check' && game.currentTurn === playerColor) playerWasInCheck = true;
 
   const squares = boardEl.children;
   for (let i = 0; i < 64; i++) {
@@ -810,6 +814,9 @@ function showGameOver() {
   if (game.status === 'checkmate' && game.winner === playerColor) {
     recordWin();
     if (typeof window.agsIncrementWin === 'function') window.agsIncrementWin();
+    // Event achievements: quick win (< 20 plies) and comeback (won after being in check)
+    if (game.moveHistory.length < 20) window.agsUnlockAchievement?.('chess-quick-win');
+    if (playerWasInCheck) window.agsUnlockAchievement?.('chess-comeback');
   } else if (game.status === 'checkmate' && game.winner && game.winner !== playerColor) {
     if (typeof window.agsIncrementLoss === 'function') window.agsIncrementLoss();
   } else if (game.status === 'stalemate') {
