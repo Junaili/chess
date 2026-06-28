@@ -3104,3 +3104,182 @@ input[type="checkbox"] {
   background: rgba(255, 255, 255, 0.04);
   box-shadow: none;
 }
+
+/* ─── Achievements ────────────────────────────────────────────────────────── */
+.btn-achievements {
+  width: 100%;
+  margin-bottom: 12px;
+  color: #2d1a0f;
+  background: linear-gradient(135deg, #f0c37a, #e0a857);
+  box-shadow: 0 10px 24px rgba(194, 106, 61, 0.18);
+}
+
+.achievements-modal-content {
+  width: min(620px, 100%);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.achievements-grid {
+  flex: 1;
+  overflow-y: auto;
+  margin: 8px 0 18px;
+  text-align: left;
+}
+
+.achievements-loading {
+  text-align: center;
+  color: var(--text-soft);
+  padding: 24px 0;
+}
+
+.ach-summary {
+  text-align: center;
+  color: var(--accent-2);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-bottom: 14px;
+}
+
+.ach-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.ach-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 14px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ach-card.locked {
+  opacity: 0.55;
+  filter: grayscale(0.7);
+}
+
+.ach-card.unlocked {
+  border-color: rgba(240, 195, 122, 0.5);
+  background: rgba(240, 195, 122, 0.08);
+}
+
+.ach-card-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  object-fit: cover;
+  font-size: 2rem;
+  line-height: 48px;
+}
+
+.ach-card-name {
+  font-weight: 700;
+  font-size: 0.92rem;
+  color: var(--text);
+}
+
+.ach-card-desc {
+  font-size: 0.74rem;
+  color: var(--text-soft);
+  line-height: 1.4;
+}
+
+.ach-card-done {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--success);
+  margin-top: 2px;
+}
+
+.ach-progress {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.ach-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+}
+
+.ach-progress-text {
+  font-size: 0.68rem;
+  color: var(--text-soft);
+}
+
+/* Unlock toasts */
+.achievement-toasts {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.achievement-toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 240px;
+  max-width: 320px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: var(--surface-strong);
+  border: 1px solid rgba(240, 195, 122, 0.45);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(14px);
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translateX(120%);
+  opacity: 0;
+  transition: transform 0.4s cubic-bezier(0.2, 0.9, 0.3, 1), opacity 0.4s ease;
+}
+
+.achievement-toast.show {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.ach-toast-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  object-fit: cover;
+  font-size: 1.7rem;
+  line-height: 40px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.ach-toast-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.ach-toast-label {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-2);
+  font-weight: 800;
+}
+
+.ach-toast-name {
+  font-size: 0.94rem;
+  font-weight: 700;
+  color: var(--text);
+}

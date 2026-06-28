@@ -2,7 +2,7 @@ import { loginWithGoogle, loginWithPassword, registerWithPassword, handleCallbac
 import { sdk } from './ags-client.js'
 import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
 import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave } from './stats.js'
-import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache } from './achievements.js'
+import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache, fetchMergedAchievements } from './achievements.js'
 import { sendEvent, flushPendingEvents, captureUtm } from './telemetry.js'
 import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from './spectator.js'
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName } from './leaderboard.js'
@@ -709,17 +709,40 @@ async function initAuth() {
       updateStatsUI(await fetchStats(currentUserId), currentStreak)
     }
   }
-  // Phase A: refresh the unlocked-achievement cache after a game and log new
-  // unlocks. Phase B wraps the returned codes with the celebration UI.
+  // After a game: detect newly-unlocked achievements and celebrate them —
+  // toast + OS notification + telemetry. Fire-and-forget from the game-end hook.
   window.agsCheckAchievements = async () => {
     if (!currentUserId) return []
     const fresh = await diffNewlyUnlocked(currentUserId)
-    if (fresh.length) console.debug('[AGS achievements] newly unlocked:', fresh)
+    if (!fresh.length) return fresh
+    const merged = await fetchMergedAchievements(currentUserId)
+    const items = merged.filter(a => fresh.includes(a.code))
+    showAchievementToast(items)
+    for (const it of items) {
+      notify(`🏆 Achievement unlocked: ${it.name}`, { body: it.description, tag: 'achievement-' + it.code })
+      sendEvent('achievement_unlocked', { code: it.code })
+    }
+    const modal = document.getElementById('achievements-modal')
+    if (modal && modal.style.display === 'flex') renderAchievementPanel(merged)
     return fresh
   }
   window.agsUnlockAchievement = (code) => {
     if (!currentUserId || !code) return
     return unlockEventAchievement(currentUserId, code)
+  }
+  window.agsOpenAchievements = async () => {
+    const modal = document.getElementById('achievements-modal')
+    if (!modal) return
+    modal.style.display = 'flex'
+    const grid = document.getElementById('achievements-grid')
+    if (grid) grid.innerHTML = '<p class="achievements-loading">Loading achievements…</p>'
+    const merged = await fetchMergedAchievements(currentUserId)
+    renderAchievementPanel(merged)
+    sendEvent('achievement_panel_viewed', {})
+  }
+  window.agsCloseAchievements = () => {
+    const modal = document.getElementById('achievements-modal')
+    if (modal) modal.style.display = 'none'
   }
   window.agsRecordMatchHistory = async match => {
     if (!currentUserId) return
@@ -1125,6 +1148,8 @@ function updateAuthUI(loggedIn, name, userId) {
 
 function updateStatsUI(stats, streak) {
   const el = document.getElementById('ags-stats')
+  const achBtn = document.getElementById('btn-achievements')
+  if (achBtn) achBtn.style.display = stats ? '' : 'none'
   if (!el) return
   if (stats) {
     el.style.display = ''
@@ -1135,6 +1160,61 @@ function updateStatsUI(stats, streak) {
   } else {
     el.style.display = 'none'
   }
+}
+
+function escAch(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function showAchievementToast(items) {
+  const container = document.getElementById('achievement-toasts')
+  if (!container || !items?.length) return
+  for (const it of items) {
+    const el = document.createElement('div')
+    el.className = 'achievement-toast'
+    el.innerHTML =
+      `${it.icon ? `<img src="${escAch(it.icon)}" alt="" class="ach-toast-icon">` : '<span class="ach-toast-icon">🏆</span>'}` +
+      `<div class="ach-toast-body">` +
+        `<span class="ach-toast-label">Achievement Unlocked</span>` +
+        `<span class="ach-toast-name">${escAch(it.name)}</span>` +
+      `</div>`
+    el.addEventListener('click', () => window.agsOpenAchievements?.())
+    container.appendChild(el)
+    requestAnimationFrame(() => el.classList.add('show'))
+    setTimeout(() => {
+      el.classList.remove('show')
+      setTimeout(() => el.remove(), 400)
+    }, 5000)
+  }
+}
+
+function renderAchievementPanel(list) {
+  const grid = document.getElementById('achievements-grid')
+  if (!grid) return
+  if (!list?.length) {
+    grid.innerHTML = '<p class="achievements-loading">No achievements available.</p>'
+    return
+  }
+  const unlockedCount = list.filter(a => a.unlocked).length
+  grid.innerHTML =
+    `<p class="ach-summary">${unlockedCount} of ${list.length} unlocked</p>` +
+    `<div class="ach-cards">` +
+    list.map(a => {
+      const pct = a.goalValue ? Math.round((a.progress / a.goalValue) * 100) : 0
+      const progressBar = a.unlocked
+        ? '<span class="ach-card-done">✓ Unlocked</span>'
+        : `<div class="ach-progress"><div class="ach-progress-fill" style="width:${pct}%"></div></div>` +
+          `<span class="ach-progress-text">${a.progress} / ${a.goalValue}</span>`
+      return (
+        `<div class="ach-card${a.unlocked ? ' unlocked' : ' locked'}">` +
+          `${a.icon ? `<img src="${escAch(a.icon)}" alt="" class="ach-card-icon">` : '<span class="ach-card-icon">🏆</span>'}` +
+          `<span class="ach-card-name">${escAch(a.name)}</span>` +
+          `<span class="ach-card-desc">${escAch(a.description)}</span>` +
+          progressBar +
+        `</div>`
+      )
+    }).join('') +
+    `</div>`
 }
 
 function setFriendsMessage(text, tone = '') {

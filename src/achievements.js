@@ -91,3 +91,32 @@ export async function diffNewlyUnlocked(userId) {
 export function clearUnlockedCache() {
   try { localStorage.removeItem(UNLOCKED_CACHE_KEY) } catch {}
 }
+
+// Catalog (all achievements) merged with the user's unlock status + progress,
+// sorted by listOrder. Used by the badge panel and unlock toasts.
+export async function fetchMergedAchievements(userId) {
+  const [catalog, userAch] = await Promise.all([
+    fetchAchievementCatalog(),
+    fetchUserAchievements(userId),
+  ])
+  const byCode = {}
+  for (const u of userAch) byCode[u.achievementCode] = u
+  return catalog
+    .slice()
+    .sort((a, b) => (a.listOrder || 0) - (b.listOrder || 0))
+    .map(a => {
+      const u = byCode[a.achievementCode]
+      const unlocked = u?.status === STATUS_UNLOCKED
+      const goalValue = a.goalValue || 0
+      const icons = unlocked ? a.unlockedIcons : a.lockedIcons
+      return {
+        code: a.achievementCode,
+        name: a.name || a.achievementCode,
+        description: a.description || '',
+        goalValue,
+        progress: Math.min(u?.latestValue ?? 0, goalValue || Infinity),
+        unlocked,
+        icon: icons?.[0]?.url || '',
+      }
+    })
+}

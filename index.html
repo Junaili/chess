@@ -100,6 +100,7 @@
             </div>
           </div>
           <div id="ags-stats" class="ags-stats" style="display:none"></div>
+          <button id="btn-achievements" class="btn btn-achievements" style="display:none" onclick="window.agsOpenAchievements && window.agsOpenAchievements()">🏆 Achievements</button>
           <div class="menu-buttons">
             <button class="btn btn-primary"   onclick="showColorSelect('computer')">Play vs Computer</button>
             <button class="btn btn-secondary" onclick="showColorSelect('online')">Invite Friend</button>
@@ -537,6 +538,20 @@
       <div id="game-over-invite-prompt" class="game-over-invite-prompt"></div>
     </div>
   </div>
+
+  <!-- ── Achievements Modal ──────────────────────────────────────────────────── -->
+  <div id="achievements-modal" class="modal">
+    <div class="modal-content achievements-modal-content">
+      <h2>🏆 Achievements</h2>
+      <div id="achievements-grid" class="achievements-grid"></div>
+      <div class="modal-buttons">
+        <button class="btn btn-secondary" onclick="window.agsCloseAchievements && window.agsCloseAchievements()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Achievement Unlock Toasts ───────────────────────────────────────────── -->
+  <div id="achievement-toasts" class="achievement-toasts"></div>
 
   <!-- ── Rematch Notification ───────────────────────────────────────────────── -->
   <div id="rematch-notification" class="rematch-notification" style="display:none">
