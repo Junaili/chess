@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/junaili/ethan-chess-service/pkg/common"
+	"github.com/junaili/ethan-chess-service/pkg/handler"
 	pb "github.com/junaili/ethan-chess-service/pkg/pb"
 	"github.com/junaili/ethan-chess-service/pkg/service"
 )
@@ -96,6 +97,9 @@ func main() {
 
 	// Swagger JSON (no auth, basePath injected at runtime)
 	mux.HandleFunc(basePath+"/apidocs/api.json", makeSwaggerJSONHandler(basePath))
+
+	// Referral report → unlock the inviter's chess-recruiter achievement (auth required)
+	mux.Handle(basePath+"/referral", corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(referralHandler))))
 
 	// API routes (auth required)
 	mux.Handle("/", corsMiddleware(allowedOrigins, auth.wrap(gateway)))
@@ -217,18 +221,20 @@ func (rl *emailRateLimiter) allow(userSub string) bool {
 
 // authMiddleware validates Bearer tokens using IAM token introspection.
 type authMiddleware struct {
-	baseURL      string
-	clientID     string
-	clientSecret string
-	emailLimiter *emailRateLimiter
+	baseURL         string
+	clientID        string
+	clientSecret    string
+	emailLimiter    *emailRateLimiter
+	referralLimiter *emailRateLimiter
 }
 
 func newAuthMiddleware(baseURL, clientID, clientSecret string) *authMiddleware {
 	return &authMiddleware{
-		baseURL:      baseURL,
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		emailLimiter: newEmailRateLimiter(5, time.Hour),
+		baseURL:         baseURL,
+		clientID:        clientID,
+		clientSecret:    clientSecret,
+		emailLimiter:    newEmailRateLimiter(5, time.Hour),
+		referralLimiter: newEmailRateLimiter(3, time.Hour),
 	}
 }
 
@@ -261,8 +267,62 @@ func (a *authMiddleware) wrap(next http.Handler) http.Handler {
 			}
 		}
 
+		// Rate-limit referral reports: 3 per user per hour.
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/referral") {
+			if !a.referralLimiter.allow(sub) {
+				http.Error(w, `{"error":"too many referral reports, try again later"}`, http.StatusTooManyRequests)
+				return
+			}
+		}
+
+		// Make the authenticated user id available to downstream handlers.
+		r = r.WithContext(context.WithValue(r.Context(), subCtxKey, sub))
 		next.ServeHTTP(w, r)
 	})
+}
+
+// subCtxKey carries the authenticated user id (token sub) into handlers.
+type ctxKey string
+
+const subCtxKey ctxKey = "ab-sub"
+
+func subFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(subCtxKey).(string)
+	return v
+}
+
+// referralHandler unlocks the inviter's chess-recruiter achievement when a
+// newly-registered user (the authenticated caller) reports who referred them.
+func referralHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	newUserID := subFromContext(r.Context())
+	if newUserID == "" {
+		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+		return
+	}
+	var body struct {
+		InviterUserID string `json:"inviterUserId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+		return
+	}
+	inviter := strings.TrimSpace(body.InviterUserID)
+	if inviter == "" || inviter == newUserID {
+		http.Error(w, `{"error":"invalid inviter"}`, http.StatusBadRequest)
+		return
+	}
+	if err := handler.UnlockRecruiterAchievement(inviter); err != nil {
+		log.Printf("[referral] unlock failed (inviter=%s): %v", inviter, err)
+		http.Error(w, `{"error":"unlock failed"}`, http.StatusInternalServerError)
+		return
+	}
+	log.Printf("[referral] new user %s recruited by %s — recruiter unlocked", newUserID, inviter)
+	fmt.Fprint(w, `{"ok":true}`)
 }
 
 func (a *authMiddleware) introspect(token string) (sub string, active bool, err error) {

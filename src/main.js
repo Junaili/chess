@@ -68,6 +68,24 @@ function showInviteConfirmation(invitedBy, onAccept) {
   el.appendChild(declineBtn)
 }
 
+// Tell the Extend service who referred this newly-registered user, so the
+// inviter's chess-recruiter achievement unlocks server-side. Best-effort.
+async function reportReferral() {
+  const inviter = sessionStorage.getItem('chess_invite_by')
+  const token = sdk.getToken()?.accessToken
+  if (!inviter || !token || inviter === currentUserId) return
+  try {
+    const extendBase = import.meta.env.VITE_EXTEND_EMAIL_URL || '/extend'
+    await fetch(`${extendBase}/referral`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ inviterUserId: inviter }),
+    })
+    sendEvent('referral_reported', { inviter_user_id: inviter })
+  } catch {}
+  sessionStorage.removeItem('chess_invite_by')
+}
+
 function addUtm(url, medium, campaign = 'player-invite') {
   try {
     const u = new URL(url)
@@ -486,6 +504,7 @@ async function initAuth() {
       setAuthMessage('register', 'Account created, but failed to load profile.', 'error')
       return
     }
+    reportReferral()  // unlock the inviter's recruiter achievement (best-effort)
   }
   window.agsAcceptLegal = async () => {
     const checkbox = document.getElementById('ags-legal-confirm')
