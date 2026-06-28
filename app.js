@@ -75,6 +75,8 @@ let matchStartedAt = null;
 let matchHistoryRecorded = false;
 let gameOverCountdownTimer = null;
 let gameOverCountdownRemaining = 0;
+let homeIdleTimer = null;
+let homeIdleShown = false;
 
 // ─── Audio State ──────────────────────────────────────────────────────────────
 
@@ -95,6 +97,8 @@ function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const el = document.getElementById('screen-' + name);
   if (el) el.classList.add('active');
+  clearTimeout(homeIdleTimer);
+  homeIdleTimer = null;
   if (name === 'home') {
     if (typeof window.agsSetPresence === 'function') {
       window.agsSetPresence('online');
@@ -103,6 +107,24 @@ function showScreen(name) {
       window.agsRefreshLeaderboard()
     } else {
       renderLeaderboard()
+    }
+    if (!homeIdleShown) {
+      homeIdleTimer = setTimeout(() => {
+        homeIdleShown = true;
+        const prompt = document.getElementById('home-idle-prompt');
+        if (!prompt) return;
+        const inviteUrl = window.agsGetInviteUrl?.();
+        if (inviteUrl) {
+          const rowEl = document.getElementById('home-idle-share-row');
+          if (rowEl && !rowEl.querySelector('.share-row') && typeof window.agsShareRow === 'function') {
+            window.agsShareRow(rowEl, inviteUrl);
+          }
+        } else {
+          const btn = document.getElementById('home-idle-signup-btn');
+          if (btn) btn.style.display = '';
+        }
+        prompt.style.display = 'block';
+      }, 30000);
     }
   }
 }
@@ -828,6 +850,29 @@ function showGameOver() {
     window.agsUpdateMatchFriendAction(currentOpponent);
   }
 
+  // Contextual invite prompt
+  const invitePrompt = document.getElementById('game-over-invite-prompt');
+  if (invitePrompt) {
+    invitePrompt.innerHTML = '';
+    const isWin  = game.status === 'checkmate' && game.winner === playerColor;
+    const isLoss = game.status === 'checkmate' && game.winner && game.winner !== playerColor;
+    if (isWin || isLoss) {
+      const inviteUrl = window.agsGetInviteUrl?.();
+      const nudge = document.createElement('p');
+      nudge.className = 'invite-nudge-text';
+      if (inviteUrl) {
+        nudge.textContent = isWin ? '🎉 Challenge someone new →' : '💪 Challenge a different opponent →';
+        invitePrompt.appendChild(nudge);
+        if (typeof window.agsShareRow === 'function') window.agsShareRow(invitePrompt, inviteUrl);
+      } else {
+        nudge.textContent = isWin ? '🎉 Invite a friend to challenge you!' : '💪 Think you can win? Invite a friend!';
+        nudge.className += ' invite-nudge-cta';
+        nudge.addEventListener('click', () => { window.agsOpenRegister?.(); });
+        invitePrompt.appendChild(nudge);
+      }
+    }
+  }
+
   document.getElementById('game-over-modal').style.display = 'flex';
   if (gameMode === 'online') startGameOverCountdown();
 }
@@ -1181,6 +1226,13 @@ function createOnlineRoom(options = {}) {
         ? `Invite sent to ${options.friendInvite.displayName || 'your friend'}. Waiting for them to accept…`
         : 'Waiting for your friend to join…';
       document.getElementById('waiting-spinner').style.display = 'block';
+      const shareRowEl = document.getElementById('waiting-share-row');
+      if (shareRowEl) {
+        shareRowEl.innerHTML = '';
+        if (typeof window.agsShareRow === 'function') {
+          window.agsShareRow(shareRowEl, currentInviteLink);
+        }
+      }
     };
 
     const base = window.location.href.split('?')[0];
@@ -1613,9 +1665,8 @@ function shareInviteLink() {
       text: "Let's play chess! Tap the link to join my game.",
       url: currentInviteLink
     }).catch(() => {});
-  } else {
-    copyInviteLink();
   }
+  // Desktop fallback: the share-row buttons below already cover Copy/WhatsApp/X/Email
 }
 
 function showContactsForInvite() {
