@@ -47,8 +47,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-BIV8qpq4.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-D6dbwshw.css">
+  <script type="module" crossorigin src="/chess/assets/index-C_uAkIDR.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-CZoEiqny.css">
 </head>
 <body>
 
@@ -101,6 +101,7 @@
             </div>
           </div>
           <div id="ags-stats" class="ags-stats" style="display:none"></div>
+          <button id="btn-achievements" class="btn btn-achievements" style="display:none" onclick="window.agsOpenAchievements && window.agsOpenAchievements()">🏆 Achievements</button>
           <div class="menu-buttons">
             <button class="btn btn-primary"   onclick="showColorSelect('computer')">Play vs Computer</button>
             <button class="btn btn-secondary" onclick="showColorSelect('online')">Invite Friend</button>
@@ -538,6 +539,20 @@
       <div id="game-over-invite-prompt" class="game-over-invite-prompt"></div>
     </div>
   </div>
+
+  <!-- ── Achievements Modal ──────────────────────────────────────────────────── -->
+  <div id="achievements-modal" class="modal">
+    <div class="modal-content achievements-modal-content">
+      <h2>🏆 Achievements</h2>
+      <div id="achievements-grid" class="achievements-grid"></div>
+      <div class="modal-buttons">
+        <button class="btn btn-secondary" onclick="window.agsCloseAchievements && window.agsCloseAchievements()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Achievement Unlock Toasts ───────────────────────────────────────────── -->
+  <div id="achievement-toasts" class="achievement-toasts"></div>
 
   <!-- ── Rematch Notification ───────────────────────────────────────────────── -->
   <div id="rematch-notification" class="rematch-notification" style="display:none">
