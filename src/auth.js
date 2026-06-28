@@ -1,6 +1,17 @@
 import { OAuth20ExtensionApi, UsersApi } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
 
+// True when running inside the Capacitor native shell (iOS app), where the
+// app is served from capacitor://localhost and in-WebView OAuth redirects are
+// blocked. Login must go through the system browser + custom URL scheme.
+function isNativeApp() {
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())
+}
+
+// Custom URL scheme the iOS app is registered for (see Info.plist). The system
+// browser bounces the OAuth result here, which iOS routes back to the app.
+const NATIVE_CALLBACK_URL = 'ethanschess://callback'
+
 const GOOGLE_FLAG = 'ags_google_login'
 const DEVICE_ID_KEY = 'ags_device_id'
 const DEVICE_NAME_KEY = 'ags_device_name'
@@ -35,6 +46,13 @@ function isPrivateIpHost(hostname) {
 }
 
 function getGoogleRedirectUri() {
+  // Native app: the WebView origin is capacitor://localhost, which Google won't
+  // accept and can't receive the redirect. Use the public HTTPS page (already a
+  // registered redirect URI) — its inline script forwards the result to the
+  // app's custom scheme. See index.html and VITE_ACCELBYTE_REDIRECT_URI.
+  if (isNativeApp()) {
+    return import.meta.env.VITE_ACCELBYTE_REDIRECT_URI || 'https://junaili.github.io/chess/'
+  }
   const currentOrigin = window.location.origin
   const currentHost = window.location.hostname
   if (currentOrigin && !isPrivateIpHost(currentHost)) {
@@ -129,6 +147,7 @@ export async function loginWithGoogle() {
   // Google's public keys, so no server-side code exchange is needed.
   const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
   sessionStorage.setItem('ags_google_nonce', nonce)
+  const native = isNativeApp()
   const params = new URLSearchParams({
     client_id: import.meta.env.VITE_ACCELBYTE_GOOGLE_CLIENT_ID,
     redirect_uri: redirectUri,
@@ -137,6 +156,15 @@ export async function loginWithGoogle() {
     nonce,
     prompt: 'select_account',
   })
+  // Native: tag the request so the redirect page forwards the result to the
+  // app's custom scheme, and open the system browser (Google rejects embedded
+  // WebViews). Web: navigate the page directly as before.
+  if (native) {
+    params.set('state', 'native')
+    const { Browser } = await import('@capacitor/browser')
+    await Browser.open({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` })
+    return
+  }
   window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`
 }
 
@@ -149,11 +177,21 @@ function decodeJwtPayload(token) {
   }
 }
 
-export async function handleCallback() {
-  // id_token arrives in the URL hash (implicit flow); errors may be in hash or query
-  const hashParams = new URLSearchParams(window.location.hash.slice(1))
+export async function handleCallback(callbackUrl = null) {
+  // id_token arrives in the URL hash (implicit flow); errors may be in hash or query.
+  // Native: the result comes via the app's custom-scheme deep link (callbackUrl),
+  // e.g. ethanschess://callback#id_token=...&state=native. Web: read the page URL.
+  let hashStr = window.location.hash
+  let searchStr = window.location.search
+  if (callbackUrl) {
+    const hashIdx = callbackUrl.indexOf('#')
+    hashStr = hashIdx >= 0 ? callbackUrl.slice(hashIdx) : ''
+    const qIdx = callbackUrl.indexOf('?')
+    searchStr = qIdx >= 0 ? callbackUrl.slice(qIdx, hashIdx >= 0 ? hashIdx : undefined) : ''
+  }
+  const hashParams = new URLSearchParams(hashStr.slice(1))
   const idToken = hashParams.get('id_token')
-  const error = hashParams.get('error') || new URLSearchParams(window.location.search).get('error')
+  const error = hashParams.get('error') || new URLSearchParams(searchStr).get('error')
 
   if (!idToken && !error) return null
 

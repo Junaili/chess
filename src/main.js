@@ -420,6 +420,26 @@ async function initAuth() {
   }
 
   window.agsLogin = loginWithGoogle
+
+  // Native (iOS) Google login returns via the app's custom URL scheme. Listen
+  // for the deep link, close the system browser, and finish the same token
+  // exchange + session setup the web callback path uses.
+  if (window.Capacitor?.isNativePlatform?.()) {
+    const { App } = await import('@capacitor/app')
+    const { Browser } = await import('@capacitor/browser')
+    App.addListener('appUrlOpen', async ({ url }) => {
+      if (!url || url.indexOf('ethanschess://callback') !== 0) return
+      try { await Browser.close() } catch (e) { /* browser may already be closed */ }
+      const result = await handleCallback(url)
+      if (result?.response) {
+        const td = result.response.data || null
+        const prof = await getProfile()
+        if (prof) sendEvent('user_logged_in', { method: 'google' })
+        await completeAuthenticatedSession({ profile: prof, tokenData: td })
+      }
+    })
+  }
+
   window.agsLogout = async () => {
     stopFriendsRefresh()
     stopPresenceUpdates()
