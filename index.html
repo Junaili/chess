@@ -3,6 +3,26 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Native (Capacitor) Google-login bounce: when this page is loaded in the
+       system browser as the OAuth redirect target for the iOS app, Google
+       returns the id_token in the hash with state=native. Forward it to the
+       app's custom URL scheme so the WKWebView can finish the exchange. Runs
+       before the app bundle; only fires in a plain browser (not the app's own
+       native WebView, where window.Capacitor is defined). -->
+  <script>
+    (function () {
+      try {
+        if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) return;
+        var h = window.location.hash || '';
+        if (!h) return;
+        var p = new URLSearchParams(h.slice(1));
+        var state = p.get('state') || '';
+        if (state.indexOf('native') !== 0) return;
+        if (!p.get('id_token') && !p.get('error')) return;
+        window.location.replace('ethanschess://callback' + h);
+      } catch (e) { /* fall through to normal app load */ }
+    })();
+  </script>
   <title>Ethan's Chess — Play Multiplayer Chess with Friends</title>
   <meta name="description" content="Play multiplayer chess with friends and family anywhere in the world. Real-time matches, leaderboard rankings, video chat, and more — free to play." />
   <link rel="canonical" href="https://junaili.github.io/chess/" />
@@ -47,7 +67,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-DmDj_GAr.js"></script>
+  <script type="module" crossorigin src="/chess/assets/index-DNfBPMyY.js"></script>
   <link rel="stylesheet" crossorigin href="/chess/assets/index-CORVG_Sz.css">
 </head>
 <body>
