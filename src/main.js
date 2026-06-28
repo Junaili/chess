@@ -1,7 +1,8 @@
 import { loginWithGoogle, loginWithPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
 import { sdk } from './ags-client.js'
 import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
-import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak } from './stats.js'
+import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave } from './stats.js'
+import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache } from './achievements.js'
 import { sendEvent, flushPendingEvents, captureUtm } from './telemetry.js'
 import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from './spectator.js'
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName } from './leaderboard.js'
@@ -234,10 +235,12 @@ async function hydrateAuthenticatedUser(profile) {
   }
 
   await initStats(currentUserId)
+  await migrateStreakFromCloudSave(currentUserId)  // one-time CloudSave→Statistics backfill (no-op after first run)
   const [stats, streakData] = await Promise.all([fetchStats(currentUserId), fetchStreak(currentUserId)])
   currentUserWins = stats?.wins ?? 0
   currentStreak = streakData?.streak ?? 0
   updateStatsUI(stats, currentStreak)
+  primeUnlockedCache(currentUserId)  // silent: seed unlocked-achievement cache so later diffs only surface new ones
   await refreshLeaderboard()
   sendEvent('leaderboard_viewed', { trigger: 'session_start' })
   const randomBtn = document.getElementById('btn-play-random')
@@ -396,6 +399,7 @@ async function initAuth() {
     stopInviteJoinUpdates()
     seenIncomingRequestIds = null
     currentStreak = 0
+    clearUnlockedCache()
     await signOutPresence()
     await logout()
   }
@@ -704,6 +708,18 @@ async function initAuth() {
       currentStreak = result.streak
       updateStatsUI(await fetchStats(currentUserId), currentStreak)
     }
+  }
+  // Phase A: refresh the unlocked-achievement cache after a game and log new
+  // unlocks. Phase B wraps the returned codes with the celebration UI.
+  window.agsCheckAchievements = async () => {
+    if (!currentUserId) return []
+    const fresh = await diffNewlyUnlocked(currentUserId)
+    if (fresh.length) console.debug('[AGS achievements] newly unlocked:', fresh)
+    return fresh
+  }
+  window.agsUnlockAchievement = (code) => {
+    if (!currentUserId || !code) return
+    return unlockEventAchievement(currentUserId, code)
   }
   window.agsRecordMatchHistory = async match => {
     if (!currentUserId) return

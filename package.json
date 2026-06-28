@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@accelbyte/sdk": "^4.3.1",
+    "@accelbyte/sdk-achievement": "^5.3.5",
     "@accelbyte/sdk-cloudsave": "^6.3.4",
     "@accelbyte/sdk-gametelemetry": "^5.2.7",
     "@accelbyte/sdk-iam": "^6.3.4",

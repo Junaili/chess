@@ -26,6 +26,7 @@ export default defineConfig(({ mode, command }) => {
       '/match2':           { target: agsTarget, changeOrigin: true },
       '/session':          { target: agsTarget, changeOrigin: true },
       '/game-telemetry':   { target: agsTarget, changeOrigin: true },
+      '/achievement':      { target: agsTarget, changeOrigin: true },
       '/extend':       { target: env.EXTEND_EMAIL_URL || 'http://localhost:8080', changeOrigin: true, rewrite: path => path.replace(/^\/extend/, '') },
     },
   }

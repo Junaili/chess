@@ -2,11 +2,19 @@ import { UserStatisticApi } from '@accelbyte/sdk-social'
 import { PublicPlayerRecordApi } from '@accelbyte/sdk-cloudsave'
 import { sdk } from './ags-client.js'
 
-const STAT_CODES = ['chess-wins', 'chess-losses', 'chess-games-played', 'chess-draws', 'chess-online-games']
+const STREAK_CURRENT = 'chess-current-streak'
+const STREAK_LONGEST = 'chess-longest-streak'
+const STREAK_LAST_DAY = 'chess-last-play-day'
+const STAT_CODES = [
+  'chess-wins', 'chess-losses', 'chess-games-played', 'chess-draws', 'chess-online-games',
+  STREAK_CURRENT, STREAK_LONGEST, STREAK_LAST_DAY,
+]
 const MATCH_HISTORY_KEY = 'chess-match-history'
 const MAX_MATCH_HISTORY = 50
 const MATCH_HISTORY_BUILD = 'cloudsave-v3'
-const STREAK_KEY = 'chess-streak'
+const STREAK_KEY = 'chess-streak'  // legacy CloudSave key — read once for backfill
+const STREAK_MIGRATED_FLAG = 'chess-streak-migrated'
+const DAY_MS = 86400000
 
 window.agsMatchHistoryBuild = MATCH_HISTORY_BUILD
 
@@ -152,8 +160,57 @@ export async function recordMatchHistory(match) {
   }
 }
 
+function setStat(userId, statCode, value, updateStrategy) {
+  // _v2 is the update-strategy variant ({ value, updateStrategy }); the v1
+  // method takes an increment body instead.
+  return UserStatisticApi(sdk).updateStatitemValue_ByUserId_ByStatCode_v2(userId, statCode, { value, updateStrategy })
+}
+
+async function readStreakStats(userId, codes) {
+  const res = await UserStatisticApi(sdk).getStatitems_ByUserId(userId, { statCodes: codes.join(',') })
+  const items = res.data?.data || []
+  return code => items.find(i => i.statCode === code)?.value
+}
+
 export async function fetchStreak(userId) {
   if (!userId || !sdk.getToken()?.accessToken) return { streak: 0, longestStreak: 0 }
+  try {
+    const get = await readStreakStats(userId, [STREAK_CURRENT, STREAK_LONGEST])
+    return { streak: get(STREAK_CURRENT) ?? 0, longestStreak: get(STREAK_LONGEST) ?? 0 }
+  } catch (e) {
+    console.warn('[AGS streak] fetch:', e?.response?.data || e?.message)
+    return { streak: 0, longestStreak: 0 }
+  }
+}
+
+export async function updateStreak(userId) {
+  if (!userId || !sdk.getToken()?.accessToken) return
+  const today = Math.floor(Date.now() / DAY_MS)  // UTC days since epoch
+  try {
+    const get = await readStreakStats(userId, [STREAK_CURRENT, STREAK_LONGEST, STREAK_LAST_DAY])
+    const lastDay = get(STREAK_LAST_DAY)
+    const currentStreak = get(STREAK_CURRENT) ?? 0
+    const longest = get(STREAK_LONGEST) ?? 0
+
+    if (lastDay === today) return  // already counted today
+
+    const newStreak = lastDay === today - 1 ? currentStreak + 1 : 1
+    await Promise.allSettled([
+      setStat(userId, STREAK_CURRENT, newStreak, 'OVERRIDE'),
+      setStat(userId, STREAK_LAST_DAY, today, 'OVERRIDE'),
+      setStat(userId, STREAK_LONGEST, newStreak, 'MAX'),
+    ])
+    return { streak: newStreak, longestStreak: Math.max(newStreak, longest) }
+  } catch (e) {
+    console.warn('[AGS streak] update:', e?.response?.data || e?.message)
+  }
+}
+
+// One-time migration of the legacy CloudSave streak record into Statistics.
+// Runs at most once per browser (guarded by localStorage); safe to skip.
+export async function migrateStreakFromCloudSave(userId) {
+  if (!userId || !sdk.getToken()?.accessToken) return
+  if (localStorage.getItem(STREAK_MIGRATED_FLAG) === '1') return
   try {
     const api = cloudSaveApi()
     let res
@@ -164,55 +221,24 @@ export async function fetchStreak(userId) {
       res = await api.getRecord_ByUserId_ByKey(userId, STREAK_KEY)
     }
     const v = res.data?.value || {}
-    return { streak: v.streak || 0, longestStreak: v.longestStreak || 0 }
+    const legacyStreak = v.streak || 0
+    const legacyLongest = v.longestStreak || 0
+    // Convert the legacy YYYY-MM-DD lastPlayDate to a UTC day index, if present
+    const legacyDay = v.lastPlayDate ? Math.floor(Date.parse(v.lastPlayDate + 'T00:00:00Z') / DAY_MS) : null
+    if (legacyStreak || legacyLongest) {
+      const writes = [
+        setStat(userId, STREAK_CURRENT, legacyStreak, 'OVERRIDE'),
+        setStat(userId, STREAK_LONGEST, Math.max(legacyStreak, legacyLongest), 'MAX'),
+      ]
+      if (legacyDay != null) writes.push(setStat(userId, STREAK_LAST_DAY, legacyDay, 'OVERRIDE'))
+      await Promise.allSettled(writes)
+    }
+    localStorage.setItem(STREAK_MIGRATED_FLAG, '1')
   } catch (e) {
-    if (e?.response?.status === 404) return { streak: 0, longestStreak: 0 }
-    console.warn('[AGS streak] fetch:', e?.message || e)
-    return { streak: 0, longestStreak: 0 }
-  }
-}
-
-export async function updateStreak(userId) {
-  if (!userId || !sdk.getToken()?.accessToken) return
-  const today = new Date().toISOString().slice(0, 10)
-  try {
-    const api = cloudSaveApi()
-    let current = { streak: 0, longestStreak: 0, lastPlayDate: null }
-    try {
-      let res
-      try {
-        res = await api.getPublic_ByUserId_ByKey(userId, STREAK_KEY)
-      } catch (e) {
-        if (e?.response?.status !== 404) throw e
-        res = await api.getRecord_ByUserId_ByKey(userId, STREAK_KEY)
-      }
-      const v = res.data?.value || {}
-      current = { streak: v.streak || 0, longestStreak: v.longestStreak || 0, lastPlayDate: v.lastPlayDate || null }
-    } catch (e) {
-      if (e?.response?.status !== 404) throw e
+    if (e?.response?.status === 404) {
+      localStorage.setItem(STREAK_MIGRATED_FLAG, '1')  // nothing to migrate — don't retry
+      return
     }
-
-    if (current.lastPlayDate === today) return  // already updated today
-
-    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
-    const newStreak = current.lastPlayDate === yesterday ? current.streak + 1 : 1
-    const newLongest = Math.max(newStreak, current.longestStreak)
-    const record = {
-      __META: { is_public: true },
-      streak: newStreak,
-      longestStreak: newLongest,
-      lastPlayDate: today,
-    }
-
-    try {
-      await api.updateRecord_ByUserId_ByKey(userId, STREAK_KEY, record)
-    } catch (e) {
-      if (e?.response?.status !== 404) throw e
-      await api.createRecord_ByUserId_ByKey(userId, STREAK_KEY, record)
-    }
-
-    return { streak: newStreak, longestStreak: newLongest }
-  } catch (e) {
-    console.warn('[AGS streak] update:', e?.message || e)
+    console.warn('[AGS streak] migrate:', e?.response?.data || e?.message)
   }
 }
