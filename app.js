@@ -817,6 +817,7 @@ function showGameOver() {
   }
   if (typeof window.agsIncrementGamePlayed === 'function') window.agsIncrementGamePlayed(gameMode);
   window.agsUpdateStreak?.();
+  window.agsCheckAchievements?.();
 
   const title = document.getElementById('game-over-title');
   const msg   = document.getElementById('game-over-message');
