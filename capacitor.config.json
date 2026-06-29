@@ -7,5 +7,10 @@
   },
   "ios": {
     "contentInset": "always"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
   }
 }
