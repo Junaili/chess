@@ -37,6 +37,44 @@ func SendInviteEmail(req InviteRequest) error {
 	return nil
 }
 
+type WelcomeRequest struct {
+	To          string
+	DisplayName string
+}
+
+func SendWelcomeEmail(req WelcomeRequest) error {
+	if err := ValidateWelcomeRequest(req); err != nil {
+		return err
+	}
+	if err := sendGmailMessage(strings.TrimSpace(req.To), func(from string) string {
+		return buildWelcomeMessage(from, req)
+	}); err != nil {
+		log.Printf("[email] welcome send failed: %v", err)
+		return fmt.Errorf("email delivery failed: %w", err)
+	}
+	log.Printf("[email] welcome sent")
+	return nil
+}
+
+func ValidateWelcomeRequest(req WelcomeRequest) error {
+	if err := ValidateEmailAddress(req.To); err != nil {
+		return err
+	}
+	// Display name is optional (the email falls back to a generic greeting),
+	// but if present it must be sane — bounded and free of control characters
+	// so it can't break headers or the body.
+	name := strings.TrimSpace(req.DisplayName)
+	if utf8.RuneCountInString(name) > 64 {
+		return fmt.Errorf("invalid display name")
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("invalid display name")
+		}
+	}
+	return nil
+}
+
 func ValidateEmailAddress(value string) error {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > 254 || strings.ContainsAny(value, "\r\n") {
@@ -170,6 +208,13 @@ This link works while %s is waiting in the game lobby, so hop in soon.
 </body>
 </html>`, html.EscapeString(preheader), safeName, safeLink, safeLink, safeLink, safeName, safeName)
 
+	return assembleMultipart(from, req.To, subject, textBody, htmlBody)
+}
+
+// assembleMultipart builds a complete RFC 5322 multipart/alternative message
+// (plain-text + HTML) with Date and Message-ID headers. Shared by the invite
+// and welcome builders.
+func assembleMultipart(from, to, subject, textBody, htmlBody string) string {
 	boundary := "ethanchess_" + randomToken(16)
 	domain := "ethanschess.invite"
 	if at := strings.LastIndex(from, "@"); at >= 0 && at+1 < len(from) {
@@ -179,7 +224,7 @@ This link works while %s is waiting in the game lobby, so hop in soon.
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: \"Ethan's Chess\" <%s>\r\n", from)
-	fmt.Fprintf(&b, "To: %s\r\n", req.To)
+	fmt.Fprintf(&b, "To: %s\r\n", to)
 	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
 	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
 	fmt.Fprintf(&b, "Message-ID: %s\r\n", messageID)
@@ -202,6 +247,104 @@ This link works while %s is waiting in the game lobby, so hop in soon.
 	return b.String()
 }
 
+// welcomeAppURL returns the https link the welcome email points players at.
+// Server-controlled: WELCOME_APP_URL env override, else the public app URL.
+// Falls back to the default if the override isn't an approved https URL.
+func welcomeAppURL() string {
+	const fallback = "https://junaili.github.io/chess/"
+	raw := strings.TrimSpace(os.Getenv("WELCOME_APP_URL"))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return fallback
+	}
+	if _, ok := allowedInviteHosts()[strings.ToLower(parsed.Hostname())]; !ok {
+		return fallback
+	}
+	return raw
+}
+
+// buildWelcomeMessage assembles the welcome email sent to a newly registered
+// player. DisplayName is optional and HTML-escaped; the link is server-chosen.
+func buildWelcomeMessage(from string, req WelcomeRequest) string {
+	name := strings.TrimSpace(req.DisplayName)
+	greeting := "there"
+	if name != "" {
+		greeting = name
+	}
+	safeGreeting := html.EscapeString(greeting)
+	appURL := welcomeAppURL()
+	safeURL := html.EscapeString(appURL)
+
+	subject := mime.QEncoding.Encode("utf-8", "Welcome to Ethan's Chess!")
+	preheader := "Your account is ready — jump in and play your first game."
+
+	textBody := fmt.Sprintf(`Welcome to Ethan's Chess, %s!
+
+Your account is all set. Here's what you can do now:
+
+  - Play against the computer at three difficulty levels
+  - Invite friends and family to a live match, anywhere in the world
+  - Chat and even video-call your opponent while you play
+  - Climb the leaderboard and track your win/loss record
+
+It's free and runs right in your browser -- no download needed.
+
+Play your first game:
+%s
+
+See you at the board,
+-- Ethan's Chess
+`, greeting, appURL)
+
+	htmlBody := fmt.Sprintf(`<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4ece3;">
+  <span style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;mso-hide:all;">%s</span>
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="background:#f4ece3;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%%;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #ecdfd2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+        <tr><td style="background:#2a1f1a;padding:22px 28px;">
+          <span style="font-size:18px;font-weight:700;color:#f4ece3;letter-spacing:.2px;">&#9823; Ethan's Chess</span>
+        </td></tr>
+        <tr><td style="padding:36px 28px 8px 28px;">
+          <h1 style="margin:0 0 14px 0;font-size:24px;line-height:1.25;color:#2a1f1a;">Welcome, %s!</h1>
+          <p style="margin:0 0 14px 0;font-size:16px;line-height:1.6;color:#4a3f38;">
+            Your account is ready. Here's what you can jump into:
+          </p>
+          <ul style="margin:0 0 18px 0;padding-left:20px;font-size:16px;line-height:1.7;color:#4a3f38;">
+            <li>Play the computer at three difficulty levels</li>
+            <li>Invite friends to a live match, anywhere in the world</li>
+            <li>Chat and video-call your opponent while you play</li>
+            <li>Climb the leaderboard and track your record</li>
+          </ul>
+          <p style="margin:0 0 6px 0;font-size:16px;line-height:1.6;color:#4a3f38;">
+            It's <strong>free</strong> and runs right in your browser &mdash; no download needed.
+          </p>
+        </td></tr>
+        <tr><td align="center" style="padding:14px 28px 8px 28px;">
+          <a href="%s" style="display:inline-block;padding:15px 34px;background:#c26a3d;color:#ffffff;border-radius:10px;text-decoration:none;font-weight:700;font-size:16px;">
+            Play your first game &rarr;
+          </a>
+        </td></tr>
+        <tr><td style="padding:14px 28px 32px 28px;">
+          <p style="margin:0;font-size:13px;line-height:1.5;color:#8a7d73;">
+            Button not working? Open this link in your browser:<br>
+            <a href="%s" style="color:#c26a3d;word-break:break-all;">%s</a>
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`, html.EscapeString(preheader), safeGreeting, safeURL, safeURL, safeURL)
+
+	return assembleMultipart(from, req.To, subject, textBody, htmlBody)
+}
+
 // randomToken returns n random bytes hex-encoded, used for MIME boundaries and
 // Message-IDs. Falls back to a timestamp if the system RNG is unavailable.
 func randomToken(n int) string {
@@ -213,6 +356,16 @@ func randomToken(n int) string {
 }
 
 func sendGmail(req InviteRequest) error {
+	return sendGmailMessage(req.To, func(from string) string {
+		return buildInviteMessage(from, req)
+	})
+}
+
+// sendGmailMessage opens an authenticated TLS connection to Gmail SMTP and
+// delivers a single message to one recipient. The message is built lazily via
+// buildMessage once the verified From address is known. Shared by the invite
+// and welcome email paths.
+func sendGmailMessage(to string, buildMessage func(from string) string) error {
 	from := os.Getenv("GMAIL_USER")
 	password := os.Getenv("GMAIL_APP_PW")
 	if from == "" || password == "" {
@@ -222,7 +375,7 @@ func sendGmail(req InviteRequest) error {
 		return fmt.Errorf("GMAIL_USER is invalid")
 	}
 
-	message := buildInviteMessage(from, req)
+	message := buildMessage(from)
 
 	auth := smtp.PlainAuth("", from, password, "smtp.gmail.com")
 
@@ -249,7 +402,7 @@ func sendGmail(req InviteRequest) error {
 	if err = client.Mail(from); err != nil {
 		return fmt.Errorf("MAIL FROM: %w", err)
 	}
-	if err = client.Rcpt(req.To); err != nil {
+	if err = client.Rcpt(to); err != nil {
 		return fmt.Errorf("RCPT TO: %w", err)
 	}
 

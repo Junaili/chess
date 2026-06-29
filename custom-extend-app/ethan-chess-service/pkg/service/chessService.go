@@ -40,6 +40,26 @@ func (s *ChessServiceServer) SendInvite(_ context.Context, req *pb.SendInviteReq
 	return &pb.SendInviteResponse{Ok: true}, nil
 }
 
+func (s *ChessServiceServer) SendWelcome(_ context.Context, req *pb.SendWelcomeRequest) (*pb.SendWelcomeResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+
+	welcome := handler.WelcomeRequest{
+		To:          req.To,
+		DisplayName: req.DisplayName,
+	}
+	if err := handler.ValidateWelcomeRequest(welcome); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if err := handler.SendWelcomeEmail(welcome); err != nil {
+		log.Printf("[service] welcome email delivery failed: %v", err)
+		return nil, status.Error(codes.Internal, "email delivery failed")
+	}
+
+	return &pb.SendWelcomeResponse{Ok: true}, nil
+}
+
 func (s *ChessServiceServer) LookupByEmail(_ context.Context, req *pb.LookupByEmailRequest) (*pb.LookupByEmailResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")

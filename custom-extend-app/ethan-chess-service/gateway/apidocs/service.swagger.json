@@ -92,6 +92,45 @@
           }
         ]
       }
+    },
+    "/welcome/email": {
+      "post": {
+        "summary": "Send welcome email",
+        "description": "Send a welcome email to a newly registered user",
+        "operationId": "ChessService_SendWelcome",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/chessserviceSendWelcomeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/chessserviceSendWelcomeRequest"
+            }
+          }
+        ],
+        "tags": [
+          "ChessService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
     }
   },
   "definitions": {
@@ -124,6 +163,25 @@
       }
     },
     "chessserviceSendInviteResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      }
+    },
+    "chessserviceSendWelcomeRequest": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        }
+      }
+    },
+    "chessserviceSendWelcomeResponse": {
       "type": "object",
       "properties": {
         "ok": {

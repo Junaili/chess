@@ -51,6 +51,67 @@ func TestBuildInviteMessage(t *testing.T) {
 	}
 }
 
+func TestBuildWelcomeMessage(t *testing.T) {
+	t.Parallel()
+
+	req := WelcomeRequest{To: "newplayer@example.com", DisplayName: `Ann & "Lee"`}
+	msg := buildWelcomeMessage("ethan@gmail.com", req)
+
+	mustContain := map[string]string{
+		"From display name": `From: "Ethan's Chess" <ethan@gmail.com>`,
+		"recipient":         "To: newplayer@example.com",
+		"multipart type":    "Content-Type: multipart/alternative; boundary=",
+		"plain text part":   `Content-Type: text/plain; charset="utf-8"`,
+		"html part":         `Content-Type: text/html; charset="utf-8"`,
+		"subject":           "Welcome to Ethan",
+		"html-escaped name": `Welcome, Ann &amp; &#34;Lee&#34;!`,
+		"app link":          "https://junaili.github.io/chess/",
+		"cta":               "Play your first game",
+	}
+	for label, want := range mustContain {
+		if !strings.Contains(msg, want) {
+			t.Errorf("welcome message missing %s: expected to contain %q", label, want)
+		}
+	}
+
+	// Raw unescaped name must not leak into the HTML body.
+	_, htmlPart, ok := strings.Cut(msg, `Content-Type: text/html`)
+	if !ok {
+		t.Fatal("no html part found")
+	}
+	if strings.Contains(htmlPart, `Ann & "Lee"`) {
+		t.Error("raw unescaped display name leaked into the HTML body")
+	}
+
+	// Empty display name falls back to a generic greeting, not blank.
+	generic := buildWelcomeMessage("ethan@gmail.com", WelcomeRequest{To: "x@example.com"})
+	if !strings.Contains(generic, "Welcome, there!") {
+		t.Error("empty display name should fall back to 'there'")
+	}
+}
+
+func TestValidateWelcomeRequest(t *testing.T) {
+	t.Parallel()
+
+	if err := ValidateWelcomeRequest(WelcomeRequest{To: "ok@example.com", DisplayName: "Ethan"}); err != nil {
+		t.Fatalf("expected valid welcome request: %v", err)
+	}
+	// Empty display name is allowed.
+	if err := ValidateWelcomeRequest(WelcomeRequest{To: "ok@example.com"}); err != nil {
+		t.Fatalf("empty display name should be allowed: %v", err)
+	}
+	bad := map[string]WelcomeRequest{
+		"bad email":       {To: "not-an-email", DisplayName: "Ethan"},
+		"header in email": {To: "a@example.com\r\nBcc: x@example.com", DisplayName: "Ethan"},
+		"control in name": {To: "ok@example.com", DisplayName: "Ethan\r\nReply-To: x@example.com"},
+	}
+	for name, req := range bad {
+		if err := ValidateWelcomeRequest(req); err == nil {
+			t.Errorf("%s: expected rejection", name)
+		}
+	}
+}
+
 func TestValidateEmailAddress(t *testing.T) {
 	t.Parallel()
 

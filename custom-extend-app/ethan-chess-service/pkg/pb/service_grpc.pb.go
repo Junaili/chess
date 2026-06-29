@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion7
 const (
 	ChessService_SendInvite_FullMethodName    = "/chessservice.ChessService/SendInvite"
 	ChessService_LookupByEmail_FullMethodName = "/chessservice.ChessService/LookupByEmail"
+	ChessService_SendWelcome_FullMethodName   = "/chessservice.ChessService/SendWelcome"
 )
 
 // ChessServiceClient is the client API for ChessService service.
@@ -29,6 +30,7 @@ const (
 type ChessServiceClient interface {
 	SendInvite(ctx context.Context, in *SendInviteRequest, opts ...grpc.CallOption) (*SendInviteResponse, error)
 	LookupByEmail(ctx context.Context, in *LookupByEmailRequest, opts ...grpc.CallOption) (*LookupByEmailResponse, error)
+	SendWelcome(ctx context.Context, in *SendWelcomeRequest, opts ...grpc.CallOption) (*SendWelcomeResponse, error)
 }
 
 type chessServiceClient struct {
@@ -57,12 +59,22 @@ func (c *chessServiceClient) LookupByEmail(ctx context.Context, in *LookupByEmai
 	return out, nil
 }
 
+func (c *chessServiceClient) SendWelcome(ctx context.Context, in *SendWelcomeRequest, opts ...grpc.CallOption) (*SendWelcomeResponse, error) {
+	out := new(SendWelcomeResponse)
+	err := c.cc.Invoke(ctx, ChessService_SendWelcome_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ChessServiceServer is the server API for ChessService service.
 // All implementations should embed UnimplementedChessServiceServer
 // for forward compatibility
 type ChessServiceServer interface {
 	SendInvite(context.Context, *SendInviteRequest) (*SendInviteResponse, error)
 	LookupByEmail(context.Context, *LookupByEmailRequest) (*LookupByEmailResponse, error)
+	SendWelcome(context.Context, *SendWelcomeRequest) (*SendWelcomeResponse, error)
 }
 
 // UnimplementedChessServiceServer should be embedded to have forward compatible implementations.
@@ -74,6 +86,9 @@ func (UnimplementedChessServiceServer) SendInvite(context.Context, *SendInviteRe
 }
 func (UnimplementedChessServiceServer) LookupByEmail(context.Context, *LookupByEmailRequest) (*LookupByEmailResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LookupByEmail not implemented")
+}
+func (UnimplementedChessServiceServer) SendWelcome(context.Context, *SendWelcomeRequest) (*SendWelcomeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SendWelcome not implemented")
 }
 
 // UnsafeChessServiceServer may be embedded to opt out of forward compatibility for this service.
@@ -123,6 +138,24 @@ func _ChessService_LookupByEmail_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChessService_SendWelcome_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendWelcomeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChessServiceServer).SendWelcome(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChessService_SendWelcome_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChessServiceServer).SendWelcome(ctx, req.(*SendWelcomeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ChessService_ServiceDesc is the grpc.ServiceDesc for ChessService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -137,6 +170,10 @@ var ChessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LookupByEmail",
 			Handler:    _ChessService_LookupByEmail_Handler,
+		},
+		{
+			MethodName: "SendWelcome",
+			Handler:    _ChessService_SendWelcome_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

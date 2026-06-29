@@ -105,6 +105,22 @@ async function reportReferral() {
   sessionStorage.removeItem('chess_invite_by')
 }
 
+// Send the new player a welcome email via the Extend service. Best-effort:
+// runs after a successful email/password registration and never blocks signup.
+async function sendWelcomeEmail(emailAddress, displayName) {
+  const token = sdk.getToken()?.accessToken
+  if (!emailAddress || !token) return
+  try {
+    const extendBase = import.meta.env.VITE_EXTEND_EMAIL_URL || '/extend'
+    await fetch(`${extendBase}/welcome/email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ to: emailAddress, display_name: displayName || '' }),
+    })
+    sendEvent('welcome_email_sent', { method: 'email' })
+  } catch {}
+}
+
 function addUtm(url, medium, campaign = 'player-invite') {
   try {
     const u = new URL(url)
@@ -607,6 +623,7 @@ async function initAuth() {
       invited_by: sessionStorage.getItem('chess_invite_by') || undefined,
       invite_medium: sessionStorage.getItem('chess_invite_medium') || undefined,
     })
+    void sendWelcomeEmail(emailAddress, displayName)  // best-effort, non-blocking
     clearAuthMessages()
     const completed = await completeAuthenticatedSession({ tokenData: loggedIn.data || null })
     if (!completed) {

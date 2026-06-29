@@ -41,6 +41,23 @@ service ChessService {
       }
     };
   }
+
+  rpc SendWelcome(SendWelcomeRequest) returns (SendWelcomeResponse) {
+    option (google.api.http) = {
+      post: "/welcome/email"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Send welcome email"
+      description: "Send a welcome email to a newly registered user"
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
 }
 
 message SendInviteRequest {
@@ -50,6 +67,15 @@ message SendInviteRequest {
 }
 
 message SendInviteResponse {
+  bool ok = 1;
+}
+
+message SendWelcomeRequest {
+  string to = 1;
+  string display_name = 2;
+}
+
+message SendWelcomeResponse {
   bool ok = 1;
 }
 
