@@ -9,7 +9,13 @@
     "preview": "vite preview",
     "cap:build": "VITE_BUILD_TARGET=capacitor vite build",
     "ios:build": "VITE_BUILD_TARGET=capacitor vite build && npx cap sync ios",
-    "test": "node --test tests/*.test.cjs"
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node --test tests/unit/*.test.cjs",
+    "test:e2e": "playwright test --project=chromium --project=webkit-ipad",
+    "test:live": "playwright test --project=live",
+    "test:ios": "bash scripts/test-ios.sh",
+    "test:precommit": "npm run test:unit && npm run build && npm run test:e2e && npm run test:live",
+    "test:all": "npm run test:precommit && npm run test:ios"
   },
   "repository": {
     "type": "git",
@@ -24,6 +30,7 @@
   },
   "homepage": "https://github.com/EthanLie/chess#readme",
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "vite": "^8.0.16"
   },
   "dependencies": {

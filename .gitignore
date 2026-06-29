@@ -10,6 +10,15 @@
 # AGS environment config — do not commit
 .env
 
+# Live test credentials — do not commit
+.env.test
+
+# Playwright test artifacts
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
 # Node
 node_modules/
 
