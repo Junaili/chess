@@ -15,6 +15,20 @@ import { ensureNotificationPermission, notify } from './notifications.js'
 window.Peer = Peer
 window.agsPublicAppURL = import.meta.env.VITE_PUBLIC_APP_URL || 'https://junaili.github.io/chess/'
 
+function getShareableAppURL(params = {}) {
+  const native = !!window.Capacitor?.isNativePlatform?.()
+  const base = native
+    ? window.agsPublicAppURL
+    : window.location.origin + window.location.pathname
+  const url = new URL(base, window.location.href)
+  url.search = ''
+  url.hash = ''
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value)
+  }
+  return url.toString()
+}
+
 let currentUserId = null
 let currentUserWins = 0
 let currentStreak = 0
@@ -353,7 +367,11 @@ async function initAuth() {
   window.cacheDisplayName = cacheDisplayName
 
   const params = new URLSearchParams(window.location.search)
-  const hasCallback = params.has('code') || params.has('error')
+  // Google direct login (web) returns the id_token in the URL fragment.
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const hasCallback = params.has('code') || params.has('error') ||
+    hashParams.has('id_token') ||
+    (hashParams.has('error') && (hashParams.get('state') || '').startsWith('ethanschess'))
 
   const prefilledEmail = params.get('email') || ''
 
@@ -681,7 +699,7 @@ async function initAuth() {
 
     // User not found — store pending invite and show share options
     storePendingInvite(email, currentUserId)
-    const inviteUrl = addUtm(window.location.origin + window.location.pathname + '?invitedBy=' + encodeURIComponent(currentUserId), 'email')
+    const inviteUrl = addUtm(getShareableAppURL({ invitedBy: currentUserId }), 'email')
     if (resultEl) {
       resultEl.innerHTML = `
         <span class="auth-message">No account found. Share this invite:</span>
@@ -710,10 +728,10 @@ async function initAuth() {
   window.agsShareRow = mountShareRow
   window.agsGetInviteUrl = () =>
     currentUserId
-      ? window.location.origin + window.location.pathname + '?invitedBy=' + encodeURIComponent(currentUserId)
+      ? getShareableAppURL({ invitedBy: currentUserId })
       : null
   window.agsCopyInviteLink = () => {
-    const link = window.location.origin + window.location.pathname + (currentUserId ? `?invitedBy=${encodeURIComponent(currentUserId)}` : '')
+    const link = getShareableAppURL(currentUserId ? { invitedBy: currentUserId } : {})
     const container = document.getElementById('ags-invite-share-row')
     if (navigator.share) {
       const fromName = document.getElementById('ags-signedin-name')?.textContent || undefined
@@ -1878,6 +1896,12 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
       endText = `${winnerName} wins by checkmate!`
     } else if (g.status === 'stalemate') {
       endText = 'Draw by stalemate'
+    } else if (g.status === 'draw-insufficient') {
+      endText = 'Draw by insufficient material'
+    } else if (g.status === 'draw-fifty-move') {
+      endText = 'Draw by the fifty-move rule'
+    } else if (g.status === 'draw-repetition') {
+      endText = 'Draw by threefold repetition'
     }
     if (statusEl) statusEl.textContent = endText
     if (countEl) countEl.textContent = `${notations.length} moves total`
@@ -1889,6 +1913,12 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
         ? `Checkmate — ${gView.currentTurn === 'white' ? (matchData.blackName || 'Black') : (matchData.whiteName || 'White')} wins`
         : gView.status === 'stalemate'
           ? 'Stalemate'
+          : gView.status === 'draw-insufficient'
+            ? 'Draw by insufficient material'
+            : gView.status === 'draw-fifty-move'
+              ? 'Draw by the fifty-move rule'
+              : gView.status === 'draw-repetition'
+                ? 'Draw by threefold repetition'
           : `${turnName}'s turn`
     if (countEl) countEl.textContent = ''
   } else {

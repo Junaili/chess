@@ -114,10 +114,29 @@ function buildUsername(displayName, emailAddress) {
   return (base.slice(0, 20) + '_' + suffix).slice(0, 32)
 }
 
-// Marks a native Google login so the redirect page (native-auth-bounce.js)
-// forwards the id_token to the app's custom URL scheme.
+// "Sign in with Google" goes straight to Google (id_token implicit flow) on both
+// web and native — the button promises Google, and AGS's hosted login page can't
+// be skipped without an existing session. Native marks its state so the redirect
+// page (native-auth-bounce.js) forwards the id_token to the app's custom scheme;
+// web uses a distinct state so the bounce ignores it and the page handles it.
 const GOOGLE_NATIVE_STATE = 'ethanschess_native_google'
+const GOOGLE_WEB_STATE = 'ethanschess_web_google'
 const GOOGLE_NONCE_KEY = 'ags_google_nonce'
+
+function buildGoogleLoginUrl(state) {
+  const nonce = `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+  sessionStorage.setItem(GOOGLE_NONCE_KEY, nonce)
+  const params = new URLSearchParams({
+    client_id: import.meta.env.VITE_ACCELBYTE_GOOGLE_CLIENT_ID,
+    redirect_uri: import.meta.env.VITE_ACCELBYTE_REDIRECT_URI || (window.location.origin + import.meta.env.BASE_URL),
+    response_type: 'id_token',
+    scope: 'openid email profile',
+    nonce,
+    state,
+    prompt: 'select_account',
+  })
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
+}
 
 export async function loginWithGoogle() {
   if (window.location.search) {
@@ -125,29 +144,12 @@ export async function loginWithGoogle() {
   }
 
   if (isNativeApp()) {
-    // The button promises Google, and AGS's hosted login page can't be skipped
-    // without an existing session (so on a fresh iPad Safari it would show the
-    // AccelByte login page instead). Go straight to Google's consent screen in
-    // the system browser and exchange the returned id_token for an AGS token.
-    const nonce = `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
-    sessionStorage.setItem(GOOGLE_NONCE_KEY, nonce)
-    const params = new URLSearchParams({
-      client_id: import.meta.env.VITE_ACCELBYTE_GOOGLE_CLIENT_ID,
-      redirect_uri: import.meta.env.VITE_ACCELBYTE_REDIRECT_URI || 'https://junaili.github.io/chess/',
-      response_type: 'id_token',
-      scope: 'openid email profile',
-      nonce,
-      state: GOOGLE_NATIVE_STATE,
-      prompt: 'select_account',
-    })
     const { Browser } = await import('@capacitor/browser')
-    await Browser.open({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` })
+    await Browser.open({ url: buildGoogleLoginUrl(GOOGLE_NATIVE_STATE) })
     return
   }
 
-  // Web: AGS hosted login (works in a browser that has/obtains an AGS session).
-  const auth = new IamUserAuthorizationClient(sdk)
-  window.location.assign(auth.createLoginURL(null))
+  window.location.assign(buildGoogleLoginUrl(GOOGLE_WEB_STATE))
 }
 
 export async function handleCallback(callbackUrl = null) {
@@ -161,11 +163,17 @@ export async function handleCallback(callbackUrl = null) {
     return null
   }
 
-  // Native Google login returns an id_token (implicit flow) forwarded by the
-  // bounce page to the custom scheme — exchange it for an AGS token.
-  const idToken = parsed.searchParams.get('id_token')
-  if (idToken || parsed.searchParams.get('state') === GOOGLE_NATIVE_STATE) {
-    return exchangeGoogleIdToken(idToken)
+  // Google login returns an id_token (implicit flow). Native forwards it as a
+  // query param via the bounce page; web receives it in the URL fragment.
+  const hashParams = new URLSearchParams((parsed.hash || '').replace(/^#/, ''))
+  const idToken = parsed.searchParams.get('id_token') || hashParams.get('id_token')
+  const googleState = parsed.searchParams.get('state') || hashParams.get('state')
+  if (idToken || googleState === GOOGLE_NATIVE_STATE || googleState === GOOGLE_WEB_STATE) {
+    const pre = sessionStorage.getItem('ags_pre_login_search')
+    sessionStorage.removeItem('ags_pre_login_search')
+    const result = await exchangeGoogleIdToken(idToken)
+    if (!callbackUrl) clearAuthCallbackUrl(pre || '')
+    return result
   }
 
   const code = parsed.searchParams.get('code')
