@@ -1,6 +1,7 @@
 import { IamUserAuthorizationClient, OAuth20ExtensionApi, UsersApi } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
 import { isQueueTicket, runLoginQueue } from './login-queue.js'
+import { getDeviceId } from './anon-id.js'
 
 // True when running inside the Capacitor native shell (iOS app), where the
 // app is served from capacitor://localhost and in-WebView OAuth redirects are
@@ -12,7 +13,6 @@ function isNativeApp() {
 // Custom URL scheme the iOS app is registered for (see Info.plist). The system
 // browser bounces the OAuth result here, which iOS routes back to the app.
 const NATIVE_RETURN_PATH = '__native__'
-const DEVICE_ID_KEY = 'ags_device_id'
 const DEVICE_NAME_KEY = 'ags_device_name'
 const SESSION_FLAG = 'ags_session'
 const REFRESH_TOKEN_KEY = 'ags_refresh_token'
@@ -83,17 +83,6 @@ async function resolveLoginQueue(resp, payload) {
   if (resp.status !== 401 || !isQueueTicket(payload)) return { queued: false }
   const { baseURL, clientId } = getAuthConfig()
   return runLoginQueue(payload, { baseURL, authHeader: `Basic ${btoa(clientId + ':')}` })
-}
-
-function getDeviceId() {
-  let id = localStorage.getItem(DEVICE_ID_KEY)
-  if (!id) {
-    id = crypto.randomUUID
-      ? `chess-${crypto.randomUUID()}`
-      : `chess-${Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')}`
-    localStorage.setItem(DEVICE_ID_KEY, id)
-  }
-  return id
 }
 
 function getDeviceName() {

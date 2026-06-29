@@ -1,6 +1,7 @@
 import { MatchTicketsApi } from '@accelbyte/sdk-matchmaking'
 import { GameSessionApi } from '@accelbyte/sdk-session'
 import { sdk } from './ags-client.js'
+import { sendEvent } from './telemetry.js'
 
 const MATCH_POOL     = 'chess-quickmatch'
 const POLL_INTERVAL  = 2000   // ms between status polls
@@ -9,9 +10,19 @@ const MATCH_TIMEOUT  = 120000 // 2 min — matches ticket_expiration_seconds on 
 let activeTicketId  = null
 let pollTimer       = null
 let cancelled       = false
+let searchStartedAt = 0
+
+// Emit the outcome of a matchmaking attempt so we can measure queue liquidity
+// (found vs. timeout vs. cancelled) — a timeout otherwise produces no event and
+// the cold-start problem stays invisible.
+function reportResult(result, extra = {}) {
+  const waitSeconds = searchStartedAt ? Math.round((Date.now() - searchStartedAt) / 1000) : 0
+  sendEvent('matchmaking_result', { result, wait_seconds: waitSeconds, pool: MATCH_POOL, ...extra })
+}
 
 export async function startMatchmaking(onFound, onTimeout, onError) {
   cancelled = false
+  searchStartedAt = Date.now()
 
   let res
   try {
@@ -22,6 +33,7 @@ export async function startMatchmaking(onFound, onTimeout, onError) {
     })
   } catch (e) {
     console.warn('[MM] createMatchTicket:', e?.response?.data || e?.message)
+    reportResult('error', { stage: 'create_ticket' })
     onError('Could not enter matchmaking queue. Please try again.')
     return
   }
@@ -59,6 +71,7 @@ export async function startMatchmaking(onFound, onTimeout, onError) {
           onError('Match found but session has fewer than 2 members. Please try again.')
           return
         }
+        reportResult('found')
         onFound(userIds)
       } catch (e) {
         console.warn('[MM] getGamesession error:', e?.response?.status, e?.response?.data || e?.message)
@@ -71,6 +84,7 @@ export async function startMatchmaking(onFound, onTimeout, onError) {
       stopPolling()
       await deleteTicketSilently(activeTicketId)
       activeTicketId = null
+      reportResult('timeout')
       onTimeout()
     }
   }, POLL_INTERVAL)
@@ -80,6 +94,7 @@ export async function cancelMatchmaking() {
   cancelled = true
   stopPolling()
   if (activeTicketId) {
+    reportResult('cancelled')
     await deleteTicketSilently(activeTicketId)
     activeTicketId = null
   }

@@ -1,5 +1,10 @@
 import { GametelemetryOperationsApi } from '@accelbyte/sdk-gametelemetry'
 import { sdk } from './ags-client.js'
+import { getDeviceId, getSessionId, getPlatform } from './anon-id.js'
+
+// Bump when the stamped payload shape changes, so analytics queries can filter
+// or migrate by version instead of guessing.
+const EVENT_SCHEMA_VERSION = 1
 
 // Events queued before the user is authenticated; flushed after login.
 let preAuthQueue = []
@@ -44,7 +49,16 @@ export async function sendEvent(eventName, payload = {}) {
     EventNamespace:  coreConfig.namespace,
     EventName:       eventName,
     ClientTimestamp: new Date().toISOString(),
-    Payload:         { ...getUtm(), ...payload },
+    // Stamp identity + context on every event so funnels can join across the
+    // pre-auth → registered boundary and slice by platform/session/version.
+    Payload: {
+      schema_version: EVENT_SCHEMA_VERSION,
+      device_id:      getDeviceId(),
+      session_id:     getSessionId(),
+      platform:       getPlatform(),
+      ...getUtm(),
+      ...payload,
+    },
   }
   if (!sdk.getToken()?.accessToken) {
     preAuthQueue.push(event)
