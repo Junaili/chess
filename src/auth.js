@@ -1,5 +1,6 @@
 import { IamUserAuthorizationClient, OAuth20ExtensionApi, UsersApi } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
+import { isQueueTicket, runLoginQueue } from './login-queue.js'
 
 // True when running inside the Capacitor native shell (iOS app), where the
 // app is served from capacitor://localhost and in-WebView OAuth redirects are
@@ -71,6 +72,17 @@ function getRefreshToken() {
 function extractErrorMessage(payload, fallback) {
   if (!payload) return fallback
   return payload.errorMessage || payload.error_description || payload.message || payload.error || fallback
+}
+
+// If a login response was held by the AGS login queue (HTTP 401 + queue ticket
+// body), wait out the queue and return the resulting token. Returns:
+//   { queued: false }                — not a queue response; handle normally
+//   { token }                        — admitted; caller should setSession(token)
+//   { cancelled: true } | { error }  — queue ended without a token
+async function resolveLoginQueue(resp, payload) {
+  if (resp.status !== 401 || !isQueueTicket(payload)) return { queued: false }
+  const { baseURL, clientId } = getAuthConfig()
+  return runLoginQueue(payload, { baseURL, authHeader: `Basic ${btoa(clientId + ':')}` })
 }
 
 function getDeviceId() {
@@ -233,7 +245,14 @@ async function exchangeGoogleIdToken(idToken) {
     })
     const tokenData = await resp.json().catch(() => ({}))
     if (!resp.ok || !tokenData?.access_token) {
-      console.error('[AGS] Google platform-token exchange failed:', resp.status, tokenData)
+      const queued = await resolveLoginQueue(resp, tokenData)
+      if (queued.token) {
+        setSession(queued.token)
+        return { response: { data: queued.token } }
+      }
+      if (!queued.cancelled) {
+        console.error('[AGS] Google platform-token exchange failed:', resp.status, tokenData)
+      }
       clearTransientSessionState()
       return null
     }
@@ -278,6 +297,13 @@ export async function loginWithApple() {
     })
     const tokenData = await resp.json().catch(() => ({}))
     if (!resp.ok || !tokenData?.access_token) {
+      const queued = await resolveLoginQueue(resp, tokenData)
+      if (queued.token) {
+        setSession(queued.token)
+        return { ok: true, data: queued.token }
+      }
+      if (queued.cancelled) return { ok: false, error: 'Sign-in cancelled.' }
+      if (queued.error) return { ok: false, error: queued.error }
       console.error('[AGS] Apple platform-token exchange failed:', resp.status, tokenData)
       return { ok: false, error: extractErrorMessage(tokenData, 'Could not complete Apple sign-in.') }
     }
@@ -309,6 +335,13 @@ export async function loginWithPassword(identifier, password) {
 
     const payload = await resp.json().catch(() => ({}))
     if (!resp.ok) {
+      const queued = await resolveLoginQueue(resp, payload)
+      if (queued.token) {
+        setSession(queued.token)
+        return { ok: true, data: queued.token }
+      }
+      if (queued.cancelled) return { ok: false, error: 'Sign-in cancelled.' }
+      if (queued.error) return { ok: false, error: queued.error }
       return { ok: false, error: extractErrorMessage(payload, 'Could not sign in with username and password.') }
     }
 

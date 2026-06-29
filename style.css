@@ -3485,3 +3485,86 @@ input[type="checkbox"] {
   color: var(--text-soft);
   margin-top: 6px;
 }
+
+/* ─── Login Queue Overlay ───────────────────────────────────────────────────── */
+.login-queue-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
+  background: rgba(8, 6, 8, 0.78);
+  backdrop-filter: blur(12px);
+  animation: fadeIn 0.25s ease;
+}
+
+.login-queue-card {
+  width: min(420px, 100%);
+  text-align: center;
+  padding: 32px 28px;
+  border-radius: 20px;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(16px);
+}
+
+.login-queue-spinner {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 18px;
+  border-radius: 50%;
+  border: 3px solid rgba(240, 195, 122, 0.2);
+  border-top-color: var(--accent-2);
+  animation: spin 1s linear infinite;
+}
+
+.login-queue-title {
+  margin: 0 0 8px;
+  color: var(--accent-2);
+  font-size: 1.4rem;
+}
+
+.login-queue-sub {
+  margin: 0 0 22px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.login-queue-stats {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.lq-stat {
+  flex: 1;
+  padding: 14px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--surface-border);
+}
+
+.lq-stat-value {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.lq-stat-label {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+#login-queue-cancel {
+  width: 100%;
+}

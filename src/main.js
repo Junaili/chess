@@ -1,5 +1,6 @@
 import { Peer } from 'peerjs'
 import { loginWithGoogle, loginWithApple, loginWithPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
+import { setQueueUIHandler, cancelLoginQueue } from './login-queue.js'
 import { sdk } from './ags-client.js'
 import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
 import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave } from './stats.js'
@@ -362,9 +363,40 @@ async function completeAuthenticatedSession({ profile = null, tokenData = null }
   return true
 }
 
+// Renders AGS login-queue state. Shown when IAM is at capacity and a login is
+// held in line; the queue module drives this and finishes the sign-in itself
+// once we're admitted.
+function renderLoginQueue(state) {
+  const overlay = document.getElementById('login-queue-overlay')
+  if (!overlay) return
+  if (!state || state.status !== 'queued') {
+    overlay.style.display = 'none'
+    return
+  }
+  overlay.style.display = 'flex'
+  const posEl = document.getElementById('login-queue-position')
+  const etaEl = document.getElementById('login-queue-eta')
+  if (posEl) {
+    const pos = Number(state.position)
+    posEl.textContent = Number.isFinite(pos) && pos > 0 ? pos.toLocaleString() : "You're next"
+  }
+  if (etaEl) {
+    const secs = Number(state.estimatedWaitingTimeInSeconds)
+    if (!Number.isFinite(secs) || secs <= 0) {
+      etaEl.textContent = 'Almost there'
+    } else if (secs < 60) {
+      etaEl.textContent = `~${Math.ceil(secs)} sec`
+    } else {
+      etaEl.textContent = `~${Math.ceil(secs / 60)} min`
+    }
+  }
+}
+
 async function initAuth() {
   window.agsRefreshLeaderboard = refreshLeaderboard
   window.cacheDisplayName = cacheDisplayName
+  setQueueUIHandler(renderLoginQueue)
+  window.agsCancelLoginQueue = cancelLoginQueue
 
   const params = new URLSearchParams(window.location.search)
   // Google direct login (web) returns the id_token in the URL fragment.

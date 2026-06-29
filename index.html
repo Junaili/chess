@@ -564,6 +564,26 @@
     </div>
   </div>
 
+  <!-- ── Login Queue Overlay ─────────────────────────────────────────────────── -->
+  <div id="login-queue-overlay" class="login-queue-overlay" role="dialog" aria-modal="true" aria-live="polite" style="display:none">
+    <div class="login-queue-card">
+      <div class="login-queue-spinner" aria-hidden="true"></div>
+      <h2 class="login-queue-title">You're in line</h2>
+      <p class="login-queue-sub">Our servers are busy right now. We'll sign you in automatically the moment it's your turn — no need to retry.</p>
+      <div class="login-queue-stats">
+        <div class="lq-stat">
+          <span class="lq-stat-value" id="login-queue-position">—</span>
+          <span class="lq-stat-label">Ahead of you</span>
+        </div>
+        <div class="lq-stat">
+          <span class="lq-stat-value" id="login-queue-eta">—</span>
+          <span class="lq-stat-label">Est. wait</span>
+        </div>
+      </div>
+      <button class="btn btn-secondary" id="login-queue-cancel" onclick="window.agsCancelLoginQueue && window.agsCancelLoginQueue()">Leave queue</button>
+    </div>
+  </div>
+
   <!-- ── Achievement Unlock Toasts ───────────────────────────────────────────── -->
   <div id="achievement-toasts" class="achievement-toasts"></div>
 
