@@ -425,6 +425,70 @@ input[type="checkbox"] {
   line-height: 1.65;
 }
 
+/* ── Signed-in main menu: compact, no-scroll dashboard ─────────────────────────
+   Once the player is signed in, drop the marketing hero and fit everything in
+   the viewport with the friends/leaderboard lists scrolling inside their own
+   panels — the page itself never scrolls. */
+#screen-home.signed-in.active {
+  overflow: hidden;
+  align-items: stretch;
+}
+
+#screen-home.signed-in .home-subtitle,
+#screen-home.signed-in .home-highlights,
+#screen-home.signed-in .menu-note {
+  display: none;
+}
+
+#screen-home.signed-in .home-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#screen-home.signed-in .home-container h1 {
+  font-size: clamp(1.9rem, 4vw, 2.9rem);
+  margin-bottom: 14px;
+}
+
+#screen-home.signed-in .home-body {
+  grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.95fr);
+  max-width: 1160px;
+  margin: 0 auto;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: stretch;
+}
+
+#screen-home.signed-in .home-left {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Friends panel absorbs the leftover height in the left column and scrolls. */
+#screen-home.signed-in .friends-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+/* Leaderboard fills its column; its list scrolls instead of the page. */
+#screen-home.signed-in .leaderboard-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+#screen-home.signed-in .lb-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
 .auth-actions {
   display: flex;
   flex-direction: column;
@@ -478,6 +542,16 @@ input[type="checkbox"] {
   color: #2c241d;
   background: linear-gradient(135deg, #fff8f1, #efe6dc);
   border: 1px solid rgba(255, 255, 255, 0.32);
+}
+
+.btn-apple {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #fff;
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.22);
 }
 
 .signedin-card {
@@ -2516,6 +2590,24 @@ input[type="checkbox"] {
 
   body {
     overflow: auto;
+  }
+
+  /* Too narrow for the two-column dashboard — stack it and allow scrolling. */
+  #screen-home.signed-in.active {
+    overflow-y: auto;
+  }
+
+  #screen-home.signed-in .home-body {
+    grid-template-columns: 1fr;
+  }
+
+  #screen-home.signed-in .friends-panel,
+  #screen-home.signed-in .leaderboard-panel {
+    overflow: visible;
+  }
+
+  #screen-home.signed-in .lb-list {
+    max-height: 320px;
   }
 
   #screen-game.active {

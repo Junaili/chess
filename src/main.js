@@ -1,5 +1,5 @@
 import { Peer } from 'peerjs'
-import { loginWithGoogle, loginWithPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
+import { loginWithGoogle, loginWithApple, loginWithPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
 import { sdk } from './ags-client.js'
 import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
 import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave } from './stats.js'
@@ -440,6 +440,20 @@ async function initAuth() {
   }
 
   window.agsLogin = loginWithGoogle
+
+  // Sign in with Apple (iOS only — shown by updateAuthUI on native).
+  window.agsLoginApple = async () => {
+    const appleBtn = document.getElementById('ags-signin-apple')
+    if (appleBtn) appleBtn.disabled = true
+    const result = await loginWithApple()
+    if (appleBtn) appleBtn.disabled = false
+    if (!result?.ok) {
+      if (result?.error) alert(result.error)
+      return
+    }
+    sendEvent('user_logged_in', { method: 'apple' })
+    await completeAuthenticatedSession({ tokenData: result.data || null })
+  }
 
   // Native (iOS) Google login returns via the app's custom URL scheme. Listen
   // for the deep link, close the system browser, and finish the same token
@@ -1201,6 +1215,11 @@ function updateAuthUI(loggedIn, name, userId) {
 
   // Switches the home screen into the compact, no-scroll signed-in dashboard.
   document.getElementById('screen-home')?.classList.toggle('signed-in', loggedIn)
+
+  // Sign in with Apple is an iOS-only option (App Store Guideline 4.8).
+  const appleBtn = document.getElementById('ags-signin-apple')
+  const isNative = !!window.Capacitor?.isNativePlatform?.()
+  if (appleBtn) appleBtn.style.display = (!loggedIn && isNative) ? '' : 'none'
 
   if (loggedIn) {
     nameInput.style.display = 'none'

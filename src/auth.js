@@ -16,9 +16,6 @@ const DEVICE_NAME_KEY = 'ags_device_name'
 const SESSION_FLAG = 'ags_session'
 const REFRESH_TOKEN_KEY = 'ags_refresh_token'
 
-localStorage.removeItem(SESSION_FLAG)
-localStorage.removeItem(REFRESH_TOKEN_KEY)
-
 function getAuthConfig() {
   const { coreConfig } = sdk.assembly()
   return {
@@ -47,17 +44,17 @@ function setSession(tokenData) {
     refreshToken: tokenData.refresh_token || '',
   })
   if (tokenData.access_token) {
-    sessionStorage.setItem(SESSION_FLAG, '1')
+    // Persist across app restarts so the player stays logged in. The refresh
+    // token lives in localStorage (app-sandboxed in the Capacitor WebView).
+    localStorage.setItem(SESSION_FLAG, '1')
     if (tokenData.refresh_token) {
-      sessionStorage.setItem(REFRESH_TOKEN_KEY, tokenData.refresh_token)
+      localStorage.setItem(REFRESH_TOKEN_KEY, tokenData.refresh_token)
     }
   }
-  localStorage.removeItem(SESSION_FLAG)
-  localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
 
 export function hasStoredSession() {
-  return !!sessionStorage.getItem(SESSION_FLAG)
+  return !!localStorage.getItem(SESSION_FLAG)
 }
 
 export function clearStoredSession() {
@@ -68,7 +65,7 @@ export function clearStoredSession() {
 }
 
 function getRefreshToken() {
-  return sdk.getToken()?.refreshToken || sessionStorage.getItem(REFRESH_TOKEN_KEY) || ''
+  return sdk.getToken()?.refreshToken || localStorage.getItem(REFRESH_TOKEN_KEY) || ''
 }
 
 function extractErrorMessage(payload, fallback) {
@@ -246,6 +243,49 @@ async function exchangeGoogleIdToken(idToken) {
     console.error('[AGS] Google platform-token exchange threw:', e?.message || e)
     clearTransientSessionState()
     return null
+  }
+}
+
+// Native "Sign in with Apple" (iOS). Uses Apple's AuthenticationServices via the
+// Capacitor plugin to get an identity token, then exchanges it for an AGS token.
+// REQUIRES (App Store): the "Sign in with Apple" capability in Xcode, an Apple
+// Services ID/key in the Apple Developer portal, and Apple configured as a 3rd-
+// party platform in AGS IAM. Web Sign in with Apple needs a server endpoint
+// (Apple uses form_post), so it's offered on iOS only.
+export async function loginWithApple() {
+  if (!isNativeApp()) {
+    return { ok: false, error: 'Sign in with Apple is available in the iOS app.' }
+  }
+  try {
+    const { SignInWithApple } = await import('@capacitor-community/apple-sign-in')
+    const result = await SignInWithApple.authorize({
+      clientId: import.meta.env.VITE_ACCELBYTE_APPLE_CLIENT_ID || 'io.github.junaili.chess',
+      redirectURI: import.meta.env.VITE_ACCELBYTE_REDIRECT_URI || 'https://junaili.github.io/chess/',
+      scopes: 'email name',
+    })
+    const identityToken = result?.response?.identityToken
+    if (!identityToken) return { ok: false, error: 'Apple sign-in returned no token.' }
+
+    const { baseURL, clientId } = getAuthConfig()
+    const resp = await fetch(`${baseURL}/iam/v3/oauth/platforms/apple/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${btoa(clientId + ':')}`,
+      },
+      body: new URLSearchParams({ platform_token: identityToken }).toString(),
+      credentials: 'include',
+    })
+    const tokenData = await resp.json().catch(() => ({}))
+    if (!resp.ok || !tokenData?.access_token) {
+      console.error('[AGS] Apple platform-token exchange failed:', resp.status, tokenData)
+      return { ok: false, error: extractErrorMessage(tokenData, 'Could not complete Apple sign-in.') }
+    }
+    setSession(tokenData)
+    return { ok: true, data: tokenData }
+  } catch (e) {
+    // Plugin throws on user cancel and when the capability isn't configured yet.
+    return { ok: false, error: e?.message || 'Apple sign-in was cancelled.' }
   }
 }
 
