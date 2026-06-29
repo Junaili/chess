@@ -1090,6 +1090,9 @@ async function openPublicProfile(userId, displayName = '') {
   const winsEl = document.getElementById('profile-wins')
   const lossesEl = document.getElementById('profile-losses')
   const rankEl = document.getElementById('profile-rank')
+  const authGate = document.getElementById('profile-auth-gate')
+  const statsGrid = document.getElementById('profile-stats-grid')
+  const friendCard = document.getElementById('profile-friend-card')
   const statusEl = document.getElementById('profile-friend-status')
   const addBtn = document.getElementById('profile-add-friend-btn')
   const matchHistoryEl = document.getElementById('profile-match-history')
@@ -1102,6 +1105,30 @@ async function openPublicProfile(userId, displayName = '') {
   if (nameEl) nameEl.textContent = displayName || userId.slice(0, 8)
   if (editBtn) editBtn.style.display = 'none'
   if (editForm) editForm.style.display = 'none'
+
+  if (!currentUserId) {
+    profileMatchHistoryRows = []
+    if (authGate) authGate.style.display = 'flex'
+    if (statsGrid) statsGrid.classList.add('is-locked')
+    if (friendCard) friendCard.style.display = 'none'
+    if (winsEl) winsEl.textContent = '—'
+    if (lossesEl) lossesEl.textContent = '—'
+    if (rankEl) rankEl.textContent = '—'
+    if (statusEl) statusEl.textContent = ''
+    if (addBtn) addBtn.style.display = 'none'
+    if (matchHistoryCountEl) matchHistoryCountEl.textContent = 'Sign in required'
+    if (matchHistoryEl) {
+      matchHistoryEl.innerHTML = `<div class="profile-history-empty profile-history-locked">
+        <strong>Sign in to view match history</strong>
+        <span>Completed games and replays will appear here after you sign in.</span>
+      </div>`
+    }
+    return
+  }
+
+  if (authGate) authGate.style.display = 'none'
+  if (statsGrid) statsGrid.classList.remove('is-locked')
+  if (friendCard) friendCard.style.display = ''
   if (winsEl) winsEl.textContent = '...'
   if (lossesEl) lossesEl.textContent = '...'
   if (rankEl) rankEl.textContent = '...'

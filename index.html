@@ -211,31 +211,47 @@
         </div>
         <button class="btn-mini" onclick="showScreen('home')">Back</button>
       </div>
-      <div class="profile-stats-grid">
+      <div id="profile-auth-gate" class="profile-auth-gate" style="display:none">
+        <div class="profile-auth-gate-copy">
+          <span class="profile-auth-gate-icon" aria-hidden="true">♟</span>
+          <div>
+            <strong>Sign in to view player details</strong>
+            <p>See verified stats, leaderboard rank, match history, and friend options.</p>
+          </div>
+        </div>
+        <div class="profile-auth-gate-actions">
+          <button class="btn btn-primary" onclick="window.agsOpenLogin && window.agsOpenLogin()">Sign In</button>
+          <button class="btn btn-secondary" onclick="window.agsOpenRegister && window.agsOpenRegister()">Create Free Account</button>
+        </div>
+      </div>
+      <div id="profile-stats-grid" class="profile-stats-grid">
         <div class="profile-stat">
           <span>Wins</span>
-          <strong id="profile-wins">0</strong>
+          <strong id="profile-wins">—</strong>
         </div>
         <div class="profile-stat">
           <span>Losses</span>
-          <strong id="profile-losses">0</strong>
+          <strong id="profile-losses">—</strong>
         </div>
         <div class="profile-stat">
           <span>Leaderboard</span>
-          <strong id="profile-rank">Unranked</strong>
+          <strong id="profile-rank">—</strong>
         </div>
       </div>
-      <div class="profile-friend-card">
+      <div id="profile-friend-card" class="profile-friend-card">
         <p id="profile-friend-status" class="auth-message"></p>
         <button class="btn btn-primary" id="profile-add-friend-btn" onclick="window.agsProfileAddFriend && window.agsProfileAddFriend()">Add Friend</button>
       </div>
       <section class="profile-history-card">
         <div class="profile-history-head">
           <h3>Match History</h3>
-          <span id="profile-match-history-count">0 matches</span>
+          <span id="profile-match-history-count">Sign in required</span>
         </div>
         <div id="profile-match-history" class="profile-match-history">
-          <p class="profile-history-empty">No completed matches recorded yet.</p>
+          <div class="profile-history-empty profile-history-locked">
+            <strong>Sign in to view match history</strong>
+            <span>Completed games and replays will appear here after you sign in.</span>
+          </div>
         </div>
       </section>
     </div>
