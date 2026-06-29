@@ -6,6 +6,10 @@
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Ethan's Chess uses your camera for video chat with your opponent during a match.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Ethan's Chess uses your microphone for voice and video chat with your opponent during a match.</string>
 	<key>CFBundleDisplayName</key>
         <string>Ethan's Chess</string>
 	<key>CFBundleExecutable</key>
