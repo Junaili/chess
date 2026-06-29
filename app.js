@@ -4,7 +4,10 @@
 
 const SYMBOLS = {
   white: { king:'♔', queen:'♕', rook:'♖', bishop:'♗', knight:'♘', pawn:'♙' },
-  black: { king:'♚', queen:'♛', rook:'♜', bishop:'♝', knight:'♞', pawn:'♟' }
+  // U+265F (♟) is the only chess glyph with Unicode emoji presentation, so it
+  // can resolve to the color-emoji font (tofu in the iOS Simulator WebView).
+  // Append U+FE0E (text variation selector) to force monochrome text rendering.
+  black: { king:'♚', queen:'♛', rook:'♜', bishop:'♝', knight:'♞', pawn:'♟︎' }
 };
 
 const PIECE_COLORS = {
@@ -298,6 +301,12 @@ function startGame() {
   // Hide hint button during online games; show video chat button instead
   document.getElementById('btn-hint').style.display = isOnline ? 'none' : '';
   document.getElementById('btn-video-chat').style.display = isOnline ? '' : 'none';
+  // New Game + Resign apply to vs-computer play
+  const showVsComputerControls = gameMode === 'computer';
+  const ngBtn = document.getElementById('btn-new-game');
+  const rsBtn = document.getElementById('btn-resign');
+  if (ngBtn) ngBtn.style.display = showVsComputerControls ? '' : 'none';
+  if (rsBtn) rsBtn.style.display = showVsComputerControls ? '' : 'none';
   document.getElementById('online-chat').style.display = isOnline ? 'flex' : 'none';
   updateChatAvailability();
 
@@ -1892,10 +1901,30 @@ async function sendInviteToContact(name, address, link) {
 
 function confirmGoHome() {
   if (game?.status === 'playing' && game.moveHistory.length > 0) {
-    if (!confirm('Go back to the menu? The current game will be lost.')) return;
+    if (!confirm('Leave this game? The current game will be lost.')) return;
   }
   destroyPeer();
   showScreen('home');
+}
+
+function confirmNewGame() {
+  if (game && game.status !== 'checkmate' && game.status !== 'stalemate' && game.moveHistory.length > 0) {
+    if (!confirm('Start a new game? The current game will be lost.')) return;
+  }
+  startGame();
+}
+
+function resignGame() {
+  if (!game || game.status === 'checkmate' || game.status === 'stalemate') return;
+  if (gameMode !== 'computer') return;
+  if (!confirm('Resign this game? It will count as a loss.')) return;
+  game.status = 'checkmate';
+  game.winner = playerColor === 'white' ? 'black' : 'white';
+  aiThinking = false;
+  selectedSquare = null;
+  validMoves = [];
+  renderBoard();
+  showGameOver();
 }
 
 function savePlayerName() {

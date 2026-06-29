@@ -28,7 +28,11 @@
   --radius-sm: 14px;
   --shadow-lg: 0 28px 80px rgba(0, 0, 0, 0.42);
   --shadow-md: 0 18px 48px rgba(0, 0, 0, 0.28);
-  --board-size: min(660px, calc(100vw - 500px));
+  /* Width of the match side-rail (opponent, move list, your card, actions). */
+  --rail: clamp(280px, 26vw, 380px);
+  /* Board fills the column left of the rail, capped by the viewport height so
+     the whole match always fits with no scrolling. */
+  --board-size: min(calc(100vw - var(--rail) - 70px), calc(100dvh - 120px), 980px);
 }
 
 html, body {
@@ -92,6 +96,10 @@ button:focus-visible {
   width: 100%;
   min-height: 100vh;
   padding: 28px;
+  padding-top: max(28px, env(safe-area-inset-top));
+  padding-bottom: max(28px, env(safe-area-inset-bottom));
+  padding-left: max(28px, env(safe-area-inset-left));
+  padding-right: max(28px, env(safe-area-inset-right));
   justify-content: center;
   align-items: center;
 }
@@ -99,6 +107,17 @@ button:focus-visible {
 .screen.active {
   display: flex;
   overflow: auto;
+}
+
+/* The match screen fills the viewport and never scrolls — the board is always
+   fully visible and only the move list scrolls inside its own panel. Flex column
+   so the layout fills exactly the space left inside the screen's safe-area
+   padding (avoids clipping the bottom row of controls). */
+#screen-game.active {
+  overflow: hidden;
+  flex-direction: column;
+  align-items: center;
+  justify-content: stretch;
 }
 
 #screen-home,
@@ -160,10 +179,28 @@ button:focus-visible {
   border-color: rgba(255, 255, 255, 0.14);
 }
 
+/* Hint is a secondary action — don't let it dominate the match screen. */
 .btn-hint {
   width: 100%;
-  color: #2d1a0f;
-  background: linear-gradient(135deg, #f5d48b, #ebb160);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.btn-danger {
+  width: 100%;
+  color: #ffd7d1;
+  background: rgba(138, 35, 28, 0.16);
+  border-color: rgba(200, 78, 66, 0.42);
+}
+
+/* Inline icons inside buttons (replaces fragile emoji). */
+.btn svg {
+  width: 1.05em;
+  height: 1.05em;
+  vertical-align: -0.16em;
+  margin-right: 0.45em;
+  flex: none;
 }
 
 .btn-video-chat {
@@ -1330,6 +1367,8 @@ input[type="checkbox"] {
 .piece-icon {
   font-size: 3.6rem;
   line-height: 1;
+  font-family: "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Symbola", sans-serif;
+  font-variant-emoji: text;
 }
 
 .diff-btn {
@@ -1395,6 +1434,8 @@ input[type="checkbox"] {
   font-size: 2.5rem;
   line-height: 1;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.42));
+  font-family: "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Symbola", sans-serif;
+  font-variant-emoji: text;
 }
 
 .piece-color-name {
@@ -1415,16 +1456,29 @@ input[type="checkbox"] {
 /* ─── Game Layout ─────────────────────────────────────────────────────────── */
 #screen-game {
   overflow: hidden;
-  padding: 18px;
+  padding:
+    max(12px, env(safe-area-inset-top))
+    max(14px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(14px, env(safe-area-inset-left));
 }
 
+/* Board on the left fills its column; a single right rail holds the opponent
+   card (top), then your card + move list + actions (bottom). Same shape in both
+   orientations — no empty columns, no scrolling. */
 .game-layout {
-  width: min(1480px, 100%);
-  height: calc(100vh - 36px);
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
-  grid-template-columns: 220px minmax(320px, auto) 280px;
-  gap: 18px;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) var(--rail);
+  grid-template-rows: min-content minmax(0, 1fr);
+  grid-template-areas:
+    "gboard gleft"
+    "gboard gright";
+  gap: 14px;
+  align-items: stretch;
+  overflow: hidden;
 }
 
 .game-sidebar {
@@ -1432,13 +1486,40 @@ input[type="checkbox"] {
   flex-direction: column;
   gap: 14px;
   min-height: 0;
+  overflow: hidden;
 }
 
+.game-sidebar.left { grid-area: gleft; }
+.game-sidebar.right { grid-area: gright; }
+
 .game-center {
+  grid-area: gboard;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 14px;
+  min-height: 0;
+}
+
+/* Outer ruler labels duplicate the in-cell coordinates — hide them everywhere. */
+.board-labels-top,
+.board-labels-bottom,
+.board-labels-left,
+.board-labels-right { display: none; }
+
+/* Empty capture trays render as stray dark boxes — only show them once a piece
+   has actually been captured. */
+.captured-pieces:empty { display: none; }
+
+/* Friendly empty state instead of a bare "Move History" heading over a void. */
+#move-list:empty::after {
+  content: "No moves yet";
+  display: block;
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  opacity: 0.65;
+  padding: 4px 2px;
 }
 
 .board-container {
@@ -1644,6 +1725,13 @@ input[type="checkbox"] {
   z-index: 5;
   font-size: calc(var(--board-size) / 10.2);
   line-height: 1;
+  /* Render chess glyphs (♟♜…) from a monochrome symbol font, never the color-
+     emoji font. iOS/WebKit diverts U+265F (♟, the one chess glyph with emoji
+     presentation) to Apple Color Emoji, which is tofu in the Simulator and
+     ignores font-variant-emoji/U+FE0E hints. Naming the symbol font directly
+     forces the text glyph. */
+  font-family: "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Symbola", sans-serif;
+  font-variant-emoji: text;
   cursor: grab;
   user-select: none;
   -webkit-user-drag: none;
@@ -1757,6 +1845,8 @@ input[type="checkbox"] {
 .cap-piece {
   font-size: 1.12rem;
   opacity: 0.78;
+  font-family: "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Symbola", sans-serif;
+  font-variant-emoji: text;
 }
 
 .move-history,
@@ -1767,8 +1857,7 @@ input[type="checkbox"] {
 
 .move-history {
   flex: 1 1 0;
-  min-height: 210px;
-  max-height: 250px;
+  min-height: 0;
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
@@ -2385,19 +2474,17 @@ input[type="checkbox"] {
 }
 
 /* ─── Responsive ──────────────────────────────────────────────────────────── */
-@media (max-width: 1180px) {
-  :root {
-    --board-size: min(620px, calc(100vw - 420px));
-  }
-
-  .game-layout {
-    grid-template-columns: 190px minmax(320px, auto) 250px;
-  }
-}
-
-@media (max-width: 940px) {
+/* The match keeps a board + side-panels layout in every orientation so it
+   always fits the viewport with no page scroll: 3 columns in landscape, and a
+   2-column (board | stacked panels) layout in portrait. Only non-game screens
+   (home, etc.) collapse to a single scrollable column below 1300px. */
+@media (max-width: 1300px) {
   .screen {
     padding: 18px;
+    padding-top: max(18px, env(safe-area-inset-top));
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    align-items: flex-start;
+    overflow-y: auto;
   }
 
   .home-body {
@@ -2411,35 +2498,8 @@ input[type="checkbox"] {
     grid-template-columns: 1fr;
   }
 
-  .game-layout {
-    height: auto;
-    grid-template-columns: 1fr;
-    justify-items: center;
-    overflow-y: auto;
-    padding-bottom: 36px;
-  }
-
-  .game-center {
-    order: 1;
-  }
-
-  .game-sidebar.left,
-  .game-sidebar.right {
-    width: min(100%, calc(var(--board-size) + 40px));
-  }
-
-  .game-sidebar.left { order: 2; }
-  .game-sidebar.right { order: 3; }
-
-  .game-sidebar {
-    min-width: 0;
-  }
-
-  .move-history,
-  .online-chat {
-    max-height: none;
-  }
-
+  /* Outer ruler labels are redundant with the in-cell coordinates; hide them
+     on the smaller layouts to give the board more room. */
   .board-labels-top,
   .board-labels-bottom,
   .board-labels-left,
@@ -2448,6 +2508,7 @@ input[type="checkbox"] {
   }
 }
 
+/* Phones: too narrow for board + rail, so stack and allow scrolling. */
 @media (max-width: 640px) {
   :root {
     --board-size: min(92vw, 470px);
@@ -2455,6 +2516,25 @@ input[type="checkbox"] {
 
   body {
     overflow: auto;
+  }
+
+  #screen-game.active {
+    overflow-y: auto;
+  }
+
+  .game-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: min-content min-content min-content;
+    grid-template-areas:
+      "gleft"
+      "gboard"
+      "gright";
+    overflow: visible;
+  }
+
+  .game-sidebar,
+  .move-history {
+    overflow: visible;
   }
 
   .screen {
