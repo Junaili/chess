@@ -4,7 +4,10 @@
 
 const SYMBOLS = {
   white: { king:'♔', queen:'♕', rook:'♖', bishop:'♗', knight:'♘', pawn:'♙' },
-  black: { king:'♚', queen:'♛', rook:'♜', bishop:'♝', knight:'♞', pawn:'♟' }
+  // U+265F (♟) is the only chess glyph with Unicode emoji presentation, so it
+  // can resolve to the color-emoji font (tofu in the iOS Simulator WebView).
+  // Append U+FE0E (text variation selector) to force monochrome text rendering.
+  black: { king:'♚', queen:'♛', rook:'♜', bishop:'♝', knight:'♞', pawn:'♟︎' }
 };
 
 const PIECE_COLORS = {
@@ -300,6 +303,12 @@ function startGame() {
   // Hide hint button during online games; show video chat button instead
   document.getElementById('btn-hint').style.display = isOnline ? 'none' : '';
   document.getElementById('btn-video-chat').style.display = isOnline ? '' : 'none';
+  // New Game + Resign apply to vs-computer play
+  const showVsComputerControls = gameMode === 'computer';
+  const ngBtn = document.getElementById('btn-new-game');
+  const rsBtn = document.getElementById('btn-resign');
+  if (ngBtn) ngBtn.style.display = showVsComputerControls ? '' : 'none';
+  if (rsBtn) rsBtn.style.display = showVsComputerControls ? '' : 'none';
   document.getElementById('online-chat').style.display = isOnline ? 'flex' : 'none';
   updateChatAvailability();
 
@@ -1243,8 +1252,11 @@ function createOnlineRoom(options = {}) {
       }
     };
 
-    const base = window.location.href.split('?')[0];
-    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const native = !!window.Capacitor?.isNativePlatform?.();
+    const base = native
+      ? (window.agsPublicAppURL || 'https://junaili.github.io/chess/')
+      : window.location.href.split('?')[0];
+    const isLocal = !native && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
     if (isLocal) {
       const ac = new AbortController();
@@ -1381,6 +1393,34 @@ function joinOnlineRoom(hostPeerId) {
   });
 }
 
+const PEER_MESSAGE_MAX_BYTES = 128 * 1024;
+const PEER_CHAT_MAX_CHARS = 280;
+const PEER_NAME_MAX_CHARS = 64;
+const PEER_USER_ID_MAX_CHARS = 128;
+const PEER_MOVE_MAX_COUNT = 500;
+const PROMOTION_TYPES = new Set(['queen', 'rook', 'bishop', 'knight']);
+
+function sanitizePeerText(value, maxLength) {
+  return String(value || '').trim().slice(0, maxLength);
+}
+
+function normalizePeerMove(value) {
+  if (!value || typeof value !== 'object') return null;
+  const coords = [value.fr, value.fc, value.toR, value.toC];
+  if (!coords.every(Number.isInteger) || !coords.every(n => n >= 0 && n < 8)) return null;
+  const promType = PROMOTION_TYPES.has(value.promType) ? value.promType : 'queen';
+  return { fr: value.fr, fc: value.fc, toR: value.toR, toC: value.toC, promType };
+}
+
+function isPeerMessageWithinLimit(value) {
+  if (!value || typeof value !== 'object') return false;
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength <= PEER_MESSAGE_MAX_BYTES;
+  } catch {
+    return false;
+  }
+}
+
 function setupPeerConnection(conn, role) {
   remotePeerId = conn.peer;
   connRole = role;
@@ -1416,6 +1456,10 @@ function setupPeerConnection(conn, role) {
   });
 
   conn.on('data', data => {
+    if (!isPeerMessageWithinLimit(data) || typeof data.type !== 'string') {
+      try { conn.close(); } catch {}
+      return;
+    }
     if (data.type === 'ping') {
       try { conn.send({ type: 'pong' }); } catch {}
       return;
@@ -1426,30 +1470,38 @@ function setupPeerConnection(conn, role) {
     }
 
     if (data.type === 'game_start') {
+      if (!['white', 'black'].includes(data.yourColor)) return;
+      const opponentName = sanitizePeerText(data.opponentName, PEER_NAME_MAX_CHARS) || 'Opponent';
+      const opponentId = sanitizePeerText(data.opponentId, PEER_USER_ID_MAX_CHARS);
       playerColor = data.yourColor;
-      setCurrentOpponent(data.opponentName || 'Opponent', data.opponentId || '');
-      if (data.opponentId && data.opponentName) {
-        if (typeof window.cacheDisplayName === 'function') window.cacheDisplayName(data.opponentId, data.opponentName);
+      setCurrentOpponent(opponentName, opponentId);
+      if (opponentId && opponentName) {
+        if (typeof window.cacheDisplayName === 'function') window.cacheDisplayName(opponentId, opponentName);
       }
       startGame();
       // Show host's identity as our opponent
       const oppColor = data.yourColor === 'white' ? 'black' : 'white';
-      setPlayerInfo(oppColor, data.opponentName || 'Opponent', data.opponentId || '');
+      setPlayerInfo(oppColor, opponentName, opponentId);
       // Send back our own identity
       const myName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'Opponent';
       const myId   = window.agsCurrentUserId || '';
       try { conn.send({ type: 'player_info', name: myName, userId: myId }); } catch {}
     } else if (data.type === 'player_info') {
-      setCurrentOpponent(data.name || 'Opponent', data.userId || '');
-      if (data.userId && data.name) {
-        if (typeof window.cacheDisplayName === 'function') window.cacheDisplayName(data.userId, data.name);
+      const opponentName = sanitizePeerText(data.name, PEER_NAME_MAX_CHARS) || 'Opponent';
+      const opponentId = sanitizePeerText(data.userId, PEER_USER_ID_MAX_CHARS);
+      setCurrentOpponent(opponentName, opponentId);
+      if (opponentId && opponentName) {
+        if (typeof window.cacheDisplayName === 'function') window.cacheDisplayName(opponentId, opponentName);
       }
       const oppColor = playerColor === 'white' ? 'black' : 'white';
-      setPlayerInfo(oppColor, data.name || 'Opponent', data.userId || '');
+      setPlayerInfo(oppColor, opponentName, opponentId);
     } else if (data.type === 'chat') {
-      appendChatMessage('opponent', data.name || 'Opponent', data.text || '');
+      const name = sanitizePeerText(data.name, PEER_NAME_MAX_CHARS) || 'Opponent';
+      const text = sanitizePeerText(data.text, PEER_CHAT_MAX_CHARS);
+      if (text) appendChatMessage('opponent', name, text);
     } else if (data.type === 'move') {
-      applyOpponentMove(data.fr, data.fc, data.toR, data.toC, data.promType || 'queen');
+      const move = normalizePeerMove(data);
+      if (move) applyOpponentMove(move.fr, move.fc, move.toR, move.toC, move.promType);
     } else if (data.type === 'reconnect_req') {
       // Joiner reconnected — send full game state so they can resync
       try { conn.send({ type: 'resync', moves: moveLog, chatMessages }); } catch {}
@@ -1459,6 +1511,13 @@ function setupPeerConnection(conn, role) {
       hideConnBanner();
       showConnBanner('Opponent reconnected!', 'success');
     } else if (data.type === 'resync') {
+      if (connRole !== 'joiner' || !Array.isArray(data.moves) || data.moves.length > PEER_MOVE_MAX_COUNT) return;
+      const moves = data.moves.map(normalizePeerMove);
+      if (moves.some(move => !move)) return;
+      const rebuiltGame = new ChessGame();
+      for (const move of moves) {
+        if (!rebuiltGame.makeMove(move.fr, move.fc, move.toR, move.toC, move.promType)) return;
+      }
       // Replay all moves on a fresh board
       moveQueue = [];
       reconnectCount = 0;
@@ -1467,8 +1526,14 @@ function setupPeerConnection(conn, role) {
       document.getElementById('move-list').innerHTML = '';
       document.getElementById('captured-by-white').innerHTML = '';
       document.getElementById('captured-by-black').innerHTML = '';
-      chatMessages = Array.isArray(data.chatMessages) ? data.chatMessages.slice(-100) : [];
-      for (const m of data.moves) {
+      chatMessages = Array.isArray(data.chatMessages)
+        ? data.chatMessages.slice(-100).map(message => ({
+            side: message?.side === 'self' ? 'self' : 'opponent',
+            name: sanitizePeerText(message?.name, PEER_NAME_MAX_CHARS) || 'Opponent',
+            text: sanitizePeerText(message?.text, PEER_CHAT_MAX_CHARS),
+          })).filter(message => message.text)
+        : [];
+      for (const m of moves) {
         const notation = game.getMoveNotation(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen');
         game.makeMove(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen');
         addMoveToList(notation, game.currentTurn === 'white' ? 'black' : 'white');
@@ -1900,10 +1965,30 @@ async function sendInviteToContact(name, address, link) {
 
 function confirmGoHome() {
   if (game?.status === 'playing' && game.moveHistory.length > 0) {
-    if (!confirm('Go back to the menu? The current game will be lost.')) return;
+    if (!confirm('Leave this game? The current game will be lost.')) return;
   }
   destroyPeer();
   showScreen('home');
+}
+
+function confirmNewGame() {
+  if (game && game.status !== 'checkmate' && game.status !== 'stalemate' && game.moveHistory.length > 0) {
+    if (!confirm('Start a new game? The current game will be lost.')) return;
+  }
+  startGame();
+}
+
+function resignGame() {
+  if (!game || game.status === 'checkmate' || game.status === 'stalemate') return;
+  if (gameMode !== 'computer') return;
+  if (!confirm('Resign this game? It will count as a loss.')) return;
+  game.status = 'checkmate';
+  game.winner = playerColor === 'white' ? 'black' : 'white';
+  aiThinking = false;
+  selectedSquare = null;
+  validMoves = [];
+  renderBoard();
+  showGameOver();
 }
 
 function savePlayerName() {
