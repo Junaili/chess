@@ -366,15 +366,14 @@ input[type="checkbox"] {
 }
 
 .home-highlights span {
-  padding: 8px 12px;
+  padding: 8px 14px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: var(--text-dim);
-  font-size: 0.8rem;
+  background: rgba(240, 195, 122, 0.07);
+  border: 1px solid rgba(240, 195, 122, 0.15);
+  color: rgba(255, 247, 238, 0.82);
+  font-size: 0.82rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
 }
 
 .home-body {
@@ -397,6 +396,47 @@ input[type="checkbox"] {
   gap: 16px;
   position: relative;
   overflow: hidden;
+}
+
+#screen-home:not(.signed-in) .home-body {
+  grid-template-columns: minmax(360px, 600px);
+}
+
+#screen-home:not(.signed-in) .home-left {
+  padding: 30px;
+}
+
+#screen-home:not(.signed-in) .leaderboard-panel,
+#screen-home:not(.signed-in) #ags-member-play-actions,
+#screen-home:not(.signed-in) .menu-note {
+  display: none;
+}
+
+.account-entry {
+  text-align: center;
+}
+
+.account-entry-eyebrow {
+  margin-bottom: 5px;
+  color: var(--accent-2);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.account-entry h2 {
+  margin-bottom: 6px;
+  color: #fff8f1;
+  font-family: "Cormorant Garamond", Georgia, serif;
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.account-entry p:last-child {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.55;
 }
 
 .home-left::before,
@@ -499,6 +539,26 @@ input[type="checkbox"] {
   width: 100%;
 }
 
+.auth-login-link {
+  align-self: center;
+  padding: 4px 8px;
+  border: 0;
+  color: var(--text-soft);
+  background: transparent;
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.auth-login-link strong {
+  color: var(--accent-2);
+  font-weight: 800;
+}
+
+.auth-login-link:hover {
+  color: var(--text);
+}
+
 .auth-divider {
   display: flex;
   align-items: center;
@@ -523,15 +583,15 @@ input[type="checkbox"] {
 }
 
 .btn-register {
-  color: var(--accent-2);
-  background: rgba(240, 195, 122, 0.1);
-  border: 1.5px solid rgba(240, 195, 122, 0.36);
+  color: #231811;
+  background: linear-gradient(135deg, var(--accent-2), #df9d5d);
+  border: 1px solid rgba(255, 226, 180, 0.24);
+  box-shadow: 0 10px 24px rgba(194, 106, 61, 0.22);
 }
 
 .btn-register:hover {
-  background: rgba(240, 195, 122, 0.18);
-  border-color: rgba(240, 195, 122, 0.58);
-  box-shadow: 0 10px 24px rgba(194, 106, 61, 0.16);
+  border-color: rgba(255, 234, 200, 0.48);
+  box-shadow: 0 14px 28px rgba(194, 106, 61, 0.28);
 }
 
 .btn-google {
@@ -552,6 +612,44 @@ input[type="checkbox"] {
   color: #fff;
   background: #000;
   border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.guest-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 2px;
+}
+
+.btn-guest {
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.025);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.btn-guest:hover {
+  color: var(--text);
+  border-color: rgba(240, 195, 122, 0.28);
+  background: rgba(240, 195, 122, 0.06);
+}
+
+.guest-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  animation: fadeIn 0.22s ease;
+}
+
+.guest-options[hidden] {
+  display: none;
+}
+
+.guest-options .btn {
+  width: 100%;
 }
 
 .signedin-card {
@@ -1311,6 +1409,24 @@ input[type="checkbox"] {
   margin-bottom: 18px;
 }
 
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.auth-field > span {
+  color: rgba(255, 247, 238, 0.86);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.auth-field > small {
+  color: var(--text-soft);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
 .auth-form-actions {
   display: flex;
   gap: 10px;
@@ -1318,6 +1434,16 @@ input[type="checkbox"] {
 
 .auth-form-actions .btn {
   flex: 1;
+}
+
+#screen-register .auth-form-actions,
+#screen-login .auth-form-actions {
+  display: block;
+}
+
+#screen-register .auth-form-actions .btn,
+#screen-login .auth-form-actions .btn {
+  width: 100%;
 }
 
 .auth-helper {

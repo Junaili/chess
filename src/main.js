@@ -535,6 +535,19 @@ async function initAuth() {
       if (emailField && !emailField.value) emailField.value = prefilledEmail
     }
   }
+  window.agsOpenGuestPlay = () => {
+    const trigger = document.getElementById('ags-open-guest')
+    const options = document.getElementById('ags-guest-options')
+    const nameInput = document.getElementById('player-name-input')
+    if (!options) return
+
+    options.hidden = false
+    if (trigger) {
+      trigger.style.display = 'none'
+      trigger.setAttribute('aria-expanded', 'true')
+    }
+    window.requestAnimationFrame(() => nameInput?.focus())
+  }
   window.agsPasswordLogin = async () => {
     const identifier = document.getElementById('ags-login-identifier')?.value.trim() || ''
     const passwordInput = document.getElementById('ags-login-password')
@@ -1239,6 +1252,12 @@ function updateAuthUI(loggedIn, name, userId) {
   const authActions = document.getElementById('ags-auth-actions')
   const authOrDivider = document.getElementById('ags-auth-or-divider')
   const guestDivider = document.getElementById('ags-guest-divider')
+  const accountEntry = document.getElementById('ags-account-entry')
+  const guestEntry = document.getElementById('ags-guest-entry')
+  const guestOptions = document.getElementById('ags-guest-options')
+  const guestTrigger = document.getElementById('ags-open-guest')
+  const memberPlayActions = document.getElementById('ags-member-play-actions')
+  const homeLeaderboard = document.getElementById('home-leaderboard-panel')
   const signedInInfo = document.getElementById('ags-signedin-info')
   const signedInName = document.getElementById('ags-signedin-name')
   const lbCta = document.getElementById('lb-signin-cta')
@@ -1256,6 +1275,10 @@ function updateAuthUI(loggedIn, name, userId) {
   if (loggedIn) {
     nameInput.style.display = 'none'
     signInBtn.style.display = 'none'
+    if (accountEntry) accountEntry.style.display = 'none'
+    if (guestEntry) guestEntry.style.display = 'none'
+    if (memberPlayActions) memberPlayActions.style.display = ''
+    if (homeLeaderboard) homeLeaderboard.style.display = ''
     if (authActions) authActions.style.display = 'none'
     if (authOrDivider) authOrDivider.style.display = 'none'
     if (guestDivider) guestDivider.style.display = 'none'
@@ -1265,6 +1288,15 @@ function updateAuthUI(loggedIn, name, userId) {
   } else {
     nameInput.style.display = ''
     signInBtn.style.display = ''
+    if (accountEntry) accountEntry.style.display = ''
+    if (guestEntry) guestEntry.style.display = ''
+    if (memberPlayActions) memberPlayActions.style.display = 'none'
+    if (homeLeaderboard) homeLeaderboard.style.display = 'none'
+    if (guestOptions) guestOptions.hidden = true
+    if (guestTrigger) {
+      guestTrigger.style.display = ''
+      guestTrigger.setAttribute('aria-expanded', 'false')
+    }
     if (authActions) authActions.style.display = 'flex'
     if (authOrDivider) authOrDivider.style.display = ''
     if (guestDivider) guestDivider.style.display = ''
