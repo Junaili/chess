@@ -3,7 +3,7 @@ FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS proto-builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 ARG PROTOC_VERSION=21.9
-ARG GO_VERSION=1.24.0
+ARG GO_VERSION=1.26.4
 
 RUN apt-get update \
     && apt-get -y install --no-install-recommends \
@@ -49,7 +49,7 @@ COPY pkg/proto/ pkg/proto/
 
 RUN chmod +x proto.sh && ./proto.sh
 
-FROM --platform=$BUILDPLATFORM golang:1.24 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.4 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -68,9 +68,10 @@ COPY --from=proto-builder /build/gateway/apidocs gateway/apidocs
 
 RUN go build -v -o /output/service ./cmd/main.go
 
-FROM alpine:3.19
+FROM alpine:3.24.1
 
 RUN apk add --no-cache ca-certificates
+RUN addgroup -S chess && adduser -S -G chess -H -h /app chess
 
 WORKDIR /app
 RUN mkdir -p gateway/apidocs
@@ -79,7 +80,8 @@ COPY --from=proto-builder /build/gateway/apidocs gateway/apidocs
 COPY --from=builder /output/service service
 COPY third_party third_party
 
-EXPOSE 6565
 EXPOSE 8000
+
+USER chess
 
 CMD ["/app/service"]

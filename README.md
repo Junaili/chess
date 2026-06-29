@@ -28,7 +28,7 @@ chess-ethan/
 ├── vite.config.js        # Dev server (HTTPS + reverse proxy to AGS)
 ├── src/
 │   ├── ags-client.js     # AGS SDK initialisation
-│   ├── auth.js           # Google login → AGS IAM (id_token flow)
+│   ├── auth.js           # AGS IAM authorization code + PKCE
 │   ├── stats.js          # Win/loss stats + CloudSave match history
 │   ├── leaderboard.js    # Global leaderboard (LeaderboardDataV3Api)
 │   ├── matchmaking.js    # Random matchmaking (MatchTicketsApi + GameSessionApi)
@@ -44,7 +44,7 @@ chess-ethan/
 
 ### 1. Prerequisites
 
-- **Node.js 18+**
+- **Node.js 20.19+ or 22.12+**
 - An AccelByte namespace (see [Integrating with AccelByte](#integrating-with-accelbyte-gaming-services) below)
 
 ### 2. Install dependencies
@@ -66,7 +66,6 @@ VITE_ACCELBYTE_BASE_URL=https://your-namespace.prod.gamingservices.accelbyte.io
 VITE_ACCELBYTE_CLIENT_ID=your_client_id
 VITE_ACCELBYTE_NAMESPACE=your-namespace
 VITE_ACCELBYTE_REDIRECT_URI=https://192.168.x.x:8808/
-VITE_ACCELBYTE_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
 ```
 
 Set `VITE_ACCELBYTE_REDIRECT_URI` to your machine's local IP (not `localhost` unless you're only testing from the same machine):
@@ -186,77 +185,39 @@ In **production**, the SDK calls AGS directly. AGS must have your domain in its 
 
 ---
 
-### Step 5 — Authentication (Google Sign-In via AGS IAM)
+### Step 5 — Authentication (AGS IAM authorization code + PKCE)
 
 **How it works:**
 
 1. User clicks "Sign in with Google"
-2. Browser redirects to Google's OAuth endpoint requesting an **ID token**
-3. Google redirects back to your app with `#id_token=...` in the URL hash
-4. Your app POSTs the ID token to AGS's platform token endpoint
-5. AGS verifies the token using Google's public keys and returns an AGS access token
+2. The AGS SDK generates a PKCE verifier, challenge, and CSRF-bound state
+3. The system browser opens the AGS authorization page, where Google is the configured identity provider
+4. AGS redirects back with a short-lived authorization code
+5. The SDK verifies state and exchanges the code plus PKCE verifier for AGS tokens
 
 ```js
-// src/auth.js — step 2: redirect to Google
+// src/auth.js
 export async function loginWithGoogle() {
-  const nonce = Math.random().toString(36).slice(2, 18)
-  sessionStorage.setItem('ags_google_nonce', nonce)
-
-  const params = new URLSearchParams({
-    client_id:     import.meta.env.VITE_ACCELBYTE_GOOGLE_CLIENT_ID,
-    redirect_uri:  getGoogleRedirectUri(),
-    response_type: 'id_token',
-    scope:         'openid email profile',
-    nonce,
-    prompt:        'select_account',
-  })
-  window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`
+  const auth = new IamUserAuthorizationClient(sdk)
+  window.location.assign(auth.createLoginURL())
 }
 
-// steps 3–5: called when the page reloads after Google redirects back
 export async function handleCallback() {
-  const hashParams = new URLSearchParams(window.location.hash.slice(1))
-  const idToken = hashParams.get('id_token')
-  if (!idToken) return null
-
-  const { coreConfig } = sdk.assembly()
-  const resp = await fetch(`${coreConfig.baseURL}/iam/v3/oauth/platforms/google/token`, {
-    method: 'POST',
-    headers: {
-      'Content-Type':  'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${btoa(coreConfig.clientId + ':')}`,
-    },
-    body: new URLSearchParams({ platform_token: idToken }).toString(),
-    credentials: 'include',
+  const params = new URLSearchParams(window.location.search)
+  return new IamUserAuthorizationClient(sdk).exchangeAuthorizationCode({
+    code: params.get('code'),
+    error: params.get('error'),
+    state: params.get('state'),
   })
-  const tokenData = await resp.json()
-  sdk.setToken({ accessToken: tokenData.access_token, refreshToken: tokenData.refresh_token })
-  return tokenData
 }
 ```
 
-> **Why `id_token` and not an authorization `code`?**
-> Authorization codes require a server-side client secret to exchange. Browser apps are public clients — they cannot safely hold secrets. The ID token implicit flow lets AGS verify the token directly using Google's published public keys, with no server-side exchange needed.
+PKCE is designed for public clients: the app proves possession of a one-time verifier without embedding a client secret. Tokens are retained only for the current WebView/browser session.
 
 **Required setup:**
-- In **Google Cloud Console → Credentials**: add your redirect URI(s) to *Authorized redirect URIs*
-- In **AGS Admin Portal → IAM → OAuth Clients**: add the same redirect URI(s)
-- Set your Google Client ID in `.env` as `VITE_ACCELBYTE_GOOGLE_CLIENT_ID`
-
-**Detecting the callback in your app:**
-Google returns the ID token in the URL **hash** (`#id_token=...`), not the query string. Make sure your page-load auth check looks at both:
-
-```js
-// src/main.js — on page load
-const params     = new URLSearchParams(window.location.search)
-const hashParams = new URLSearchParams(window.location.hash.slice(1))
-const hasCallback = params.has('code') || params.has('error') ||
-                    hashParams.has('id_token') || hashParams.has('error')
-
-if (hasCallback) {
-  await handleCallback()
-}
-```
+- Configure Google as an identity provider in **AGS Admin Portal → IAM**
+- Add the exact HTTPS redirect URI to the public IAM client
+- For iOS, keep the HTTPS redirect page and register `io.github.junaili.chess:/oauth2redirect` as the native return URL
 
 ---
 
@@ -467,19 +428,9 @@ export default defineConfig(({ command }) => ({
 }))
 ```
 
-### 2. Use `BASE_URL` for the OAuth redirect URI
+### 2. Use an exact HTTPS OAuth redirect URI
 
-`window.location.origin + '/'` produces the wrong URI on a subpath deployment. Use `import.meta.env.BASE_URL` instead — Vite sets it to the configured base path at build time.
-
-```js
-// src/auth.js
-function getGoogleRedirectUri() {
-  if (isPrivateIp(window.location.hostname)) {
-    return import.meta.env.VITE_ACCELBYTE_REDIRECT_URI  // dev: use explicit .env value
-  }
-  return window.location.origin + import.meta.env.BASE_URL  // e.g. https://user.github.io/chess/
-}
-```
+Set `VITE_ACCELBYTE_REDIRECT_URI` to the exact deployed application URL, including its repository subpath and trailing slash. Register that same value on the public AGS IAM client.
 
 ### 3. Commit `.env.production`
 
@@ -492,7 +443,7 @@ VITE_ACCELBYTE_NAMESPACE=your-namespace
 VITE_ACCELBYTE_REDIRECT_URI=https://yourusername.github.io/your-repo/
 ```
 
-Keep secrets (like `VITE_ACCELBYTE_GOOGLE_CLIENT_ID`) out of `.env.production` and inject them at build time via GitHub Secrets.
+Only place public client configuration in `.env.production`. Server client secrets belong in the Extend deployment secret store and must never use a `VITE_` prefix.
 
 ### 4. GitHub Actions workflow
 
@@ -514,8 +465,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: Inject secrets
-        run: echo "VITE_ACCELBYTE_GOOGLE_CLIENT_ID=${{ secrets.VITE_ACCELBYTE_GOOGLE_CLIENT_ID }}" >> .env.production
+      - run: npm audit --audit-level=high
       - run: npm run build
       - uses: peaceiris/actions-gh-pages@v4
         with:
@@ -523,17 +473,13 @@ jobs:
           publish_dir: ./dist
 ```
 
-Add `VITE_ACCELBYTE_GOOGLE_CLIENT_ID` as a repository secret in **Settings → Secrets and variables → Actions**.
-
 ### 5. Enable GitHub Pages
 
 **Settings → Pages → Source: Deploy from a branch → Branch: `gh-pages` / root**
 
-### 6. Register your redirect URI everywhere
+### 6. Register your application redirect URI
 
-Add `https://yourusername.github.io/your-repo/` to:
-- **Google Cloud Console → Credentials → Authorized redirect URIs**
-- **AGS Admin Portal → IAM → OAuth Clients → Redirect URIs**
+Add `https://yourusername.github.io/your-repo/` to **AGS Admin Portal → IAM → OAuth Clients → Redirect URIs**. Configure Google's separate AGS provider callback in the Google Cloud Console as directed by the AGS Admin Portal.
 
 ---
 

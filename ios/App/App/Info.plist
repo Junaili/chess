@@ -25,7 +25,7 @@
 			<string>io.github.junaili.chess.oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>ethanschess</string>
+					<string>io.github.junaili.chess</string>
 			</array>
 		</dict>
 	</array>

@@ -1,3 +1,4 @@
+import { Peer } from 'peerjs'
 import { loginWithGoogle, loginWithPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
 import { sdk } from './ags-client.js'
 import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
@@ -10,6 +11,9 @@ import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
+
+window.Peer = Peer
+window.agsPublicAppURL = import.meta.env.VITE_PUBLIC_APP_URL || 'https://junaili.github.io/chess/'
 
 let currentUserId = null
 let currentUserWins = 0
@@ -349,9 +353,7 @@ async function initAuth() {
   window.cacheDisplayName = cacheDisplayName
 
   const params = new URLSearchParams(window.location.search)
-  const hashParams = new URLSearchParams(window.location.hash.slice(1))
-  const hasCallback = params.has('code') || params.has('error') ||
-                      hashParams.has('id_token') || hashParams.has('error')
+  const hasCallback = params.has('code') || params.has('error')
 
   const prefilledEmail = params.get('email') || ''
 
@@ -428,9 +430,15 @@ async function initAuth() {
     const { App } = await import('@capacitor/app')
     const { Browser } = await import('@capacitor/browser')
     App.addListener('appUrlOpen', async ({ url }) => {
-      if (!url || url.indexOf('ethanschess://callback') !== 0) return
+      let callback
+      try {
+        callback = new URL(url)
+      } catch {
+        return
+      }
+      if (callback.protocol !== 'io.github.junaili.chess:' || callback.pathname !== '/oauth2redirect') return
       try { await Browser.close() } catch (e) { /* browser may already be closed */ }
-      const result = await handleCallback(url)
+      const result = await handleCallback(callback.toString())
       if (result?.response) {
         const td = result.response.data || null
         const prof = await getProfile()
@@ -465,7 +473,8 @@ async function initAuth() {
   }
   window.agsPasswordLogin = async () => {
     const identifier = document.getElementById('ags-login-identifier')?.value.trim() || ''
-    const password = document.getElementById('ags-login-password')?.value || ''
+    const passwordInput = document.getElementById('ags-login-password')
+    const password = passwordInput?.value || ''
     const button = document.getElementById('ags-login-submit')
     if (!identifier || !password) {
       setAuthMessage('login', 'Enter your username or email and password.', 'error')
@@ -473,6 +482,7 @@ async function initAuth() {
     }
     if (button) button.disabled = true
     setAuthMessage('login', 'Signing in…')
+    if (passwordInput) passwordInput.value = ''
     const result = await loginWithPassword(identifier, password)
     if (button) button.disabled = false
     if (!result.ok) {
@@ -491,15 +501,18 @@ async function initAuth() {
   window.agsRegister = async () => {
     const emailAddress = document.getElementById('ags-register-email')?.value.trim() || ''
     const displayName = document.getElementById('ags-register-display-name')?.value.trim() || ''
-    const password = document.getElementById('ags-register-password')?.value || ''
+    const passwordInput = document.getElementById('ags-register-password')
+    const password = passwordInput?.value || ''
+    const reachMinimumAge = document.getElementById('ags-register-minimum-age')?.checked === true
     const button = document.getElementById('ags-register-submit')
-    if (!emailAddress || !displayName || !password) {
-      setAuthMessage('register', 'Enter email, display name, and password.', 'error')
+    if (!emailAddress || !displayName || !password || !reachMinimumAge) {
+      setAuthMessage('register', 'Enter your details and confirm the minimum age requirement.', 'error')
       return
     }
     if (button) button.disabled = true
     setAuthMessage('register', 'Creating account…')
-    const created = await registerWithPassword({ emailAddress, displayName, password })
+    if (passwordInput) passwordInput.value = ''
+    const created = await registerWithPassword({ emailAddress, displayName, password, reachMinimumAge })
     if (!created.ok) {
       if (button) button.disabled = false
       setAuthMessage('register', created.error, 'error')
@@ -668,7 +681,7 @@ async function initAuth() {
 
     // User not found — store pending invite and show share options
     storePendingInvite(email, currentUserId)
-    const inviteUrl = addUtm(window.location.origin + window.location.pathname + '?invitedBy=' + encodeURIComponent(currentUserId) + '&email=' + encodeURIComponent(email), 'email')
+    const inviteUrl = addUtm(window.location.origin + window.location.pathname + '?invitedBy=' + encodeURIComponent(currentUserId), 'email')
     if (resultEl) {
       resultEl.innerHTML = `
         <span class="auth-message">No account found. Share this invite:</span>
@@ -775,10 +788,6 @@ async function initAuth() {
     const modal = document.getElementById('achievements-modal')
     if (modal && modal.style.display === 'flex') renderAchievementPanel(merged)
     return fresh
-  }
-  window.agsUnlockAchievement = (code) => {
-    if (!currentUserId || !code) return
-    return unlockEventAchievement(currentUserId, code)
   }
   window.agsOpenAchievements = async () => {
     const modal = document.getElementById('achievements-modal')
@@ -1172,6 +1181,9 @@ function updateAuthUI(loggedIn, name, userId) {
 
   if (!nameInput || !signInBtn || !signedInInfo) return
 
+  // Switches the home screen into the compact, no-scroll signed-in dashboard.
+  document.getElementById('screen-home')?.classList.toggle('signed-in', loggedIn)
+
   if (loggedIn) {
     nameInput.style.display = 'none'
     signInBtn.style.display = 'none'
@@ -1214,6 +1226,17 @@ function updateStatsUI(stats, streak) {
 
 function escAch(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
+
+function safeAchievementIcon(raw) {
+  if (!raw) return ''
+  try {
+    const url = new URL(raw)
+    return url.protocol === 'https:' ? escAch(url.toString()) : ''
+  } catch {
+    return ''
+  }
 }
 
 function showAchievementToast(items) {
@@ -1222,8 +1245,9 @@ function showAchievementToast(items) {
   for (const it of items) {
     const el = document.createElement('div')
     el.className = 'achievement-toast'
+    const icon = safeAchievementIcon(it.icon)
     el.innerHTML =
-      `${it.icon ? `<img src="${escAch(it.icon)}" alt="" class="ach-toast-icon">` : '<span class="ach-toast-icon">🏆</span>'}` +
+      `${icon ? `<img src="${icon}" alt="" class="ach-toast-icon">` : '<span class="ach-toast-icon">🏆</span>'}` +
       `<div class="ach-toast-body">` +
         `<span class="ach-toast-label">Achievement Unlocked</span>` +
         `<span class="ach-toast-name">${escAch(it.name)}</span>` +
@@ -1251,6 +1275,7 @@ function renderAchievementPanel(list) {
     `<div class="ach-cards">` +
     list.map(a => {
       const pct = a.goalValue ? Math.round((a.progress / a.goalValue) * 100) : 0
+      const icon = safeAchievementIcon(a.icon)
       const footer = a.unlocked
         ? `<span class="ach-card-done">✓ Unlocked</span>` +
           `<button class="ach-share-btn" data-code="${escAch(a.code)}">📤 Share</button>` +
@@ -1259,7 +1284,7 @@ function renderAchievementPanel(list) {
           `<span class="ach-progress-text">${a.progress} / ${a.goalValue}</span>`
       return (
         `<div class="ach-card${a.unlocked ? ' unlocked' : ' locked'}">` +
-          `${a.icon ? `<img src="${escAch(a.icon)}" alt="" class="ach-card-icon">` : '<span class="ach-card-icon">🏆</span>'}` +
+          `${icon ? `<img src="${icon}" alt="" class="ach-card-icon">` : '<span class="ach-card-icon">🏆</span>'}` +
           `<span class="ach-card-name">${escAch(a.name)}</span>` +
           `<span class="ach-card-desc">${escAch(a.description)}</span>` +
           footer +

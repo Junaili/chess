@@ -1,4 +1,4 @@
-import { OAuth20ExtensionApi, UsersApi } from '@accelbyte/sdk-iam'
+import { IamUserAuthorizationClient, OAuth20ExtensionApi, UsersApi } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
 
 // True when running inside the Capacitor native shell (iOS app), where the
@@ -10,11 +10,14 @@ function isNativeApp() {
 
 // Custom URL scheme the iOS app is registered for (see Info.plist). The system
 // browser bounces the OAuth result here, which iOS routes back to the app.
-const NATIVE_CALLBACK_URL = 'ethanschess://callback'
-
-const GOOGLE_FLAG = 'ags_google_login'
+const NATIVE_RETURN_PATH = '__native__'
 const DEVICE_ID_KEY = 'ags_device_id'
 const DEVICE_NAME_KEY = 'ags_device_name'
+const SESSION_FLAG = 'ags_session'
+const REFRESH_TOKEN_KEY = 'ags_refresh_token'
+
+localStorage.removeItem(SESSION_FLAG)
+localStorage.removeItem(REFRESH_TOKEN_KEY)
 
 function getAuthConfig() {
   const { coreConfig } = sdk.assembly()
@@ -26,8 +29,10 @@ function getAuthConfig() {
 }
 
 function clearTransientSessionState() {
-  sessionStorage.removeItem(GOOGLE_FLAG)
   sessionStorage.removeItem('ags_pre_login_search')
+  sessionStorage.removeItem(SESSION_FLAG)
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY)
+  localStorage.removeItem(SESSION_FLAG)
   localStorage.removeItem(REFRESH_TOKEN_KEY)
   sdk.setToken({ accessToken: '', refreshToken: '' })
 }
@@ -36,58 +41,34 @@ function clearAuthCallbackUrl(preSearch = '') {
   window.history.replaceState({}, '', window.location.pathname + (preSearch || ''))
 }
 
-function isPrivateIpHost(hostname) {
-  if (!hostname) return false
-  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return false
-  if (/^10\./.test(hostname)) return true
-  if (/^192\.168\./.test(hostname)) return true
-  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)) return true
-  return false
-}
-
-function getGoogleRedirectUri() {
-  // Native app: the WebView origin is capacitor://localhost, which Google won't
-  // accept and can't receive the redirect. Use the public HTTPS page (already a
-  // registered redirect URI) — its inline script forwards the result to the
-  // app's custom scheme. See index.html and VITE_ACCELBYTE_REDIRECT_URI.
-  if (isNativeApp()) {
-    return import.meta.env.VITE_ACCELBYTE_REDIRECT_URI || 'https://junaili.github.io/chess/'
-  }
-  const currentOrigin = window.location.origin
-  const currentHost = window.location.hostname
-  if (currentOrigin && !isPrivateIpHost(currentHost)) {
-    return currentOrigin + import.meta.env.BASE_URL
-  }
-  return import.meta.env.VITE_ACCELBYTE_REDIRECT_URI || 'https://localhost:8808/'
-}
-
-const SESSION_FLAG = 'ags_session'
-const REFRESH_TOKEN_KEY = 'ags_refresh_token'
-
 function setSession(tokenData) {
   sdk.setToken({
     accessToken: tokenData.access_token || '',
     refreshToken: tokenData.refresh_token || '',
   })
   if (tokenData.access_token) {
-    localStorage.setItem(SESSION_FLAG, '1')
+    sessionStorage.setItem(SESSION_FLAG, '1')
     if (tokenData.refresh_token) {
-      localStorage.setItem(REFRESH_TOKEN_KEY, tokenData.refresh_token)
+      sessionStorage.setItem(REFRESH_TOKEN_KEY, tokenData.refresh_token)
     }
   }
+  localStorage.removeItem(SESSION_FLAG)
+  localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
 
 export function hasStoredSession() {
-  return !!localStorage.getItem(SESSION_FLAG)
+  return !!sessionStorage.getItem(SESSION_FLAG)
 }
 
 export function clearStoredSession() {
+  sessionStorage.removeItem(SESSION_FLAG)
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY)
   localStorage.removeItem(SESSION_FLAG)
   localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
 
 function getRefreshToken() {
-  return sdk.getToken()?.refreshToken || localStorage.getItem(REFRESH_TOKEN_KEY) || ''
+  return sdk.getToken()?.refreshToken || sessionStorage.getItem(REFRESH_TOKEN_KEY) || ''
 }
 
 function extractErrorMessage(payload, fallback) {
@@ -98,7 +79,9 @@ function extractErrorMessage(payload, fallback) {
 function getDeviceId() {
   let id = localStorage.getItem(DEVICE_ID_KEY)
   if (!id) {
-    id = 'chess-' + Math.random().toString(36).slice(2, 12)
+    id = crypto.randomUUID
+      ? `chess-${crypto.randomUUID()}`
+      : `chess-${Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')}`
     localStorage.setItem(DEVICE_ID_KEY, id)
   }
   return id
@@ -126,136 +109,59 @@ function buildUsername(displayName, emailAddress) {
   let base = source.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
   if (!base) base = 'player'
   if (!/^[a-z]/.test(base)) base = 'player_' + base
-  const suffix = Math.random().toString(36).slice(2, 6)
+  const randomBytes = crypto.getRandomValues(new Uint8Array(4))
+  const suffix = Array.from(randomBytes, byte => byte.toString(36).padStart(2, '0')).join('').slice(0, 6)
   return (base.slice(0, 20) + '_' + suffix).slice(0, 32)
 }
 
 export async function loginWithGoogle() {
-  const redirectUri = getGoogleRedirectUri()
-  const redirectHost = new URL(redirectUri).hostname
-  if (isPrivateIpHost(redirectHost)) {
-    alert('Google login cannot use a private IP redirect URI like ' + redirectUri + '. Use https://localhost:8808/ on this machine, or a public HTTPS domain/tunnel for shared-device testing.')
-    return
-  }
-
   if (window.location.search) {
     sessionStorage.setItem('ags_pre_login_search', window.location.search)
   }
-  sessionStorage.setItem(GOOGLE_FLAG, '1')
-
-  // Use id_token implicit flow — AGS can verify the ID token directly using
-  // Google's public keys, so no server-side code exchange is needed.
-  const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
-  sessionStorage.setItem('ags_google_nonce', nonce)
   const native = isNativeApp()
-  const params = new URLSearchParams({
-    client_id: import.meta.env.VITE_ACCELBYTE_GOOGLE_CLIENT_ID,
-    redirect_uri: redirectUri,
-    response_type: 'id_token',
-    scope: 'openid email profile',
-    nonce,
-    prompt: 'select_account',
-  })
-  // Native: tag the request so the redirect page forwards the result to the
-  // app's custom scheme, and open the system browser (Google rejects embedded
-  // WebViews). Web: navigate the page directly as before.
+  const auth = new IamUserAuthorizationClient(sdk)
+  const loginUrl = auth.createLoginURL(native ? NATIVE_RETURN_PATH : null)
+
   if (native) {
-    params.set('state', 'native')
     const { Browser } = await import('@capacitor/browser')
-    await Browser.open({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` })
+    await Browser.open({ url: loginUrl })
     return
   }
-  window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`
-}
-
-function decodeJwtPayload(token) {
-  try {
-    const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-    return JSON.parse(atob(b64))
-  } catch {
-    return null
-  }
+  window.location.assign(loginUrl)
 }
 
 export async function handleCallback(callbackUrl = null) {
-  // id_token arrives in the URL hash (implicit flow); errors may be in hash or query.
-  // Native: the result comes via the app's custom-scheme deep link (callbackUrl),
-  // e.g. ethanschess://callback#id_token=...&state=native. Web: read the page URL.
-  let hashStr = window.location.hash
-  let searchStr = window.location.search
-  if (callbackUrl) {
-    const hashIdx = callbackUrl.indexOf('#')
-    hashStr = hashIdx >= 0 ? callbackUrl.slice(hashIdx) : ''
-    const qIdx = callbackUrl.indexOf('?')
-    searchStr = qIdx >= 0 ? callbackUrl.slice(qIdx, hashIdx >= 0 ? hashIdx : undefined) : ''
+  let parsed
+  try {
+    parsed = new URL(callbackUrl || window.location.href)
+  } catch {
+    return null
   }
-  const hashParams = new URLSearchParams(hashStr.slice(1))
-  const idToken = hashParams.get('id_token')
-  const error = hashParams.get('error') || new URLSearchParams(searchStr).get('error')
+  if (callbackUrl && (parsed.protocol !== 'io.github.junaili.chess:' || parsed.pathname !== '/oauth2redirect')) {
+    return null
+  }
 
-  if (!idToken && !error) return null
-
-  const isGoogle = sessionStorage.getItem(GOOGLE_FLAG)
-  // Read nonce BEFORE clearing it so we can verify below.
-  const storedNonce = sessionStorage.getItem('ags_google_nonce')
-  sessionStorage.removeItem(GOOGLE_FLAG)
-  sessionStorage.removeItem('ags_google_nonce')
-
+  const code = parsed.searchParams.get('code')
+  const error = parsed.searchParams.get('error')
+  const state = parsed.searchParams.get('state')
+  if (!code && !error) return null
   const pre = sessionStorage.getItem('ags_pre_login_search')
   sessionStorage.removeItem('ags_pre_login_search')
 
-  if (!isGoogle) {
-    clearAuthCallbackUrl(pre || '')
-    return null
-  }
-
-  // Verify the nonce in the id_token matches what we sent to Google.
-  // This prevents replay attacks where a captured token is used in a different session.
-  if (idToken) {
-    const payload = decodeJwtPayload(idToken)
-    if (!payload || !storedNonce || payload.nonce !== storedNonce) {
-      console.error('[AGS] id_token nonce mismatch — possible replay attack')
-      clearTransientSessionState()
-      clearAuthCallbackUrl(pre || '')
-      return null
-    }
-  }
-
-  const { coreConfig } = sdk.assembly()
-  let tokenData
   try {
-    const resp = await fetch(
-      `${coreConfig.baseURL}/iam/v3/oauth/platforms/google/token`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Authorization: `Basic ${btoa(coreConfig.clientId + ':')}`,
-        },
-        body: new URLSearchParams({
-          platform_token: idToken,
-        }).toString(),
-        credentials: 'include',
-      }
-    )
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}))
-      console.error('[AGS] platform exchange failed:', resp.status, err)
-      clearTransientSessionState()
-      clearAuthCallbackUrl(pre || '')
-      return null
-    }
-    tokenData = await resp.json()
+    const auth = new IamUserAuthorizationClient(sdk)
+    const result = await auth.exchangeAuthorizationCode({ code, error, state })
+    const tokenData = result?.response?.data
+    if (!tokenData?.access_token) throw new Error('Authorization code exchange returned no access token.')
+    setSession(tokenData)
+    if (!callbackUrl) clearAuthCallbackUrl(pre || '')
+    return { response: { data: tokenData } }
   } catch (e) {
-    console.error('[AGS] platform exchange threw:', e)
+    console.error('[AGS] authorization code exchange failed:', e?.message || e)
     clearTransientSessionState()
-    clearAuthCallbackUrl(pre || '')
+    if (!callbackUrl) clearAuthCallbackUrl(pre || '')
     return null
   }
-
-  clearAuthCallbackUrl(pre || '')
-  setSession(tokenData)
-  return { response: { data: tokenData } }
 }
 
 export async function loginWithPassword(identifier, password) {
@@ -321,7 +227,10 @@ export async function refreshSession() {
   }
 }
 
-export async function registerWithPassword({ emailAddress, displayName, password }) {
+export async function registerWithPassword({ emailAddress, displayName, password, reachMinimumAge }) {
+  if (reachMinimumAge !== true) {
+    return { ok: false, error: 'Confirm that you meet the minimum age requirement.' }
+  }
   const { baseURL, namespace } = getAuthConfig()
   const payload = {
     authType: 'EMAILPASSWD',
@@ -330,7 +239,7 @@ export async function registerWithPassword({ emailAddress, displayName, password
     displayName,
     uniqueDisplayName: displayName,
     password,
-    reachMinimumAge: true,
+    reachMinimumAge,
     username: buildUsername(displayName, emailAddress),
   }
 

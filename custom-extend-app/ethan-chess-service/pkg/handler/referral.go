@@ -38,7 +38,7 @@ func UnlockRecruiterAchievement(inviterUserID string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := outboundHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -49,8 +49,8 @@ func UnlockRecruiterAchievement(inviterUserID string) error {
 		return nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("achievement unlock returned %d: %s", resp.StatusCode, string(body))
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		return fmt.Errorf("achievement unlock returned status %d", resp.StatusCode)
 	}
 	return nil
 }

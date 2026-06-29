@@ -5,10 +5,16 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"mime"
+	"net"
+	"net/mail"
 	"net/smtp"
 	"net/url"
 	"os"
 	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 type InviteRequest struct {
@@ -18,20 +24,72 @@ type InviteRequest struct {
 }
 
 func SendInviteEmail(req InviteRequest) error {
-	if !strings.Contains(req.To, "@") {
-		return fmt.Errorf("invalid email address")
-	}
-	// Reject any invite_link that is not a plain https:// URL to prevent href injection.
-	parsed, err := url.ParseRequestURI(req.InviteLink)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return fmt.Errorf("invite_link must be an https URL")
+	if err := ValidateInviteRequest(req); err != nil {
+		return err
 	}
 	if err := sendGmail(req); err != nil {
 		log.Printf("[email] send failed: %v", err)
 		return fmt.Errorf("email delivery failed: %w", err)
 	}
-	log.Printf("[email] invite sent to %s from %s", req.To, req.FromName)
+	log.Printf("[email] invite sent")
 	return nil
+}
+
+func ValidateEmailAddress(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 254 || strings.ContainsAny(value, "\r\n") {
+		return fmt.Errorf("invalid email address")
+	}
+	parsed, err := mail.ParseAddress(value)
+	if err != nil || !strings.EqualFold(parsed.Address, value) {
+		return fmt.Errorf("invalid email address")
+	}
+	parts := strings.Split(parsed.Address, "@")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("invalid email address")
+	}
+	return nil
+}
+
+func ValidateInviteRequest(req InviteRequest) error {
+	if err := ValidateEmailAddress(req.To); err != nil {
+		return err
+	}
+	name := strings.TrimSpace(req.FromName)
+	if name == "" || utf8.RuneCountInString(name) > 64 {
+		return fmt.Errorf("invalid sender name")
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("invalid sender name")
+		}
+	}
+	if len(req.InviteLink) > 2048 {
+		return fmt.Errorf("invite_link is too long")
+	}
+	parsed, err := url.ParseRequestURI(req.InviteLink)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("invite_link must be an approved https URL")
+	}
+	if _, ok := allowedInviteHosts()[strings.ToLower(parsed.Hostname())]; !ok {
+		return fmt.Errorf("invite_link host is not approved")
+	}
+	return nil
+}
+
+func allowedInviteHosts() map[string]struct{} {
+	raw := os.Getenv("ALLOWED_INVITE_HOSTS")
+	if strings.TrimSpace(raw) == "" {
+		raw = "junaili.github.io"
+	}
+	hosts := make(map[string]struct{})
+	for _, host := range strings.Split(raw, ",") {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if host != "" {
+			hosts[host] = struct{}{}
+		}
+	}
+	return hosts
 }
 
 func sendGmail(req InviteRequest) error {
@@ -40,12 +98,15 @@ func sendGmail(req InviteRequest) error {
 	if from == "" || password == "" {
 		return fmt.Errorf("GMAIL_USER or GMAIL_APP_PW not set")
 	}
+	if err := ValidateEmailAddress(from); err != nil {
+		return fmt.Errorf("GMAIL_USER is invalid")
+	}
 
 	// HTML-escape user-controlled strings before embedding in the email body.
 	safeName := html.EscapeString(req.FromName)
 	safeLink := html.EscapeString(req.InviteLink)
 
-	subject := fmt.Sprintf("%s challenged you to a chess game!", safeName)
+	subject := mime.QEncoding.Encode("utf-8", fmt.Sprintf("%s challenged you to a chess game!", strings.TrimSpace(req.FromName)))
 	htmlBody := fmt.Sprintf(`<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px">
   <h2 style="color:#2a1f1a">&#9823; You've been challenged!</h2>
   <p style="font-size:16px;color:#3a2f2a">
@@ -70,12 +131,16 @@ func sendGmail(req InviteRequest) error {
 
 	auth := smtp.PlainAuth("", from, password, "smtp.gmail.com")
 
-	tlsCfg := &tls.Config{ServerName: "smtp.gmail.com"}
-	conn, err := tls.Dial("tcp", "smtp.gmail.com:465", tlsCfg)
+	tlsCfg := &tls.Config{ServerName: "smtp.gmail.com", MinVersion: tls.VersionTLS12}
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	conn, err := tls.DialWithDialer(dialer, "tcp", "smtp.gmail.com:465", tlsCfg)
 	if err != nil {
 		return fmt.Errorf("dial smtp.gmail.com:465: %w", err)
 	}
 	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return fmt.Errorf("set smtp deadline: %w", err)
+	}
 
 	client, err := smtp.NewClient(conn, "smtp.gmail.com")
 	if err != nil {

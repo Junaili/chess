@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,9 +22,12 @@ import (
 
 	"github.com/joho/godotenv"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 
 	"github.com/junaili/ethan-chess-service/pkg/common"
 	"github.com/junaili/ethan-chess-service/pkg/handler"
@@ -37,10 +43,21 @@ const (
 func main() {
 	_ = godotenv.Load()
 
-	for _, key := range []string{"GMAIL_USER", "GMAIL_APP_PW"} {
+	var missing []string
+	for _, key := range []string{
+		"AB_BASE_URL",
+		"AB_CLIENT_ID",
+		"AB_CLIENT_SECRET",
+		"AB_NAMESPACE",
+		"GMAIL_USER",
+		"GMAIL_APP_PW",
+	} {
 		if os.Getenv(key) == "" {
-			log.Printf("WARNING: %s is not set — email sending will fail", key)
+			missing = append(missing, key)
 		}
+	}
+	if len(missing) > 0 {
+		log.Fatalf("required configuration is missing: %s", strings.Join(missing, ", "))
 	}
 
 	basePath := os.Getenv("BASE_PATH")
@@ -52,24 +69,34 @@ func main() {
 	defer stop()
 
 	// gRPC server on port 6565
-	grpcServer := grpc.NewServer()
+	internalToken, err := generateInternalGatewayToken()
+	if err != nil {
+		log.Fatalf("failed to generate internal gateway token: %v", err)
+	}
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(internalGatewayAuthInterceptor(internalToken)),
+		grpc.MaxRecvMsgSize(64<<10),
+		grpc.MaxSendMsgSize(1<<20),
+	)
 	pb.RegisterChessServiceServer(grpcServer, service.NewChessServiceServer())
-	reflection.Register(grpcServer)
+	if strings.EqualFold(os.Getenv("ENABLE_GRPC_REFLECTION"), "true") {
+		reflection.Register(grpcServer)
+	}
 	grpc_health_v1.RegisterHealthServer(grpcServer, health.NewServer())
 
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
+	lis, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", grpcPort))
 	if err != nil {
 		log.Fatalf("failed to listen on :%d: %v", grpcPort, err)
 	}
 	go func() {
-		log.Printf("gRPC server listening on :%d", grpcPort)
+		log.Printf("gRPC server listening on 127.0.0.1:%d", grpcPort)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Printf("gRPC server error: %v", err)
 		}
 	}()
 
 	// HTTP gateway on port 8000
-	gateway, err := common.NewGateway(ctx, fmt.Sprintf("localhost:%d", grpcPort), basePath)
+	gateway, err := common.NewGateway(ctx, fmt.Sprintf("localhost:%d", grpcPort), basePath, internalToken)
 	if err != nil {
 		log.Fatalf("failed to create HTTP gateway: %v", err)
 	}
@@ -80,6 +107,7 @@ func main() {
 		strings.TrimRight(os.Getenv("AB_BASE_URL"), "/"),
 		os.Getenv("AB_CLIENT_ID"),
 		os.Getenv("AB_CLIENT_SECRET"),
+		os.Getenv("AB_NAMESPACE"),
 	)
 
 	mux := http.NewServeMux()
@@ -90,13 +118,12 @@ func main() {
 		fmt.Fprint(w, `{"status":"ok"}`)
 	})
 
-	// Swagger UI (no auth)
-	swaggerUIPath := basePath + "/apidocs/"
-	mux.Handle(swaggerUIPath, http.StripPrefix(swaggerUIPath,
-		http.FileServer(http.Dir("third_party/swagger-ui"))))
-
-	// Swagger JSON (no auth, basePath injected at runtime)
-	mux.HandleFunc(basePath+"/apidocs/api.json", makeSwaggerJSONHandler(basePath))
+	if strings.EqualFold(os.Getenv("ENABLE_API_DOCS"), "true") {
+		swaggerUIPath := basePath + "/apidocs/"
+		mux.Handle(swaggerUIPath, http.StripPrefix(swaggerUIPath,
+			http.FileServer(http.Dir("third_party/swagger-ui"))))
+		mux.HandleFunc(basePath+"/apidocs/api.json", makeSwaggerJSONHandler(basePath))
+	}
 
 	// Referral report → unlock the inviter's chess-recruiter achievement (auth required)
 	mux.Handle(basePath+"/referral", corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(referralHandler))))
@@ -105,8 +132,13 @@ func main() {
 	mux.Handle("/", corsMiddleware(allowedOrigins, auth.wrap(gateway)))
 
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", gatewayPort),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", gatewayPort),
+		Handler:           securityHeadersMiddleware(http.MaxBytesHandler(mux, 64<<10)),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
 	}
 
 	go func() {
@@ -119,13 +151,56 @@ func main() {
 	<-ctx.Done()
 	log.Println("shutting down")
 	grpcServer.GracefulStop()
-	_ = httpServer.Shutdown(context.Background())
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = httpServer.Shutdown(shutdownCtx)
+}
+
+func generateInternalGatewayToken() (string, error) {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(token), nil
+}
+
+func internalGatewayAuthInterceptor(expectedToken string) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		if strings.HasPrefix(info.FullMethod, "/grpc.health.v1.Health/") {
+			return handler(ctx, req)
+		}
+		if !strings.HasPrefix(info.FullMethod, "/chessservice.ChessService/") {
+			return nil, status.Error(codes.PermissionDenied, "method not allowed")
+		}
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			return nil, status.Error(codes.Unauthenticated, "gateway authentication required")
+		}
+		values := md.Get("x-internal-gateway-token")
+		if len(values) != 1 ||
+			subtle.ConstantTimeCompare([]byte(values[0]), []byte(expectedToken)) != 1 {
+			return nil, status.Error(codes.Unauthenticated, "gateway authentication required")
+		}
+		return handler(ctx, req)
+	}
+}
+
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // parseAllowedOrigins splits a comma-separated ALLOWED_ORIGIN env var into a set.
 // Falls back to the GitHub Pages origin when the env var is empty.
 func parseAllowedOrigins(raw string) map[string]struct{} {
-	defaults := []string{"https://junaili.github.io", "https://localhost:8808"}
+	defaults := []string{"https://junaili.github.io", "https://localhost:8808", "capacitor://localhost"}
 	set := make(map[string]struct{})
 	if raw == "" {
 		for _, o := range defaults {
@@ -145,7 +220,11 @@ func parseAllowedOrigins(raw string) map[string]struct{} {
 func corsMiddleware(allowed map[string]struct{}, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if _, ok := allowed[origin]; ok {
+		if origin != "" {
+			if _, ok := allowed[origin]; !ok {
+				http.Error(w, `{"error":"origin not allowed"}`, http.StatusForbidden)
+				return
+			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 		}
@@ -224,37 +303,41 @@ type authMiddleware struct {
 	baseURL         string
 	clientID        string
 	clientSecret    string
+	namespace       string
+	httpClient      *http.Client
 	emailLimiter    *emailRateLimiter
 	referralLimiter *emailRateLimiter
+	lookupLimiter   *emailRateLimiter
 }
 
-func newAuthMiddleware(baseURL, clientID, clientSecret string) *authMiddleware {
+func newAuthMiddleware(baseURL, clientID, clientSecret, namespace string) *authMiddleware {
 	return &authMiddleware{
 		baseURL:         baseURL,
 		clientID:        clientID,
 		clientSecret:    clientSecret,
+		namespace:       namespace,
+		httpClient:      &http.Client{Timeout: 10 * time.Second},
 		emailLimiter:    newEmailRateLimiter(5, time.Hour),
 		referralLimiter: newEmailRateLimiter(3, time.Hour),
+		lookupLimiter:   newEmailRateLimiter(10, time.Hour),
 	}
 }
 
 func (a *authMiddleware) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip validation if credentials are not configured (local dev)
-		if a.clientSecret == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		header := r.Header.Get("Authorization")
-		if !strings.HasPrefix(header, "Bearer ") {
+		parts := strings.Fields(header)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 			http.Error(w, `{"error":"missing bearer token"}`, http.StatusUnauthorized)
 			return
 		}
-		token := strings.TrimPrefix(header, "Bearer ")
+		token := parts[1]
 
 		sub, active, err := a.introspect(token)
-		if err != nil || !active {
+		if err != nil {
+			log.Printf("[auth] token introspection failed: %v", err)
+		}
+		if err != nil || !active || sub == "" {
 			http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
 			return
 		}
@@ -271,6 +354,13 @@ func (a *authMiddleware) wrap(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/referral") {
 			if !a.referralLimiter.allow(sub) {
 				http.Error(w, `{"error":"too many referral reports, try again later"}`, http.StatusTooManyRequests)
+				return
+			}
+		}
+
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/lookup/email") {
+			if !a.lookupLimiter.allow(sub) {
+				http.Error(w, `{"error":"too many account lookups, try again later"}`, http.StatusTooManyRequests)
 				return
 			}
 		}
@@ -312,7 +402,8 @@ func referralHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inviter := strings.TrimSpace(body.InviterUserID)
-	if inviter == "" || inviter == newUserID {
+	if inviter == "" || inviter == newUserID || len(inviter) > 128 ||
+		strings.ContainsAny(inviter, "\r\n\t /?#") {
 		http.Error(w, `{"error":"invalid inviter"}`, http.StatusBadRequest)
 		return
 	}
@@ -338,24 +429,30 @@ func (a *authMiddleware) introspect(token string) (sub string, active bool, err 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.SetBasicAuth(a.clientID, a.clientSecret)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := a.httpClient.Do(req)
 	if err != nil {
 		return "", false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false, fmt.Errorf("introspection returned status %d", resp.StatusCode)
+	}
 
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	if err != nil {
 		return "", false, err
 	}
 
 	var result struct {
-		Active bool   `json:"active"`
-		Sub    string `json:"sub"`
+		Active    bool   `json:"active"`
+		Sub       string `json:"sub"`
+		Namespace string `json:"namespace"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return "", false, err
 	}
+	if result.Namespace != a.namespace {
+		return "", false, nil
+	}
 	return result.Sub, result.Active, nil
 }
-
