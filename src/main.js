@@ -3,6 +3,7 @@ import { loginWithGoogle, loginWithApple, loginWithPassword, registerWithPasswor
 import { setQueueUIHandler, cancelLoginQueue } from './login-queue.js'
 import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
+import { installSessionKeepAlive, scheduleProactiveRefresh } from './session.js'
 import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
 import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave } from './stats.js'
 import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache, fetchMergedAchievements } from './achievements.js'
@@ -367,6 +368,7 @@ async function completeAuthenticatedSession({ profile = null, tokenData = null }
   if (!canProceed) return false
   if (!resolvedProfile) return false
   await hydrateAuthenticatedUser(resolvedProfile)
+  scheduleProactiveRefresh()  // keep the token fresh for this session
   if (typeof window.showScreen === 'function') window.showScreen('home')
   return true
 }
@@ -401,6 +403,9 @@ function renderLoginQueue(state) {
 }
 
 async function initAuth() {
+  // Install the reactive 401->refresh->retry interceptor + resume hooks before
+  // any AGS SDK call, so an expired token is renewed transparently.
+  installSessionKeepAlive()
   window.agsRefreshLeaderboard = refreshLeaderboard
   window.cacheDisplayName = cacheDisplayName
   setQueueUIHandler(renderLoginQueue)
