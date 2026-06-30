@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -74,5 +75,68 @@ func TestGenerateInternalGatewayToken(t *testing.T) {
 	}
 	if len(first) != 64 || first == second {
 		t.Fatalf("expected distinct 256-bit hex tokens")
+	}
+}
+
+// TestAuthMiddlewareWrap locks the auth contract that produced the friend-lookup
+// 401: a missing, inactive/expired, or wrong-namespace token must be rejected
+// with 401, and a valid token must pass through to the handler. The IAM token
+// introspection endpoint is stubbed.
+func TestAuthMiddlewareWrap(t *testing.T) {
+	t.Parallel()
+
+	const ns = "seal-chessags"
+	iam := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/iam/v3/oauth/introspect" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		_ = r.ParseForm()
+		w.Header().Set("Content-Type", "application/json")
+		switch r.FormValue("token") {
+		case "valid":
+			fmt.Fprintf(w, `{"active":true,"sub":"user-1","namespace":%q}`, ns)
+		case "wrong-namespace":
+			fmt.Fprint(w, `{"active":true,"sub":"user-1","namespace":"other-namespace"}`)
+		default: // "expired" / anything else
+			fmt.Fprint(w, `{"active":false}`)
+		}
+	}))
+	defer iam.Close()
+
+	auth := newAuthMiddleware(iam.URL, "client", "secret", ns)
+	nextCalled := false
+	handler := auth.wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	cases := []struct {
+		name     string
+		token    string // "" means no Authorization header
+		wantCode int
+		wantNext bool
+	}{
+		{"missing token", "", http.StatusUnauthorized, false},
+		{"expired/inactive token", "expired", http.StatusUnauthorized, false},
+		{"wrong namespace", "wrong-namespace", http.StatusUnauthorized, false},
+		{"valid token", "valid", http.StatusOK, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			nextCalled = false
+			req := httptest.NewRequest(http.MethodGet, "https://service.example/lookup/email?email=x@example.com", nil)
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status: got %d, want %d", rec.Code, tc.wantCode)
+			}
+			if nextCalled != tc.wantNext {
+				t.Fatalf("next called: got %v, want %v", nextCalled, tc.wantNext)
+			}
+		})
 	}
 }

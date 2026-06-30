@@ -1,6 +1,7 @@
 import { FriendsApi } from '@accelbyte/sdk-lobby'
 import { UsersV4Api } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
+import { extendFetch } from './extend-client.js'
 import { resolveDisplayNames } from './leaderboard.js'
 import { fetchPresenceMap } from './presence.js'
 
@@ -169,12 +170,7 @@ const PENDING_INVITES_KEY = 'ags-pending-invites'
 export async function lookupUserByEmail(email) {
   if (!email?.includes('@')) return { ok: false, error: 'Invalid email address.' }
   try {
-    const extendBase = import.meta.env.VITE_EXTEND_EMAIL_URL || '/extend'
-    const token = sdk.getToken()?.accessToken ?? null
-    const res = await fetch(
-      `${extendBase}/lookup/email?email=${encodeURIComponent(email)}`,
-      { headers: token ? { Authorization: 'Bearer ' + token } : {} }
-    )
+    const res = await extendFetch(`/lookup/email?email=${encodeURIComponent(email)}`)
     if (!res.ok) throw new Error('status ' + res.status)
     const data = await res.json()
     if (!data.found) return { ok: true, found: false }

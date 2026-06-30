@@ -2,6 +2,7 @@ import { Peer } from 'peerjs'
 import { loginWithGoogle, loginWithApple, loginWithPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
 import { setQueueUIHandler, cancelLoginQueue } from './login-queue.js'
 import { sdk } from './ags-client.js'
+import { extendFetch } from './extend-client.js'
 import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
 import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave } from './stats.js'
 import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache, fetchMergedAchievements } from './achievements.js'
@@ -91,13 +92,11 @@ function showInviteConfirmation(invitedBy, onAccept) {
 // inviter's chess-recruiter achievement unlocks server-side. Best-effort.
 async function reportReferral() {
   const inviter = sessionStorage.getItem('chess_invite_by')
-  const token = sdk.getToken()?.accessToken
-  if (!inviter || !token || inviter === currentUserId) return
+  if (!inviter || inviter === currentUserId || !sdk.getToken()?.accessToken) return
   try {
-    const extendBase = import.meta.env.VITE_EXTEND_EMAIL_URL || '/extend'
-    await fetch(`${extendBase}/referral`, {
+    await extendFetch('/referral', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ inviterUserId: inviter }),
     })
     sendEvent('referral_reported', { inviter_user_id: inviter })
@@ -108,13 +107,11 @@ async function reportReferral() {
 // Send the new player a welcome email via the Extend service. Best-effort:
 // runs after a successful email/password registration and never blocks signup.
 async function sendWelcomeEmail(emailAddress, displayName) {
-  const token = sdk.getToken()?.accessToken
-  if (!emailAddress || !token) return
+  if (!emailAddress || !sdk.getToken()?.accessToken) return
   try {
-    const extendBase = import.meta.env.VITE_EXTEND_EMAIL_URL || '/extend'
-    await fetch(`${extendBase}/welcome/email`, {
+    await extendFetch('/welcome/email', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ to: emailAddress, display_name: displayName || '' }),
     })
     sendEvent('welcome_email_sent', { method: 'email' })
@@ -197,14 +194,9 @@ function mountShareRow(containerEl, url, opts = {}) {
       emailBtn.disabled = true
       emailBtn.textContent = 'Sending…'
       try {
-        const token = sdk.getToken()?.accessToken ?? null
-        const extendBase = import.meta.env.VITE_EXTEND_EMAIL_URL || '/extend'
-        const res = await fetch(`${extendBase}/invite/email`, {
+        const res = await extendFetch('/invite/email', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: 'Bearer ' + token } : {}),
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ to: emailTo, from_name: fromName || 'A friend', invite_link: emailUrl }),
         })
         if (!res.ok) throw new Error('status ' + res.status)
