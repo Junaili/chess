@@ -102,6 +102,13 @@ func pickMove(pos *chess.Position, st styleParams, rng *rand.Rand) *chess.Move {
 	return chosen
 }
 
+// ChooseMove returns the bot's move for the current position using the given
+// style.json knobs, or nil if the game is over. This is the move-selection entry
+// point a live opponent (e.g. the AMS dedicated server) calls each turn.
+func ChooseMove(g *chess.Game, styleJSON []byte, rng *rand.Rand) *chess.Move {
+	return pickMove(g.Position(), parseStyle(styleJSON), rng)
+}
+
 func playGame(botSt, sparSt styleParams, botColor chess.Color, rng *rand.Rand) *chess.Game {
 	game := chess.NewGame()
 	for ply := 0; ply < maxPlies; ply++ {

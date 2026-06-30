@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>pion ↔ browser spike — play the bot over WebRTC</title>
+<style>
+  body { font-family: system-ui, sans-serif; background:#12100f; color:#eee; display:flex; flex-direction:column; align-items:center; gap:14px; padding:20px; }
+  h1 { font-size:1.1rem; font-weight:600; }
+  #board { display:grid; grid-template-columns:repeat(8, 56px); grid-template-rows:repeat(8, 56px); border:3px solid #5a4632; }
+  .sq { display:flex; align-items:center; justify-content:center; font-size:38px; cursor:pointer; user-select:none; }
+  .light { background:#e9d3a8; } .dark { background:#a9794b; }
+  .sq.sel { outline:3px solid #f0c37a; outline-offset:-3px; }
+  .piece-w { color:#fff; text-shadow:0 0 2px #000; } .piece-b { color:#111; }
+  #status { min-height:1.4em; font-size:0.95rem; }
+  #log { width:460px; height:120px; overflow:auto; background:#1d1820; border:1px solid #333; border-radius:8px; padding:8px; font:12px/1.5 monospace; color:#bbb; }
+  button { background:#c26a3d; color:#fff; border:0; border-radius:8px; padding:8px 14px; cursor:pointer; }
+  .conn { font-size:0.8rem; color:#999; }
+</style>
+</head>
+<body>
+  <h1>Play the bot over a WebRTC data channel <span id="conn" class="conn">(disconnected)</span></h1>
+  <div id="board"></div>
+  <div id="status">Connecting…</div>
+  <button id="newBtn">New game</button>
+  <div id="log"></div>
+
+<script>
+const FILES = "abcdefgh";
+const GLYPH = { p:"♟", n:"♞", b:"♝", r:"♜", q:"♛", k:"♚", P:"♙", N:"♘", B:"♗", R:"♖", Q:"♕", K:"♔" };
+let dc = null, selected = null, currentFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+function log(s){ const el=document.getElementById("log"); el.innerHTML += s+"<br>"; el.scrollTop=el.scrollHeight; }
+function setStatus(s){ document.getElementById("status").textContent = s; }
+function setConn(s){ document.getElementById("conn").textContent = "("+s+")"; }
+
+// Render an 8x8 board from the placement field of a FEN.
+function render(fen){
+  currentFen = fen;
+  const placement = fen.split(" ")[0];
+  const rows = placement.split("/");
+  const board = document.getElementById("board");
+  board.innerHTML = "";
+  for (let r=0; r<8; r++){
+    let c=0;
+    for (const ch of rows[r]){
+      if (/\d/.test(ch)){ for(let k=0;k<+ch;k++){ addSquare(board,r,c); c++; } }
+      else { addSquare(board,r,c,ch); c++; }
+    }
+  }
+}
+function addSquare(board,r,c,piece){
+  const sq=document.createElement("div");
+  sq.className="sq "+((r+c)%2===0?"light":"dark");
+  const file=FILES[c], rank=8-r, name=file+rank;
+  sq.dataset.sq=name;
+  if(piece){ sq.textContent=GLYPH[piece]; sq.classList.add(piece===piece.toUpperCase()?"piece-w":"piece-b"); }
+  if(selected===name) sq.classList.add("sel");
+  sq.onclick=()=>onSquare(name,piece);
+  board.appendChild(sq);
+}
+function isWhitePiece(p){ return p && p===p.toUpperCase(); }
+function onSquare(name,piece){
+  if(!dc || dc.readyState!=="open"){ log("not connected"); return; }
+  log("click "+name+(piece?(" ("+piece+")"):" (empty)"));
+  if(selected===null){
+    if(isWhitePiece(piece)){ selected=name; render(currentFen); }   // pick up a white piece
+    else { log("pick one of your own (white) pieces first"); }
+    return;
+  }
+  if(name===selected){ selected=null; render(currentFen); return; } // click same square → deselect
+  if(isWhitePiece(piece)){ selected=name; render(currentFen); return; } // click another own piece → reselect
+  // otherwise: move selected → name
+  let uci = selected+name;
+  const movingWhitePawn = document.querySelector(`[data-sq="${selected}"]`)?.textContent===GLYPH.P;
+  if(movingWhitePawn && name[1]==="8") uci += "q"; // auto-queen
+  log("sending move "+uci);
+  selected=null;
+  send({type:"move", uci});
+}
+function send(obj){ dc.send(JSON.stringify(obj)); }
+
+function onMessage(ev){
+  const m=JSON.parse(ev.data);
+  switch(m.type){
+    case "state": render(m.fen); setStatus("Your move (White). Bot: "+m.bot); break;
+    case "move":
+      render(m.fen);
+      log("bot: "+m.san+"  ("+m.uci+")");
+      if(m.outcome && m.outcome!=="*") setStatus("Game over: "+m.outcome+" ("+m.method+")");
+      else setStatus("Your move.");
+      break;
+    case "gameover": render(m.fen); setStatus("Game over: "+m.outcome+" ("+m.method+")"); break;
+    case "error": log("error: "+m.message); setStatus(m.message); break;
+  }
+}
+
+async function connect(){
+  const pc = new RTCPeerConnection({ iceServers:[{urls:"stun:stun.l.google.com:19302"}] });
+  pc.onconnectionstatechange = ()=> setConn(pc.connectionState);
+  dc = pc.createDataChannel("chess");
+  dc.onopen = ()=>{ log("data channel open"); send({type:"new"}); };
+  dc.onmessage = onMessage;
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await new Promise(res=>{ // wait for ICE gathering (non-trickle)
+    if(pc.iceGatheringState==="complete") return res();
+    pc.onicegatheringstatechange=()=>{ if(pc.iceGatheringState==="complete") res(); };
+  });
+  const resp = await fetch("/offer", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(pc.localDescription) });
+  const answer = await resp.json();
+  await pc.setRemoteDescription(answer);
+}
+
+document.getElementById("newBtn").onclick=()=>{ if(dc&&dc.readyState==="open"){ selected=null; send({type:"new"}); } };
+render(currentFen);
+connect().catch(e=>{ log("connect failed: "+e); setStatus("Connection failed: "+e.message); });
+</script>
+</body>
+</html>
