@@ -1,3 +1,9 @@
 .env
+# Local-only LLM config for the bot trainer — never committed, never deployed.
+# (Templates .env.example / .env.local.example are kept tracked.)
+.env.local
+.env.*.local
 ethan-chess
 dist/
+# Local self-play dry-run dumps
+bots/*/selfplay-*.json

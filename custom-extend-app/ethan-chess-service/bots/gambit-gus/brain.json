@@ -1,0 +1,12 @@
+{
+  "_comment": "Machine-grown memory. The trainer owns this file — do not hand-edit unless resetting the bot. The bot starts as a blank slate and grows this only from its own matches.",
+  "schema_version": 1,
+  "bot_id": "gambit-gus",
+  "version": 0,
+  "last_trained": null,
+  "games_learned_from": 0,
+  "processed_match_ids": [],
+  "opening_book": {},
+  "lessons": [],
+  "opponent_dossiers": {}
+}

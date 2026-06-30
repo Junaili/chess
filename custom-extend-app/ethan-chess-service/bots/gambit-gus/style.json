@@ -1,0 +1,14 @@
+{
+  "_comment": "Editable style knobs for the bot. Yours to tune; the trainer never overwrites this file. Values are 0.0-1.0 unless noted. A future move-picker reads these to bias engine move selection.",
+  "name": "Gambit Gus",
+  "aggression": 0.85,
+  "risk_tolerance": 0.8,
+  "material_greed": 0.25,
+  "trade_tendency": 0.35,
+  "king_attack_focus": 0.8,
+  "opening_prefs": ["kings-gambit", "italian-gambit", "danish-gambit", "scotch-gambit"],
+  "avoid_openings": ["berlin-defense", "exchange-slav"],
+  "time_usage": "fast",
+  "target_strength": "intermediate",
+  "contempt": 0.4
+}
