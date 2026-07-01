@@ -31,6 +31,17 @@ type MatchWatcher struct {
 	triggerURL       string
 	triggered        map[string]time.Time // ticketID -> last time we triggered
 	loggedRaw        bool
+
+	// AMS claim mode (piece #4): instead of POSTing a fixed localhost trigger,
+	// claim a bot DS from an AMS fleet by claim keys and POST /trigger to the
+	// claimed server's public ip:port.
+	amsClaimEnabled bool
+	amsBase         string   // AMS/fleet-commander base URL (default: agsConfig base)
+	amsClaimKeys    []string // fleet claim keys, in preference order
+	amsRegion       string   // optional region hint
+	amsPortName     string   // named port (from the fleet) that exposes /trigger
+	triggerSecret   string   // optional shared secret sent as x-trigger-secret
+	loggedClaimRaw  bool
 }
 
 // NewMatchWatcherFromEnv builds the watcher when MATCH_WATCHER_ENABLED=true and a
@@ -54,17 +65,33 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 		retriggerSeconds: mwEnvInt("MATCH_WATCHER_RETRIGGER_SECONDS", 30),
 		triggerURL:       os.Getenv("BOT_TRIGGER_URL"),
 		triggered:        map[string]time.Time{},
+
+		amsClaimEnabled: strings.EqualFold(os.Getenv("AMS_CLAIM_ENABLED"), "true"),
+		amsBase:         strings.TrimRight(os.Getenv("AMS_BASE_URL"), "/"),
+		amsClaimKeys:    mwEnvList("AMS_CLAIM_KEYS"),
+		amsRegion:       os.Getenv("AMS_REGION"),
+		amsPortName:     mwEnvOr("AMS_TRIGGER_PORT_NAME", "trigger"),
+		triggerSecret:   os.Getenv("BOT_TRIGGER_SECRET"),
 	}
-	if w.triggerURL == "" {
-		log.Printf("match-watcher: disabled (BOT_TRIGGER_URL not set)")
+	if w.amsClaimEnabled {
+		if len(w.amsClaimKeys) == 0 {
+			log.Printf("match-watcher: disabled (AMS_CLAIM_ENABLED but AMS_CLAIM_KEYS empty)")
+			return nil, false
+		}
+	} else if w.triggerURL == "" {
+		log.Printf("match-watcher: disabled (set BOT_TRIGGER_URL, or AMS_CLAIM_ENABLED + AMS_CLAIM_KEYS)")
 		return nil, false
 	}
 	return w, true
 }
 
 func (w *MatchWatcher) Start(ctx context.Context) {
-	log.Printf("match-watcher: watching pool=%q wait=%ds poll=%ds retrigger=%ds trigger=%s botUser=%s",
-		w.pool, w.waitSeconds, w.pollSeconds, w.retriggerSeconds, w.triggerURL, w.botUserID)
+	dst := w.triggerURL
+	if w.amsClaimEnabled {
+		dst = fmt.Sprintf("AMS claim keys=%v port=%q region=%q", w.amsClaimKeys, w.amsPortName, w.amsRegion)
+	}
+	log.Printf("match-watcher: watching pool=%q wait=%ds poll=%ds retrigger=%ds trigger=[%s] botUser=%s",
+		w.pool, w.waitSeconds, w.pollSeconds, w.retriggerSeconds, dst, w.botUserID)
 	t := time.NewTicker(time.Duration(w.pollSeconds) * time.Second)
 	defer t.Stop()
 	for {
@@ -220,18 +247,131 @@ func (w *MatchWatcher) isBotTicket(t poolTicket) bool {
 
 func (w *MatchWatcher) trigger() {
 	go func() {
-		req, err := http.NewRequest(http.MethodPost, w.triggerURL, bytes.NewReader([]byte(`{}`)))
-		if err != nil {
-			return
+		url := w.triggerURL
+		if w.amsClaimEnabled {
+			addr, err := w.claimServer()
+			if err != nil {
+				log.Printf("match-watcher: AMS claim failed: %v", err)
+				return
+			}
+			url = "http://" + addr + "/trigger"
+			log.Printf("match-watcher: claimed bot DS at %s", addr)
 		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := outboundHTTPClient.Do(req)
-		if err != nil {
-			log.Printf("match-watcher: trigger POST failed: %v", err)
-			return
-		}
-		_ = resp.Body.Close()
+		w.postTrigger(url)
 	}()
+}
+
+func (w *MatchWatcher) postTrigger(url string) {
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if w.triggerSecret != "" {
+		req.Header.Set("x-trigger-secret", w.triggerSecret)
+	}
+	resp, err := outboundHTTPClient.Do(req)
+	if err != nil {
+		log.Printf("match-watcher: trigger POST %s failed: %v", url, err)
+		return
+	}
+	_ = resp.Body.Close()
+}
+
+// claimServer claims a bot DS from an AMS fleet by claim keys and returns the
+// claimed server's public "ip:port" for the named trigger port. Uses the service
+// client-credentials token; the client needs NAMESPACE:{ns}:AMS:SERVER:CLAIM
+// [UPDATE]. (fleet-commander PUT /ams/v1/namespaces/{ns}/servers/claim)
+func (w *MatchWatcher) claimServer() (string, error) {
+	baseURL, clientID, clientSecret, namespace, err := agsConfig()
+	if err != nil {
+		return "", err
+	}
+	amsBase := w.amsBase
+	if amsBase == "" {
+		amsBase = baseURL
+	}
+	token, err := getClientCredentialsToken(baseURL, clientID, clientSecret)
+	if err != nil {
+		return "", fmt.Errorf("token: %w", err)
+	}
+
+	reqBody := map[string]any{
+		"claim_keys": w.amsClaimKeys,
+		// A unique association id for this claim. The bot plays over PeerJS, so
+		// this need not map to an AGS session — it just identifies the claim.
+		"session_id": fmt.Sprintf("chessbot-%d", time.Now().UnixNano()),
+	}
+	if w.amsRegion != "" {
+		reqBody["region"] = w.amsRegion
+	}
+	payload, _ := json.Marshal(reqBody)
+
+	reqURL := fmt.Sprintf("%s/ams/v1/namespaces/%s/servers/claim", amsBase, namespace)
+	req, err := http.NewRequest(http.MethodPut, reqURL, bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := outboundHTTPClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("no bot DS available (404) — is the fleet warm?")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("claim returned %d: %s", resp.StatusCode, mwTruncate(string(body), 300))
+	}
+	if !w.loggedClaimRaw {
+		w.loggedClaimRaw = true
+		log.Printf("match-watcher: first raw claim response: %s", mwTruncate(string(body), 900))
+	}
+
+	ip, port := parseClaim(body, w.amsPortName)
+	if ip == "" || port == 0 {
+		return "", fmt.Errorf("claim response missing ip/port %q: %s", w.amsPortName, mwTruncate(string(body), 300))
+	}
+	return fmt.Sprintf("%s:%d", ip, port), nil
+}
+
+// claimResp captures the fields we need from the claim response, tolerant to a
+// flat or server-nested shape (confirmed/adjusted from the first raw response).
+type claimResp struct {
+	IP     string         `json:"ip"`
+	Ports  map[string]int `json:"ports"`
+	Server *struct {
+		IP    string         `json:"ip"`
+		Ports map[string]int `json:"ports"`
+	} `json:"server"`
+}
+
+// parseClaim pulls the public ip and the named trigger port from a claim body.
+// If the named port isn't present but exactly one port is, it uses that one.
+func parseClaim(body []byte, portName string) (string, int) {
+	var c claimResp
+	if json.Unmarshal(body, &c) != nil {
+		return "", 0
+	}
+	ip, ports := c.IP, c.Ports
+	if ip == "" && c.Server != nil {
+		ip, ports = c.Server.IP, c.Server.Ports
+	}
+	if ip == "" || len(ports) == 0 {
+		return ip, 0
+	}
+	if p, ok := ports[portName]; ok {
+		return ip, p
+	}
+	if len(ports) == 1 {
+		for _, p := range ports {
+			return ip, p
+		}
+	}
+	return ip, 0
 }
 
 func mwEnvOr(key, def string) string {
@@ -248,6 +388,21 @@ func mwEnvInt(key string, def int) int {
 		}
 	}
 	return def
+}
+
+// mwEnvList parses a comma-separated env var into a trimmed, non-empty slice.
+func mwEnvList(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func mwTruncate(s string, n int) string {
