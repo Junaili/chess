@@ -14,8 +14,19 @@
 import './env.mjs'
 import http from 'node:http'
 import { login, createMatchTicket, getMatchTicket, deleteMatchTicket, getGameSession } from './ags.mjs'
-import { loadPeer, playGame, log } from './play.mjs'
 import { Watchdog } from './watchdog.mjs'
+
+// play.mjs pulls in the native @roamhq/wrtc addon. We DEFER importing it (dynamic
+// import inside the game path) so that if the addon fails to load on the host
+// (e.g. a glibc mismatch), the DS still connects the watchdog, registers, and
+// LOGS the error — instead of crashing at startup before AMS ever sees it.
+let _play = null
+async function play() {
+  if (!_play) _play = await import('./play.mjs')
+  return _play
+}
+const ts = () => new Date().toISOString().slice(11, 19)
+const log = (...a) => console.log(ts(), ...a)
 
 const POOL = process.env.MATCH_POOL || 'chess-quickmatch'
 const POLL_MS = 2000
@@ -63,6 +74,7 @@ async function ensureLogin() {
 // predecessor that shares the bot account.
 async function ensurePeer() {
   if (peer) return peer
+  const { loadPeer } = await play()
   const Peer = await loadPeer()
   const peerId = auth.userId.replace(/-/g, '')
   peer = new Peer(peerId, { debug: 1 })
@@ -116,6 +128,16 @@ async function main() {
     const why = e?.code || e?.errors?.[0]?.code || e?.message || 'unreachable'
     log('no watchdog (' + why + ') — standalone/dev mode')
   }
+
+  // 3. Probe the native WebRTC addon now (non-fatal) so a host-side load failure
+  //    (e.g. glibc mismatch) is visible in the logs while the DS stays registered.
+  log('node', process.version, 'platform', process.platform, process.arch)
+  try {
+    await play()
+    log('webrtc: @roamhq/wrtc loaded OK')
+  } catch (e) {
+    log('webrtc: LOAD FAILED —', e?.message || e)
+  }
 }
 
 // One claim -> one game -> drain. Guarded so a duplicate trigger is a no-op.
@@ -137,6 +159,7 @@ async function onTrigger(wd) {
 }
 
 async function runOneGame() {
+  const { playGame } = await play()
   log('triggered → queuing one ticket')
   const ticketId = await createMatchTicket(auth.token, POOL)
   const sessionId = await waitForMatch(ticketId)

@@ -40,9 +40,20 @@ chmod +x "$OUT/node"
 #    resolution behave exactly as in the container (WORKDIR /app).
 cat > "$OUT/run.sh" <<'SH'
 #!/bin/sh
-# Forward AMS-substituted args ("-port=... -watchdog_url=...") to the DS.
-cd "$(dirname "$0")/app"
-exec ../node ds.mjs "$@"
+# AMS runs this as the DS executable, substituting placeholders in the configured
+# args ("-port=... -watchdog_url=..."). Print host diagnostics first (captured in
+# AMS DS logs), then launch the DS forwarding those args.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+echo "=== DS launch diagnostics ==="
+uname -a 2>&1
+(ldd --version 2>&1 | head -1) || echo "ldd: n/a"
+chmod +x "$HERE/node" 2>/dev/null || true
+echo "node --version: $("$HERE/node" --version 2>&1 || echo FAILED)"
+WRTC="$HERE/app/node_modules/@roamhq/wrtc-linux-x64/wrtc.node"
+echo "wrtc missing libs: $(ldd "$WRTC" 2>&1 | grep -i 'not found' | tr '\n' ' ' || echo none)"
+echo "=== launching (args: $*) ==="
+cd "$HERE/app"
+exec "$HERE/node" ds.mjs "$@"
 SH
 chmod +x "$OUT/run.sh"
 
