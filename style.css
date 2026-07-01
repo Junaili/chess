@@ -2473,6 +2473,35 @@ input[type="checkbox"] {
   animation: spin 1s linear infinite;
 }
 
+.matchmaking-wait {
+  width: fit-content;
+  margin: -8px auto 22px;
+  padding: 10px 18px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  border: 1px solid rgba(240, 195, 122, 0.22);
+  border-radius: 999px;
+  background: rgba(240, 195, 122, 0.08);
+}
+
+.matchmaking-wait-label {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.matchmaking-wait-time {
+  min-width: 4.5ch;
+  color: var(--accent-2);
+  font-size: 1.2rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
 .link-label {
   margin-bottom: 8px;
   color: var(--text-dim);

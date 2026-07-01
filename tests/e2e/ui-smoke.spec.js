@@ -55,4 +55,25 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#chess-board [data-r]')).toHaveCount(64);
     await expect(page.locator('#chess-board .piece')).toHaveCount(32);
   });
+
+  test('random matchmaking shows elapsed waiting time and clears it on cancel', async ({ page }) => {
+    await gotoApp(page);
+    await page.evaluate(() => {
+      window.agsStartMatchmaking = () => {};
+      window.agsCancelMatchmaking = () => {};
+      window.startRandomMatchmaking();
+    });
+
+    const timer = page.locator('#matchmaking-wait');
+    await expect(timer).toBeVisible();
+    await expect(page.locator('#matchmaking-wait-time')).toHaveText('00:00');
+    await expect.poll(
+      () => page.locator('#matchmaking-wait-time').textContent(),
+      { timeout: 3000 },
+    ).toMatch(/^00:0[1-3]$/);
+
+    await page.locator('#btn-waiting-cancel').click();
+    await expect(page.locator('#screen-home')).toBeVisible();
+    await expect(timer).toBeHidden();
+  });
 });
