@@ -2,13 +2,87 @@
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const SYMBOLS = {
-  white: { king:'♔', queen:'♕', rook:'♖', bishop:'♗', knight:'♘', pawn:'♙' },
-  // U+265F (♟) is the only chess glyph with Unicode emoji presentation, so it
-  // can resolve to the color-emoji font (tofu in the iOS Simulator WebView).
-  // Append U+FE0E (text variation selector) to force monochrome text rendering.
-  black: { king:'♚', queen:'♛', rook:'♜', bishop:'♝', knight:'♞', pawn:'♟︎' }
+const PIECE_LABELS = {
+  king: 'king',
+  queen: 'queen',
+  rook: 'rook',
+  bishop: 'bishop',
+  knight: 'knight',
+  pawn: 'pawn',
 };
+
+// Vector artwork keeps chess pieces independent of system symbol and emoji
+// fonts. iOS Simulator runtimes can omit AppleColorEmoji.ttc, causing Unicode
+// chess characters to render as boxed question marks.
+const PIECE_VECTOR_CONTENT = {
+  king: `
+    <path class="piece-vector-shape" d="M46 7h8v11h11v8H54v11h-8V26H35v-8h11z"/>
+    <path class="piece-vector-shape" d="M36 42c0-8 6-13 14-13s14 5 14 13c0 6-3 10-7 14l7 17H36l7-17c-4-4-7-8-7-14z"/>
+    <path class="piece-vector-shape" d="M29 73h42l6 12H23z"/>
+    <path class="piece-vector-detail" d="M34 73h32M28 85h44"/>
+  `,
+  queen: `
+    <circle class="piece-vector-shape" cx="24" cy="23" r="6"/>
+    <circle class="piece-vector-shape" cx="50" cy="15" r="6"/>
+    <circle class="piece-vector-shape" cx="76" cy="23" r="6"/>
+    <path class="piece-vector-shape" d="M24 30l12 18 14-25 14 25 12-18-8 39H32z"/>
+    <path class="piece-vector-shape" d="M29 69h42l6 16H23z"/>
+    <path class="piece-vector-detail" d="M31 61h38M28 77h44"/>
+  `,
+  rook: `
+    <path class="piece-vector-shape" d="M25 14h12v12h10V14h12v12h10V14h12v25H25z"/>
+    <path class="piece-vector-shape" d="M34 38h32l5 34H29z"/>
+    <path class="piece-vector-shape" d="M25 70h50l7 15H18z"/>
+    <path class="piece-vector-detail" d="M30 42h40M25 72h50"/>
+  `,
+  bishop: `
+    <path class="piece-vector-shape" d="M50 10c11 9 18 18 18 29 0 10-6 17-13 23h-10c-7-6-13-13-13-23 0-11 7-20 18-29z"/>
+    <path class="piece-vector-detail" d="M58 22L43 46"/>
+    <path class="piece-vector-shape" d="M37 59h26l8 14H29z"/>
+    <path class="piece-vector-shape" d="M25 72h50l7 13H18z"/>
+    <path class="piece-vector-detail" d="M28 73h44"/>
+  `,
+  knight: `
+    <path class="piece-vector-shape" d="M27 74c3-18 10-31 24-42l-9-14c16 1 29 8 36 21-8 2-13 7-16 14l-9-7c-8 7-12 15-13 28h33l8 12H19z"/>
+    <circle class="piece-vector-detail-fill" cx="59" cy="31" r="3"/>
+    <path class="piece-vector-detail" d="M43 52c8 1 14 4 18 10M28 74h47"/>
+  `,
+  pawn: `
+    <circle class="piece-vector-shape" cx="50" cy="25" r="14"/>
+    <path class="piece-vector-shape" d="M39 39h22c-1 13 3 22 10 31H29c7-9 11-18 10-31z"/>
+    <path class="piece-vector-shape" d="M25 69h50l7 16H18z"/>
+    <path class="piece-vector-detail" d="M28 70h44"/>
+  `,
+};
+
+function renderChessPieceSVG(type, extraClass = '') {
+  const artwork = PIECE_VECTOR_CONTENT[type] || PIECE_VECTOR_CONTENT.pawn;
+  return `<svg class="chess-piece-svg${extraClass ? ` ${extraClass}` : ''}" viewBox="0 0 100 100" aria-hidden="true" focusable="false">${artwork}</svg>`;
+}
+
+function setChessPieceGraphic(element, type, color, label = '') {
+  if (!element) return;
+  const renderKey = `${color}:${type}`;
+  if (element.dataset.pieceRender !== renderKey) {
+    element.innerHTML = renderChessPieceSVG(type);
+    element.dataset.pieceRender = renderKey;
+  }
+  element.dataset.pieceType = type;
+  element.dataset.pieceColor = color;
+  element.setAttribute('aria-label', label || `${color} ${PIECE_LABELS[type] || type}`);
+}
+
+function hydrateStaticPieceIcons(root = document) {
+  root.querySelectorAll('[data-static-piece]').forEach(element => {
+    const type = element.dataset.pieceType || 'pawn';
+    const color = element.dataset.pieceColor || 'black';
+    element.classList.add(color);
+    setChessPieceGraphic(element, type, color, element.getAttribute('aria-label') || '');
+  });
+}
+
+window.renderChessPieceSVG = renderChessPieceSVG;
+window.setChessPieceGraphic = setChessPieceGraphic;
 
 const PIECE_COLORS = {
   white: [
@@ -76,7 +150,6 @@ let currentOpponent = null;
 let pendingFriendMatchInvite = null;
 let matchStartedAt = null;
 let matchHistoryRecorded = false;
-let playerWasInCheck = false;
 let gameOverCountdownTimer = null;
 let gameOverCountdownRemaining = 0;
 let homeIdleTimer = null;
@@ -156,7 +229,6 @@ function showPieceColorSelect() {
     ? 'Pick a light shade for your pieces'
     : 'Pick a dark shade for your pieces';
 
-  const pieceSymbol = playerColor === 'white' ? '♔' : '♚';
   const squareBg   = playerColor === 'white' ? '#b58863' : '#f0d9b5';
   const isCustom   = selectedPieceColor && !colors.some(c => c.hex === selectedPieceColor);
 
@@ -168,9 +240,10 @@ function showPieceColorSelect() {
     btn.className = 'piece-color-btn' + (selectedPieceColor === c.hex ? ' selected' : '');
     btn.innerHTML =
       '<span class="color-swatch-bg" style="background:' + squareBg + '">' +
-        '<span class="color-swatch-piece" style="color:' + c.hex + '">' + pieceSymbol + '</span>' +
+        '<span class="color-swatch-piece ' + playerColor + '" style="color:' + c.hex + '">' + renderChessPieceSVG('king') + '</span>' +
       '</span>' +
       '<span class="piece-color-name">' + c.name + '</span>';
+    btn.setAttribute('aria-label', `${c.name} ${playerColor} pieces`);
     btn.onclick = () => selectPieceColor(c.hex);
     container.appendChild(btn);
   });
@@ -181,7 +254,7 @@ function showPieceColorSelect() {
   if (isCustom) {
     customBtn.innerHTML =
       '<span class="color-swatch-bg" style="background:' + squareBg + '">' +
-        '<span class="color-swatch-piece" style="color:' + selectedPieceColor + '">' + pieceSymbol + '</span>' +
+        '<span class="color-swatch-piece ' + playerColor + '" style="color:' + selectedPieceColor + '">' + renderChessPieceSVG('king') + '</span>' +
       '</span>' +
       '<span class="piece-color-name">Custom</span>';
   } else {
@@ -263,7 +336,6 @@ function startGame() {
   }
   matchStartedAt = new Date();
   matchHistoryRecorded = false;
-  playerWasInCheck = false;
   game = new ChessGame();
   selectedSquare = null;
   validMoves = [];
@@ -367,8 +439,6 @@ function renderBoard() {
   if (game.status === 'check' || game.status === 'checkmate') {
     checkKing = game.findKing(game.currentTurn);
   }
-  // Track whether the player was ever in check this game (for the comeback achievement)
-  if (game.status === 'check' && game.currentTurn === playerColor) playerWasInCheck = true;
 
   const squares = boardEl.children;
   for (let i = 0; i < 64; i++) {
@@ -399,7 +469,12 @@ function renderBoard() {
         sq.appendChild(pieceEl);
       }
       pieceEl.className = 'piece ' + piece.color;
-      pieceEl.textContent = SYMBOLS[piece.color][piece.type];
+      setChessPieceGraphic(
+        pieceEl,
+        piece.type,
+        piece.color,
+        `${piece.color} ${PIECE_LABELS[piece.type]} on ${game.toAlgebraic(r, c)}`
+      );
     } else if (pieceEl) {
       pieceEl.remove();
     }
@@ -682,7 +757,7 @@ function showHint() {
   const cols = 'abcdefgh', rows = '87654321';
   const piece = game.board[best.fr][best.fc];
   document.getElementById('hint-text').textContent =
-    `Try ${SYMBOLS[piece.color][piece.type]} ${cols[best.fc]}${rows[best.fr]} → ${cols[best.toC]}${rows[best.toR]}`;
+    `Try ${PIECE_LABELS[piece.type]} ${cols[best.fc]}${rows[best.fr]} → ${cols[best.toC]}${rows[best.toR]}`;
   document.getElementById('hint-box').style.display = 'flex';
   selectedSquare = { r: best.fr, c: best.fc };
   validMoves = [{ toR: best.toR, toC: best.toC }];
@@ -749,11 +824,11 @@ function updateCapturedPieces() {
   let wScore = 0, bScore = 0;
   let wHtml = '', bHtml = '';
   for (const p of game.capturedByWhite) {
-    wHtml += `<span class="cap-piece">${SYMBOLS[p.color][p.type]}</span>`;
+    wHtml += `<span class="cap-piece ${p.color}" aria-label="captured ${p.color} ${PIECE_LABELS[p.type]}">${renderChessPieceSVG(p.type)}</span>`;
     wScore += VALS[p.type];
   }
   for (const p of game.capturedByBlack) {
-    bHtml += `<span class="cap-piece">${SYMBOLS[p.color][p.type]}</span>`;
+    bHtml += `<span class="cap-piece ${p.color}" aria-label="captured ${p.color} ${PIECE_LABELS[p.type]}">${renderChessPieceSVG(p.type)}</span>`;
     bScore += VALS[p.type];
   }
   document.getElementById('captured-by-white').innerHTML = wHtml;
@@ -798,9 +873,10 @@ function showPromotionModal(color) {
   opts.innerHTML = '';
   for (const type of ['queen','rook','bishop','knight']) {
     const btn = document.createElement('button');
-    btn.className = 'prom-btn';
-    btn.textContent = SYMBOLS[color][type];
+    btn.className = `prom-btn ${color}`;
+    btn.innerHTML = renderChessPieceSVG(type);
     btn.title = type[0].toUpperCase() + type.slice(1);
+    btn.setAttribute('aria-label', `Promote to ${type}`);
     btn.onclick = () => {
       closeModal('promotion-modal');
       if (pendingPromotion) {
@@ -823,9 +899,6 @@ function showGameOver() {
   if (game.status === 'checkmate' && game.winner === playerColor) {
     recordWin();
     if (typeof window.agsIncrementWin === 'function') window.agsIncrementWin();
-    // Event achievements: quick win (< 20 plies) and comeback (won after being in check)
-    if (game.moveHistory.length < 20) window.agsUnlockAchievement?.('chess-quick-win');
-    if (playerWasInCheck) window.agsUnlockAchievement?.('chess-comeback');
   } else if (game.status === 'checkmate' && game.winner && game.winner !== playerColor) {
     if (typeof window.agsIncrementLoss === 'function') window.agsIncrementLoss();
   } else if (game.status === 'stalemate') {
@@ -833,7 +906,6 @@ function showGameOver() {
   }
   if (typeof window.agsIncrementGamePlayed === 'function') window.agsIncrementGamePlayed(gameMode);
   window.agsUpdateStreak?.();
-  window.agsCheckAchievements?.();
 
   const title = document.getElementById('game-over-title');
   const msg   = document.getElementById('game-over-message');
@@ -2102,6 +2174,7 @@ window.addEventListener('beforeunload', () => {
 });
 
 window.addEventListener('DOMContentLoaded', () => {
+  hydrateStaticPieceIcons();
   renderLeaderboard();
   const params = new URLSearchParams(window.location.search);
   const hostPeerId = params.get('peer');
