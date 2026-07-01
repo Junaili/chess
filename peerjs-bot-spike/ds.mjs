@@ -66,25 +66,17 @@ async function ensurePeer() {
 }
 
 async function main() {
-  // 1. Watchdog: announce ready + heartbeat. On drain, finish any active game
-  //    then exit (we exit after one game regardless, so drain just hurries idle).
   const wd = new Watchdog()
   wd.onDrain = () => {
     draining = true
     if (!busy) { log('drain while idle — exiting'); shutdown(wd, 0) }
     else log('drain during a game — will finish it, then exit')
   }
-  try {
-    await wd.connect()
-    wd.sendReady()
-    wd.startHeartbeat(5000)
-    log('registered with watchdog — ready for a claim')
-  } catch (e) {
-    const why = e?.code || e?.errors?.[0]?.code || e?.message || 'unreachable'
-    log('no watchdog (' + why + ') — standalone/dev mode')
-  }
 
-  // 2. Trigger endpoint the claimer (Extend watcher) POSTs after claiming us.
+  // 1. Trigger endpoint the claimer (Extend watcher) POSTs after claiming us.
+  //    Bind it FIRST: AMS marks us claimable once we announce watchdog "ready",
+  //    and the claimer POSTs /trigger immediately after — so the port must
+  //    already be listening to avoid a connection-refused race.
   const server = http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/trigger') {
       if (TRIGGER_SECRET && req.headers['x-trigger-secret'] !== TRIGGER_SECRET) {
@@ -99,7 +91,20 @@ async function main() {
     res.writeHead(404); res.end()
   })
   server.on('error', (e) => { console.error('trigger server error:', e?.message || e); process.exit(1) })
-  server.listen(TRIGGER_PORT, () => log('trigger server listening on :' + TRIGGER_PORT))
+  await new Promise((resolve) => server.listen(TRIGGER_PORT, () => { log('trigger server listening on :' + TRIGGER_PORT); resolve() }))
+
+  // 2. Watchdog: announce ready + heartbeat only AFTER the trigger port is up.
+  //    On drain, finish any active game then exit (we exit after one game
+  //    regardless, so drain just hurries an idle instance out).
+  try {
+    await wd.connect()
+    wd.sendReady()
+    wd.startHeartbeat(5000)
+    log('registered with watchdog — ready for a claim')
+  } catch (e) {
+    const why = e?.code || e?.errors?.[0]?.code || e?.message || 'unreachable'
+    log('no watchdog (' + why + ') — standalone/dev mode')
+  }
 }
 
 // One claim -> one game -> drain. Guarded so a duplicate trigger is a no-op.

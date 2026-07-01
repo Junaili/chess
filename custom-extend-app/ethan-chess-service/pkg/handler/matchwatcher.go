@@ -40,6 +40,7 @@ type MatchWatcher struct {
 	amsClaimKeys    []string // fleet claim keys, in preference order
 	amsRegion       string   // optional region hint
 	amsPortName     string   // named port (from the fleet) that exposes /trigger
+	amsClaimRetryS  int      // how long to retry claim on 404 (dev fleets launch on demand)
 	triggerSecret   string   // optional shared secret sent as x-trigger-secret
 	loggedClaimRaw  bool
 }
@@ -71,6 +72,7 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 		amsClaimKeys:    mwEnvList("AMS_CLAIM_KEYS"),
 		amsRegion:       os.Getenv("AMS_REGION"),
 		amsPortName:     mwEnvOr("AMS_TRIGGER_PORT_NAME", "trigger"),
+		amsClaimRetryS:  mwEnvInt("AMS_CLAIM_RETRY_SECONDS", 20),
 		triggerSecret:   os.Getenv("BOT_TRIGGER_SECRET"),
 	}
 	if w.amsClaimEnabled {
@@ -282,6 +284,10 @@ func (w *MatchWatcher) postTrigger(url string) {
 // claimed server's public "ip:port" for the named trigger port. Uses the service
 // client-credentials token; the client needs NAMESPACE:{ns}:AMS:SERVER:CLAIM
 // [UPDATE]. (fleet-commander PUT /ams/v1/namespaces/{ns}/servers/claim)
+//
+// A development fleet launches a DS on demand and returns 404 until it's ready
+// (up to ~8s); the endpoint is meant to be retried. So we poll the claim for up
+// to amsClaimRetryS seconds before giving up.
 func (w *MatchWatcher) claimServer() (string, error) {
 	baseURL, clientID, clientSecret, namespace, err := agsConfig()
 	if err != nil {
@@ -296,6 +302,26 @@ func (w *MatchWatcher) claimServer() (string, error) {
 		return "", fmt.Errorf("token: %w", err)
 	}
 
+	deadline := time.Now().Add(time.Duration(w.amsClaimRetryS) * time.Second)
+	for attempt := 1; ; attempt++ {
+		addr, notReady, err := w.claimOnce(amsBase, namespace, token)
+		if err != nil {
+			return "", err
+		}
+		if !notReady {
+			return addr, nil
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("no bot DS available after %ds (404) — fleet did not become ready", w.amsClaimRetryS)
+		}
+		log.Printf("match-watcher: claim attempt %d got 404 (DS launching) — retrying", attempt)
+		time.Sleep(2 * time.Second)
+	}
+}
+
+// claimOnce makes a single claim call. notReady=true means HTTP 404 (a dev fleet
+// is still launching a DS) and the caller should retry.
+func (w *MatchWatcher) claimOnce(amsBase, namespace, token string) (addr string, notReady bool, err error) {
 	reqBody := map[string]any{
 		"claim_keys": w.amsClaimKeys,
 		// A unique association id for this claim. The bot plays over PeerJS, so
@@ -310,21 +336,21 @@ func (w *MatchWatcher) claimServer() (string, error) {
 	reqURL := fmt.Sprintf("%s/ams/v1/namespaces/%s/servers/claim", amsBase, namespace)
 	req, err := http.NewRequest(http.MethodPut, reqURL, bytes.NewReader(payload))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := outboundHTTPClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("no bot DS available (404) — is the fleet warm?")
+		return "", true, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("claim returned %d: %s", resp.StatusCode, mwTruncate(string(body), 300))
+		return "", false, fmt.Errorf("claim returned %d: %s", resp.StatusCode, mwTruncate(string(body), 300))
 	}
 	if !w.loggedClaimRaw {
 		w.loggedClaimRaw = true
@@ -333,9 +359,9 @@ func (w *MatchWatcher) claimServer() (string, error) {
 
 	ip, port := parseClaim(body, w.amsPortName)
 	if ip == "" || port == 0 {
-		return "", fmt.Errorf("claim response missing ip/port %q: %s", w.amsPortName, mwTruncate(string(body), 300))
+		return "", false, fmt.Errorf("claim response missing ip/port %q: %s", w.amsPortName, mwTruncate(string(body), 300))
 	}
-	return fmt.Sprintf("%s:%d", ip, port), nil
+	return fmt.Sprintf("%s:%d", ip, port), false, nil
 }
 
 // claimResp captures the fields we need from the claim response, tolerant to a
