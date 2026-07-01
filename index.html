@@ -48,8 +48,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-tUl6o88D.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-BXsJsvHT.css">
+  <script type="module" crossorigin src="/chess/assets/index-DOgWz0oY.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-ErkaC28m.css">
 </head>
 <body>
 
@@ -533,6 +533,10 @@
       <div class="waiting-icon" id="waiting-icon">🎮</div>
       <h2 id="waiting-title">Waiting for opponent…</h2>
       <p id="waiting-sub" class="waiting-sub"></p>
+      <div id="matchmaking-wait" class="matchmaking-wait" style="display:none">
+        <span class="matchmaking-wait-label">Time waiting</span>
+        <span id="matchmaking-wait-time" class="matchmaking-wait-time" role="timer" aria-live="off">00:00</span>
+      </div>
 
       <!-- Shown to the host (inviter) -->
       <div id="invite-link-section" style="display:none">

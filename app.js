@@ -145,6 +145,7 @@ let moveLog        = [];     // host-only: all moves sent, used for resync
 let connectionLost = false;
 let rematchPending = false;  // true while waiting for opponent to respond to our rematch request
 let matchmakingActive = false;
+let matchmakingWaitInterval = null;
 let chatMessages   = [];
 let currentOpponent = null;
 let pendingFriendMatchInvite = null;
@@ -1675,7 +1676,43 @@ function setupPeerConnection(conn, role) {
   });
 }
 
+function stopMatchmakingWaitTimer() {
+  if (matchmakingWaitInterval !== null) {
+    clearInterval(matchmakingWaitInterval);
+    matchmakingWaitInterval = null;
+  }
+  const wait = document.getElementById('matchmaking-wait');
+  if (wait) wait.style.display = 'none';
+}
+
+function formatMatchmakingWaitTime(elapsedMs) {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const minuteText = String(minutes).padStart(2, '0');
+  const secondText = String(seconds).padStart(2, '0');
+  return hours > 0
+    ? `${String(hours).padStart(2, '0')}:${minuteText}:${secondText}`
+    : `${minuteText}:${secondText}`;
+}
+
+function startMatchmakingWaitTimer(startedAt) {
+  stopMatchmakingWaitTimer();
+  const wait = document.getElementById('matchmaking-wait');
+  const time = document.getElementById('matchmaking-wait-time');
+  if (!wait || !time) return;
+
+  const update = () => {
+    time.textContent = formatMatchmakingWaitTime(Date.now() - startedAt);
+  };
+  update();
+  wait.style.display = 'flex';
+  matchmakingWaitInterval = setInterval(update, 1000);
+}
+
 function showWaitingScreen(role) {
+  stopMatchmakingWaitTimer();
   showScreen('waiting');
   const messages = {
     'host':               ['🎮', 'Invite your friend',      'Share the link below. The game starts when they open it.'],
@@ -1700,6 +1737,7 @@ function cancelOnlineGame() {
 function cancelWaiting() {
   if (matchmakingActive) {
     matchmakingActive = false;
+    stopMatchmakingWaitTimer();
     if (typeof window.agsCancelMatchmaking === 'function') {
       window.agsCancelMatchmaking();
     }
@@ -1717,8 +1755,9 @@ function startRandomMatchmaking() {
   }
   matchmakingActive = true;
   gameMode = 'online';
-  showWaitingScreen('matchmaking');
   const queueStartedAt = Date.now();
+  showWaitingScreen('matchmaking');
+  startMatchmakingWaitTimer(queueStartedAt);
   if (typeof window.agsSendEvent === 'function') window.agsSendEvent('matchmaking_started', {});
   window.agsStartMatchmaking(
     function onFound(memberUserIds) {
@@ -1771,6 +1810,7 @@ function startRandomMatchmaking() {
     function onTimeout() {
       if (!matchmakingActive) return;
       matchmakingActive = false;
+      stopMatchmakingWaitTimer();
       if (typeof window.agsSendEvent === 'function') {
         window.agsSendEvent('matchmaking_timeout', { wait_time_ms: Date.now() - queueStartedAt });
       }
@@ -1781,6 +1821,7 @@ function startRandomMatchmaking() {
     function onError(msg) {
       if (!matchmakingActive) return;
       matchmakingActive = false;
+      stopMatchmakingWaitTimer();
       destroyPeer();
       showScreen('home');
       alert(msg);
