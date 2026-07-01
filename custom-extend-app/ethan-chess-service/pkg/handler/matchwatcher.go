@@ -23,13 +23,14 @@ import (
 // It reuses the service's client-credentials flow; the service's IAM client must
 // have ADMIN:NAMESPACE:{ns}:MATCHMAKING:POOL:TICKETS (Read).
 type MatchWatcher struct {
-	pool        string
-	botUserID   string
-	waitSeconds int
-	pollSeconds int
-	triggerURL  string
-	triggered   map[string]time.Time // ticketID -> when we triggered (dedupe)
-	loggedRaw   bool
+	pool             string
+	botUserID        string
+	waitSeconds      int
+	pollSeconds      int
+	retriggerSeconds int
+	triggerURL       string
+	triggered        map[string]time.Time // ticketID -> last time we triggered
+	loggedRaw        bool
 }
 
 // NewMatchWatcherFromEnv builds the watcher when MATCH_WATCHER_ENABLED=true and a
@@ -46,12 +47,13 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 		return nil, false
 	}
 	w := &MatchWatcher{
-		pool:        mwEnvOr("MATCH_POOL", "chess-quickmatch"),
-		botUserID:   os.Getenv("BOT_USER_ID"),
-		waitSeconds: mwEnvInt("BOT_WAIT_SECONDS", 20),
-		pollSeconds: mwEnvInt("MATCH_WATCHER_POLL_SECONDS", 3),
-		triggerURL:  os.Getenv("BOT_TRIGGER_URL"),
-		triggered:   map[string]time.Time{},
+		pool:             mwEnvOr("MATCH_POOL", "chess-quickmatch"),
+		botUserID:        os.Getenv("BOT_USER_ID"),
+		waitSeconds:      mwEnvInt("BOT_WAIT_SECONDS", 20),
+		pollSeconds:      mwEnvInt("MATCH_WATCHER_POLL_SECONDS", 3),
+		retriggerSeconds: mwEnvInt("MATCH_WATCHER_RETRIGGER_SECONDS", 30),
+		triggerURL:       os.Getenv("BOT_TRIGGER_URL"),
+		triggered:        map[string]time.Time{},
 	}
 	if w.triggerURL == "" {
 		log.Printf("match-watcher: disabled (BOT_TRIGGER_URL not set)")
@@ -61,8 +63,8 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 }
 
 func (w *MatchWatcher) Start(ctx context.Context) {
-	log.Printf("match-watcher: watching pool=%q wait=%ds poll=%ds trigger=%s botUser=%s",
-		w.pool, w.waitSeconds, w.pollSeconds, w.triggerURL, w.botUserID)
+	log.Printf("match-watcher: watching pool=%q wait=%ds poll=%ds retrigger=%ds trigger=%s botUser=%s",
+		w.pool, w.waitSeconds, w.pollSeconds, w.retriggerSeconds, w.triggerURL, w.botUserID)
 	t := time.NewTicker(time.Duration(w.pollSeconds) * time.Second)
 	defer t.Stop()
 	for {
@@ -183,9 +185,14 @@ func (w *MatchWatcher) poll() error {
 			continue
 		}
 		if now.Sub(t.CreatedAt) >= time.Duration(w.waitSeconds)*time.Second {
-			if _, already := w.triggered[id]; !already {
-				log.Printf("match-watcher: human ticket %s waited %.0fs → triggering bot",
-					id, now.Sub(t.CreatedAt).Seconds())
+			// Re-trigger a still-waiting human after a cooldown, in case the bot's
+			// first ticket lost the race to pair with them (they'd otherwise be
+			// stuck). A spurious re-trigger is harmless: the bot's ticket self-
+			// cancels at 10s when there's no one to match.
+			last, seen := w.triggered[id]
+			if !seen || now.Sub(last) >= time.Duration(w.retriggerSeconds)*time.Second {
+				log.Printf("match-watcher: human ticket %s waited %.0fs → triggering bot%s",
+					id, now.Sub(t.CreatedAt).Seconds(), map[bool]string{true: " (retry)"}[seen])
 				w.trigger()
 				w.triggered[id] = now
 			}

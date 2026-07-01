@@ -11,11 +11,15 @@
 // Then run the Extend service with the watcher enabled (see README).
 import './env.mjs'
 import http from 'node:http'
-import { login, createMatchTicket, getMatchTicket, getGameSession } from './ags.mjs'
+import { login, createMatchTicket, getMatchTicket, deleteMatchTicket, getGameSession } from './ags.mjs'
 import { loadPeer, playGame, log } from './play.mjs'
 
 const POOL = process.env.MATCH_POOL || 'chess-quickmatch'
 const POLL_MS = 2000
+// A genuinely-waiting human (already queued >20s) matches within a poll or two.
+// If our ticket hasn't matched in this window, there was no waiting human — cancel
+// it so it never lingers long enough for the watcher to re-trigger on it.
+const MATCH_WAIT_MS = 10000
 const JOINER_CONNECT_DELAY_MS = 1500
 const TRIGGER_PORT = Number(process.env.BOT_TRIGGER_PORT) || 8091
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -99,12 +103,18 @@ async function queueOne() {
 }
 
 async function waitForMatch(ticketId) {
+  const deadline = Date.now() + MATCH_WAIT_MS
   for (;;) {
     await sleep(POLL_MS)
     let t
     try { t = await getMatchTicket(auth.token, ticketId) } catch { return null }
     if (t.notFound) return null
     if (t.matchFound && (t.sessionID || t.sessionId)) return t.sessionID || t.sessionId
+    if (Date.now() > deadline) {
+      log('ticket', shortTag(ticketId), 'no match within 10s — cancelling (no waiting human)')
+      await deleteMatchTicket(auth.token, ticketId)
+      return null
+    }
   }
 }
 
