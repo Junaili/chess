@@ -1,4 +1,5 @@
-import { readFileSync } from 'fs'
+import { copyFileSync, readFileSync } from 'fs'
+import { resolve } from 'path'
 import { defineConfig, loadEnv } from 'vite'
 
 export default defineConfig(({ mode, command }) => {
@@ -44,6 +45,17 @@ export default defineConfig(({ mode, command }) => {
 
   return {
     base,
+    plugins: [
+      {
+        name: 'copy-classic-game-scripts',
+        writeBundle(outputOptions) {
+          const outDir = outputOptions.dir || resolve(process.cwd(), 'dist')
+          for (const file of ['app.js', 'chess-engine.js', 'ai-engine.js']) {
+            copyFileSync(resolve(process.cwd(), file), resolve(outDir, file))
+          }
+        },
+      },
+    ],
     server: serverConfig,
     define: {
       __EXTEND_EMAIL_URL__: JSON.stringify(env.VITE_EXTEND_EMAIL_URL || ''),

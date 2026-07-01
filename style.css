@@ -32,7 +32,7 @@
   --rail: clamp(280px, 26vw, 380px);
   /* Board fills the column left of the rail, capped by the viewport height so
      the whole match always fits with no scrolling. */
-  --board-size: min(calc(100vw - var(--rail) - 70px), calc(100dvh - 120px), 980px);
+  --board-size: min(calc(100vw - var(--rail) - 100px), calc(100dvh - 150px), 980px);
 }
 
 html, body {
@@ -337,6 +337,10 @@ input[type="checkbox"] {
 }
 
 .home-container h1 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.12em;
   text-align: center;
   font-family: "Cormorant Garamond", Georgia, serif;
   font-size: clamp(3.2rem, 7vw, 5.8rem);
@@ -346,6 +350,25 @@ input[type="checkbox"] {
   margin-bottom: 10px;
   color: #fff7ee;
   text-shadow: 0 6px 28px rgba(0, 0, 0, 0.3);
+}
+
+.brand-piece,
+.eyebrow-piece {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--accent-2);
+}
+
+.brand-piece {
+  width: 0.72em;
+  height: 0.72em;
+}
+
+.eyebrow-piece {
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 0.45em;
+  vertical-align: -0.18em;
 }
 
 .home-subtitle {
@@ -1100,15 +1123,16 @@ input[type="checkbox"] {
 }
 
 .profile-auth-gate-icon {
-  display: grid;
+  display: flex;
   flex: 0 0 auto;
   width: 46px;
   height: 46px;
-  place-items: center;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
   border-radius: 14px;
   color: #2d2118;
   background: linear-gradient(135deg, var(--accent-2), #df9d5d);
-  font-size: 1.45rem;
 }
 
 .profile-auth-gate-copy strong {
@@ -1511,13 +1535,31 @@ input[type="checkbox"] {
 }
 
 #screen-register .auth-form-actions,
-#screen-login .auth-form-actions {
+#screen-forgot-password .auth-form-actions {
   display: block;
 }
 
 #screen-register .auth-form-actions .btn,
+#screen-forgot-password .auth-form-actions .btn {
+  width: 100%;
+}
+
+#screen-login .auth-form-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
 #screen-login .auth-form-actions .btn {
   width: 100%;
+}
+
+.password-reset-fields {
+  display: grid;
+  gap: 16px;
+}
+
+.password-reset-fields[hidden] {
+  display: none;
 }
 
 .auth-helper {
@@ -1639,10 +1681,9 @@ input[type="checkbox"] {
 }
 
 .piece-icon {
-  font-size: 3.6rem;
-  line-height: 1;
-  font-family: "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Symbola", sans-serif;
-  font-variant-emoji: text;
+  display: inline-flex;
+  width: 72px;
+  height: 72px;
 }
 
 .diff-btn {
@@ -1705,11 +1746,10 @@ input[type="checkbox"] {
 }
 
 .color-swatch-piece {
-  font-size: 2.5rem;
-  line-height: 1;
+  display: inline-flex;
+  width: 54px;
+  height: 54px;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.42));
-  font-family: "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Symbola", sans-serif;
-  font-variant-emoji: text;
 }
 
 .piece-color-name {
@@ -1773,7 +1813,9 @@ input[type="checkbox"] {
   align-items: center;
   justify-content: center;
   gap: 14px;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 /* Outer ruler labels duplicate the in-cell coordinates — hide them everywhere. */
@@ -1798,6 +1840,9 @@ input[type="checkbox"] {
 
 .board-container {
   position: relative;
+  flex: 0 0 auto;
+  width: calc(var(--board-size) + 40px);
+  max-width: 100%;
   padding: 20px;
   border-radius: 30px;
   background:
@@ -1818,6 +1863,7 @@ input[type="checkbox"] {
 
 .board-wrapper {
   display: flex;
+  min-width: 0;
   align-items: stretch;
 }
 
@@ -1866,11 +1912,14 @@ input[type="checkbox"] {
 
 .chess-board {
   position: relative;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
   width: var(--board-size);
   height: var(--board-size);
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  grid-template-rows: repeat(8, 1fr);
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-rows: repeat(8, minmax(0, 1fr));
   border-radius: 18px;
   overflow: hidden;
   border: 10px solid #2f221c;
@@ -1882,6 +1931,9 @@ input[type="checkbox"] {
 
 .square {
   position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1997,15 +2049,14 @@ input[type="checkbox"] {
 .piece {
   position: relative;
   z-index: 5;
-  font-size: calc(var(--board-size) / 10.2);
-  line-height: 1;
-  /* Render chess glyphs (♟♜…) from a monochrome symbol font, never the color-
-     emoji font. iOS/WebKit diverts U+265F (♟, the one chess glyph with emoji
-     presentation) to Apple Color Emoji, which is tofu in the Simulator and
-     ignores font-variant-emoji/U+FE0E hints. Naming the symbol font directly
-     forces the text glyph. */
-  font-family: "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Symbola", sans-serif;
-  font-variant-emoji: text;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 8%;
   cursor: grab;
   user-select: none;
   -webkit-user-drag: none;
@@ -2020,12 +2071,66 @@ input[type="checkbox"] {
 
 .piece.white {
   color: var(--white-piece-color);
+  --piece-outline: rgba(48, 32, 22, 0.82);
+  --piece-detail: rgba(48, 32, 22, 0.88);
   filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.65)) drop-shadow(0 7px 6px rgba(0, 0, 0, 0.22));
 }
 
 .piece.black {
   color: var(--black-piece-color);
+  --piece-outline: rgba(255, 243, 222, 0.52);
+  --piece-detail: rgba(255, 243, 222, 0.58);
   filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.16)) drop-shadow(0 7px 6px rgba(0, 0, 0, 0.22));
+}
+
+.chess-piece-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: visible;
+}
+
+.piece-vector-shape {
+  fill: currentColor;
+  stroke: var(--piece-outline, rgba(48, 32, 22, 0.75));
+  stroke-width: 3;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.piece-vector-detail {
+  fill: none;
+  stroke: var(--piece-detail, rgba(48, 32, 22, 0.82));
+  stroke-width: 3;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.piece-vector-detail-fill {
+  fill: var(--piece-detail, rgba(48, 32, 22, 0.82));
+  stroke: none;
+}
+
+.piece-icon.white,
+.color-swatch-piece.white,
+.prom-btn.white,
+.cap-piece.white {
+  --piece-outline: rgba(48, 32, 22, 0.82);
+  --piece-detail: rgba(48, 32, 22, 0.88);
+}
+
+.piece-icon.black,
+.color-swatch-piece.black,
+.prom-btn.black,
+.cap-piece.black,
+.brand-piece.black,
+.eyebrow-piece.black,
+.invite-piece-glow.black,
+.profile-auth-gate-icon.black {
+  --piece-outline: rgba(255, 243, 222, 0.52);
+  --piece-detail: rgba(255, 243, 222, 0.58);
 }
 
 .player-info {
@@ -2117,10 +2222,11 @@ input[type="checkbox"] {
 }
 
 .cap-piece {
-  font-size: 1.12rem;
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  color: var(--text-dim);
   opacity: 0.78;
-  font-family: "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Symbola", sans-serif;
-  font-variant-emoji: text;
 }
 
 .move-history,
@@ -2575,8 +2681,8 @@ input[type="checkbox"] {
 }
 
 .prom-btn {
-  font-size: 3rem;
-  line-height: 1;
+  width: 78px;
+  height: 78px;
   padding: 16px;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -2585,6 +2691,9 @@ input[type="checkbox"] {
   cursor: pointer;
   transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
 }
+
+.prom-btn.white { color: var(--white-piece-color); }
+.prom-btn.black { color: var(--black-piece-color); }
 
 .prom-btn:hover {
   transform: translateY(-3px);
@@ -3407,8 +3516,9 @@ input[type="checkbox"] {
 }
 
 .invite-piece-glow {
-  font-size: 4.8rem;
-  line-height: 1;
+  width: 92px;
+  height: 92px;
+  color: var(--accent-2);
   margin-bottom: 24px;
   animation: invitePulse 3.2s ease-in-out infinite;
 }
@@ -3465,6 +3575,17 @@ input[type="checkbox"] {
 }
 
 .invite-pw {
+  width: 100%;
+}
+
+.invite-password-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  width: 100%;
+}
+
+.invite-forgot {
   width: 100%;
 }
 

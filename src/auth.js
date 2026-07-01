@@ -341,6 +341,57 @@ export async function loginWithPassword(identifier, password) {
   }
 }
 
+export async function requestPasswordReset(emailAddress) {
+  const { baseURL, namespace } = getAuthConfig()
+  try {
+    const resp = await fetch(`${baseURL}/iam/v3/public/namespaces/${encodeURIComponent(namespace)}/users/forgot`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        emailAddress,
+        languageTag: navigator.language || 'en-US',
+      }),
+      credentials: 'include',
+    })
+    const payload = await resp.json().catch(() => ({}))
+    if (!resp.ok) {
+      return { ok: false, error: extractErrorMessage(payload, 'Could not send the reset code. Please try again.') }
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e?.message || 'Could not send the reset code. Please try again.' }
+  }
+}
+
+export async function resetPassword({ emailAddress, code, newPassword }) {
+  const { baseURL, clientId, namespace } = getAuthConfig()
+  try {
+    const resp = await fetch(`${baseURL}/iam/v3/public/namespaces/${encodeURIComponent(namespace)}/users/reset`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        clientId,
+        code,
+        emailAddress,
+        languageTag: navigator.language || 'en-US',
+        newPassword,
+      }),
+      credentials: 'include',
+    })
+    const payload = await resp.json().catch(() => ({}))
+    if (!resp.ok) {
+      return { ok: false, error: extractErrorMessage(payload, 'Could not reset your password. Check the code and try again.') }
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e?.message || 'Could not reset your password. Check the code and try again.' }
+  }
+}
+
 export async function refreshSession() {
   const { baseURL, clientId } = getAuthConfig()
   const refreshToken = getRefreshToken()

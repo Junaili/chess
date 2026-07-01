@@ -59,7 +59,7 @@
   <!-- ── Home Screen ─────────────────────────────────────────────────────── -->
   <div id="screen-home" class="screen active">
     <div class="home-container">
-      <h1>♟ Ethan's Chess</h1>
+      <h1><span class="brand-piece" data-static-piece data-piece-type="pawn" data-piece-color="black" aria-hidden="true"></span>Ethan's Chess</h1>
       <p class="home-subtitle">Play chess with friends—wherever they are. Create a free account to invite friends, join live matches, and keep your wins.</p>
       <div class="home-highlights">
         <span>✓ Invite friends</span>
@@ -213,7 +213,7 @@
       </div>
       <div id="profile-auth-gate" class="profile-auth-gate" style="display:none">
         <div class="profile-auth-gate-copy">
-          <span class="profile-auth-gate-icon" aria-hidden="true">♟</span>
+          <span class="profile-auth-gate-icon" data-static-piece data-piece-type="pawn" data-piece-color="black" aria-hidden="true"></span>
           <div>
             <strong>Sign in to view player details</strong>
             <p>See verified stats, leaderboard rank, match history, and friend options.</p>
@@ -260,8 +260,8 @@
   <!-- ── Invite Landing Screen ───────────────────────────────────────────── -->
   <div id="screen-invite" class="screen">
     <div class="invite-landing">
-      <p class="auth-eyebrow invite-eyebrow">♟ Ethan's Chess</p>
-      <div class="invite-piece-glow" aria-hidden="true">♟</div>
+      <p class="auth-eyebrow invite-eyebrow"><span class="eyebrow-piece" data-static-piece data-piece-type="pawn" data-piece-color="black" aria-hidden="true"></span>Ethan's Chess</p>
+      <div class="invite-piece-glow black" data-static-piece data-piece-type="pawn" data-piece-color="black" aria-hidden="true"></div>
       <h2 id="invite-landing-title" class="invite-landing-title">A friend challenged you to chess!</h2>
       <p class="invite-landing-sub">Create a free account to accept the challenge and start playing.</p>
       <div class="invite-landing-actions">
@@ -278,7 +278,10 @@
           </svg>
           Sign in with Google
         </button>
-        <button class="btn btn-secondary invite-pw" onclick="window.agsOpenLogin && window.agsOpenLogin()">Log in with password</button>
+        <div class="invite-password-row">
+          <button class="btn btn-secondary invite-pw" onclick="window.agsOpenLogin && window.agsOpenLogin()">Log in with password</button>
+          <button class="btn btn-secondary invite-forgot" onclick="window.agsOpenForgotPassword && window.agsOpenForgotPassword()">Forgot password?</button>
+        </div>
       </div>
       <button class="btn btn-back invite-back" onclick="window.showScreen && window.showScreen('home')">← Just browsing</button>
     </div>
@@ -302,10 +305,46 @@
         <p id="ags-login-message" class="auth-message"></p>
         <div class="auth-form-actions">
           <button class="btn btn-primary" id="ags-login-submit" onclick="window.agsPasswordLogin && window.agsPasswordLogin()">Sign In</button>
+          <button class="btn btn-secondary" id="ags-login-forgot" onclick="window.agsOpenForgotPassword && window.agsOpenForgotPassword()">Forgot Password?</button>
         </div>
         <button class="auth-login-link" onclick="window.agsLogin && window.agsLogin()">Prefer Google? <strong>Continue with Google</strong></button>
       </div>
       <button class="btn btn-back" onclick="showScreen('home')">← Back</button>
+    </div>
+  </div>
+
+  <!-- ── Forgot Password Screen ─────────────────────────────────────────── -->
+  <div id="screen-forgot-password" class="screen">
+    <div class="auth-panel">
+      <p class="auth-eyebrow">Account Recovery</p>
+      <h2>Reset your password</h2>
+      <p class="auth-subtitle">Enter your account email and we’ll send you a verification code.</p>
+      <div class="auth-form">
+        <label class="auth-field" for="ags-forgot-email">
+          <span>Email address</span>
+          <input type="email" id="ags-forgot-email" class="name-input" placeholder="you@example.com" autocomplete="email" required />
+        </label>
+        <div class="auth-form-actions">
+          <button class="btn btn-primary" id="ags-forgot-submit" onclick="window.agsRequestPasswordReset && window.agsRequestPasswordReset()">Send Reset Code</button>
+        </div>
+        <div id="ags-reset-fields" class="password-reset-fields" hidden>
+          <p class="auth-helper">Check your email, then enter the verification code and a new password below.</p>
+          <label class="auth-field" for="ags-reset-code">
+            <span>Verification code</span>
+            <input type="text" id="ags-reset-code" class="name-input" placeholder="Enter the code" autocomplete="one-time-code" />
+          </label>
+          <label class="auth-field" for="ags-reset-password">
+            <span>New password</span>
+            <input type="password" id="ags-reset-password" class="name-input" placeholder="Choose a new password" autocomplete="new-password" minlength="8" />
+          </label>
+          <div class="auth-form-actions">
+            <button class="btn btn-primary" id="ags-reset-submit" onclick="window.agsCompletePasswordReset && window.agsCompletePasswordReset()">Set New Password</button>
+          </div>
+        </div>
+        <p id="ags-forgot-message" class="auth-message" aria-live="polite"></p>
+        <button class="auth-login-link" onclick="window.agsOpenLogin && window.agsOpenLogin()">Remembered it? <strong>Back to sign in</strong></button>
+      </div>
+      <button class="btn btn-back" onclick="showScreen('login')">← Back</button>
     </div>
   </div>
 
@@ -368,11 +407,11 @@
       <h2>Choose Your Color</h2>
       <div class="color-options">
         <button class="color-btn white-btn" onclick="selectColor('white')">
-          <span class="piece-icon">♔</span>
+          <span class="piece-icon white" data-static-piece data-piece-type="king" data-piece-color="white" aria-hidden="true"></span>
           White
         </button>
         <button class="color-btn black-btn" onclick="selectColor('black')">
-          <span class="piece-icon">♚</span>
+          <span class="piece-icon black" data-static-piece data-piece-type="king" data-piece-color="black" aria-hidden="true"></span>
           Black
         </button>
       </div>

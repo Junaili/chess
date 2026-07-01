@@ -1,5 +1,5 @@
 import { Peer } from 'peerjs'
-import { loginWithGoogle, loginWithApple, loginWithPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
+import { loginWithGoogle, loginWithApple, loginWithPassword, requestPasswordReset, resetPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
 import { setQueueUIHandler, cancelLoginQueue } from './login-queue.js'
 import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
@@ -57,6 +57,7 @@ function setAuthMessage(kind, text, tone = '') {
 
 function clearAuthMessages() {
   setAuthMessage('login', '')
+  setAuthMessage('forgot', '')
   setAuthMessage('register', '')
 }
 
@@ -540,6 +541,16 @@ async function initAuth() {
     clearAuthMessages()
     if (typeof window.showScreen === 'function') window.showScreen('login')
   }
+  window.agsOpenForgotPassword = () => {
+    clearAuthMessages()
+    const loginIdentifier = document.getElementById('ags-login-identifier')?.value.trim() || ''
+    const emailField = document.getElementById('ags-forgot-email')
+    const resetFields = document.getElementById('ags-reset-fields')
+    if (emailField && loginIdentifier.includes('@')) emailField.value = loginIdentifier
+    if (resetFields) resetFields.hidden = true
+    if (typeof window.showScreen === 'function') window.showScreen('forgot-password')
+    window.requestAnimationFrame(() => emailField?.focus())
+  }
   window.agsOpenRegister = () => {
     clearAuthMessages()
     if (typeof window.showScreen === 'function') window.showScreen('register')
@@ -587,6 +598,57 @@ async function initAuth() {
       setAuthMessage('login', 'Signed in, but failed to load profile.', 'error')
       return
     }
+  }
+  window.agsRequestPasswordReset = async () => {
+    const emailInput = document.getElementById('ags-forgot-email')
+    const emailAddress = emailInput?.value.trim() || ''
+    const button = document.getElementById('ags-forgot-submit')
+    if (!emailAddress || emailInput?.validity.valid === false) {
+      setAuthMessage('forgot', 'Enter the email address for your account.', 'error')
+      emailInput?.focus()
+      return
+    }
+    if (button) button.disabled = true
+    setAuthMessage('forgot', 'Sending reset code…')
+    const result = await requestPasswordReset(emailAddress)
+    if (button) button.disabled = false
+    if (!result.ok) {
+      setAuthMessage('forgot', result.error, 'error')
+      return
+    }
+    const resetFields = document.getElementById('ags-reset-fields')
+    if (resetFields) resetFields.hidden = false
+    setAuthMessage('forgot', 'Reset code sent. Check your email.', 'success')
+    document.getElementById('ags-reset-code')?.focus()
+  }
+  window.agsCompletePasswordReset = async () => {
+    const emailAddress = document.getElementById('ags-forgot-email')?.value.trim() || ''
+    const codeInput = document.getElementById('ags-reset-code')
+    const passwordInput = document.getElementById('ags-reset-password')
+    const code = codeInput?.value.trim() || ''
+    const newPassword = passwordInput?.value || ''
+    const button = document.getElementById('ags-reset-submit')
+    if (!emailAddress || !code || newPassword.length < 8) {
+      setAuthMessage('forgot', 'Enter the verification code and a new password of at least 8 characters.', 'error')
+      return
+    }
+    if (button) button.disabled = true
+    setAuthMessage('forgot', 'Updating password…')
+    const result = await resetPassword({ emailAddress, code, newPassword })
+    if (button) button.disabled = false
+    if (!result.ok) {
+      setAuthMessage('forgot', result.error, 'error')
+      return
+    }
+    if (passwordInput) passwordInput.value = ''
+    const loginIdentifier = document.getElementById('ags-login-identifier')
+    if (loginIdentifier) loginIdentifier.value = emailAddress
+    setAuthMessage('forgot', 'Password updated. You can now sign in.', 'success')
+    window.setTimeout(() => {
+      if (typeof window.showScreen === 'function') window.showScreen('login')
+      setAuthMessage('login', 'Password updated. Sign in with your new password.', 'success')
+      document.getElementById('ags-login-password')?.focus()
+    }, 900)
   }
   window.agsRegister = async () => {
     const emailAddress = document.getElementById('ags-register-email')?.value.trim() || ''
@@ -1759,11 +1821,6 @@ async function updatePostMatchFriendAction(opponent) {
 
 window.agsUpdateMatchFriendAction = updatePostMatchFriendAction
 
-const SPECTATOR_SYMBOLS = {
-  white: { king:'♔', queen:'♕', rook:'♖', bishop:'♗', knight:'♘', pawn:'♙' },
-  black: { king:'♚', queen:'♛', rook:'♜', bishop:'♝', knight:'♞', pawn:'♟' },
-}
-
 // Replay state — index of the move currently shown (-1 = live / not in replay)
 let spectatorReplayIndex = -1
 let spectatorLastMatchData = null
@@ -1976,7 +2033,14 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
         const p = document.createElement('div')
         p.className = 'piece ' + piece.color
         p.style.cursor = 'default'
-        p.textContent = SPECTATOR_SYMBOLS[piece.color][piece.type]
+        if (typeof window.setChessPieceGraphic === 'function') {
+          window.setChessPieceGraphic(
+            p,
+            piece.type,
+            piece.color,
+            `${piece.color} ${piece.type} on ${'abcdefgh'[c]}${8 - r}`
+          )
+        }
         sq.appendChild(p)
       }
       boardEl.appendChild(sq)

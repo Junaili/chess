@@ -94,7 +94,10 @@ async function loginWithPassword(page, identifier, password) {
 
   const signedIn = page.locator('#ags-signedin-info');
   const legal = page.locator('#screen-legal');
-  await expect(signedIn.or(legal)).toBeVisible({ timeout: 30_000 });
+  await expect.poll(
+    async () => (await signedIn.isVisible()) || (await legal.isVisible()),
+    { message: 'signed-in card or legal-acceptance gate should become visible', timeout: 30_000 },
+  ).toBe(true);
 
   if (await legal.isVisible()) {
     await page.locator('#ags-legal-confirm').check();
