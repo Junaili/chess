@@ -24,9 +24,19 @@ const POLL_MS = 2000
 // drain rather than linger.
 const MATCH_WAIT_MS = 10000
 const JOINER_CONNECT_DELAY_MS = 1500
-// Fixed CONTAINER port the DS binds; AMS maps it to a public host port and reports
-// that mapped port to the claimer. So this stays constant inside the container.
-const TRIGGER_PORT = Number(process.env.BOT_TRIGGER_PORT) || 8091
+
+// AMS substitutes placeholders in the config's commandLineArguments and passes
+// them to the executable, e.g. "-port=${default_port} -watchdog_url=${watchdog_url}".
+// AMS assigns the port DYNAMICALLY, so we must bind whatever -port it gives us
+// (not a fixed value). Falls back to env / 8091 for local runs.
+const argv = process.argv.slice(2)
+const argVal = (name) => {
+  const pre = `-${name}=`
+  const hit = argv.find((a) => a.startsWith(pre))
+  return hit ? hit.slice(pre.length) : undefined
+}
+const TRIGGER_PORT = Number(argVal('port') || process.env.BOT_TRIGGER_PORT) || 8091
+const WATCHDOG_URL = argVal('watchdog_url') || process.env.AMS_WATCHDOG_URL || 'ws://localhost:5555/watchdog'
 // If claimed but the paired human never connects, don't hang the instance forever.
 const HOST_CONNECT_TIMEOUT_MS = 60000
 // Optional shared secret: when set, /trigger requires header x-trigger-secret to
@@ -66,7 +76,8 @@ async function ensurePeer() {
 }
 
 async function main() {
-  const wd = new Watchdog()
+  log('starting — trigger port', TRIGGER_PORT, '| watchdog', WATCHDOG_URL)
+  const wd = new Watchdog(WATCHDOG_URL)
   wd.onDrain = () => {
     draining = true
     if (!busy) { log('drain while idle — exiting'); shutdown(wd, 0) }

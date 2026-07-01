@@ -40,13 +40,23 @@ chmod +x "$OUT/node"
 #    resolution behave exactly as in the container (WORKDIR /app).
 cat > "$OUT/run.sh" <<'SH'
 #!/bin/sh
+# Forward AMS-substituted args ("-port=... -watchdog_url=...") to the DS.
 cd "$(dirname "$0")/app"
-exec ../node ds.mjs
+exec ../node ds.mjs "$@"
 SH
 chmod +x "$OUT/run.sh"
 
-# Drop .env if it slipped in (bot creds come from AMS secrets, never the bundle).
+# DS config/secrets: AMS development build-configs have no env-var field, so we
+# bundle a gitignored .env.ams as the app's .env (env.mjs reads it). Contains the
+# bot creds + AGS config + BOT_TRIGGER_SECRET. The local dev .env is NOT shipped.
 rm -f "$OUT/app/.env"
+if [ -f "$ROOT/.env.ams" ]; then
+  cp "$ROOT/.env.ams" "$OUT/app/.env"
+  echo "Bundled .env.ams as app/.env"
+else
+  echo "WARNING: no .env.ams found — the DS will have no bot creds/config."
+  echo "         Create peerjs-bot-spike/.env.ams (see .env.ams.example)."
+fi
 
 echo "Bundle ready at $OUT"
 echo "Upload: ams upload -c <clientId> -s <secret> -H seal.prod.gamingservices.accelbyte.io -n ethan-chess-bot -p \"$OUT\" -e run.sh -a linux-x86_64 --skip-script-validation"
