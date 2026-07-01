@@ -323,10 +323,12 @@ func (w *MatchWatcher) claimServer() (string, error) {
 // is still launching a DS) and the caller should retry.
 func (w *MatchWatcher) claimOnce(amsBase, namespace, token string) (addr string, notReady bool, err error) {
 	reqBody := map[string]any{
-		"claim_keys": w.amsClaimKeys,
+		// Fleet-commander expects camelCase; snake_case is silently ignored and
+		// the claim fails with "claimKeys cannot be empty".
+		"claimKeys": w.amsClaimKeys,
 		// A unique association id for this claim. The bot plays over PeerJS, so
 		// this need not map to an AGS session — it just identifies the claim.
-		"session_id": fmt.Sprintf("chessbot-%d", time.Now().UnixNano()),
+		"sessionId": fmt.Sprintf("chessbot-%d", time.Now().UnixNano()),
 	}
 	if w.amsRegion != "" {
 		reqBody["region"] = w.amsRegion
