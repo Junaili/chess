@@ -28,6 +28,13 @@ async function play() {
 const ts = () => new Date().toISOString().slice(11, 19)
 const log = (...a) => console.log(ts(), ...a)
 
+// A failed native WebRTC load (e.g. glibc too old for @roamhq/wrtc) throws from
+// deep in a CJS require and can escape our try/catch. Keep the DS ALIVE and
+// registered so AMS sees a ready server (and its logs surface the real cause)
+// rather than crash-looping into StartError.
+process.on('uncaughtException', (e) => log('uncaughtException (continuing):', e?.message || e))
+process.on('unhandledRejection', (e) => log('unhandledRejection (continuing):', e?.message || e))
+
 const POOL = process.env.MATCH_POOL || 'chess-quickmatch'
 const POLL_MS = 2000
 // A genuinely-waiting human matches within a poll or two. If our ticket hasn't

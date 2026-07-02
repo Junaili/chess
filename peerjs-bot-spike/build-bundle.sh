@@ -33,7 +33,22 @@ mkdir -p "$OUT/app"
 CID="$(docker create --platform linux/amd64 "$IMAGE")"
 trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
 docker cp "$CID:/app/." "$OUT/app/"
-docker cp "$CID:/usr/local/bin/node" "$OUT/node"
+
+# Node binary: use the unofficial glibc-217 build (runs on glibc >=2.17) instead
+# of the container's node (needs glibc 2.28) — so the DS starts on old-glibc AMS
+# hosts (e.g. Amazon Linux 2 = 2.26). Same v20 ABI, so the wrtc prebuilt matches.
+# (wrtc is lazy-loaded; if the host glibc < 2.34 it just disables play, not startup.)
+NODE_VER="v20.20.2"
+NODE_PKG="node-${NODE_VER}-linux-x64-glibc-217"
+CACHE="$ROOT/vendor/${NODE_PKG}.node-bin"
+if [ ! -f "$CACHE" ]; then
+  echo "Downloading ${NODE_PKG}..."
+  curl -fsSL -o /tmp/n217.tar.gz "https://unofficial-builds.nodejs.org/download/release/${NODE_VER}/${NODE_PKG}.tar.gz"
+  tar -xzf /tmp/n217.tar.gz -C /tmp
+  mkdir -p "$ROOT/vendor"
+  cp "/tmp/${NODE_PKG}/bin/node" "$CACHE"
+fi
+cp "$CACHE" "$OUT/node"
 chmod +x "$OUT/node"
 
 # 3. Launcher: run from the app dir so relative imports + engine.mjs sibling
