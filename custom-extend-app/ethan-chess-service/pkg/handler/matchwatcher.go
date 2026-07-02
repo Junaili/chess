@@ -46,6 +46,11 @@ type MatchWatcher struct {
 	triggerSecret   string   // optional shared secret sent as x-trigger-secret
 	loggedClaimRaw  bool
 
+	// resolvedFleetID caches the fleet ID matched from amsClaimKeys (fleet IDs
+	// churn on every image rollout, so they're resolved at runtime, not configured).
+	resolvedFleetID string
+	resolvedAt      time.Time
+
 	// dbg holds recent activity for the /debug/watcher endpoint.
 	dbgMu  sync.Mutex
 	dbg    map[string]any
@@ -87,8 +92,8 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 			log.Printf("match-watcher: disabled (AMS_CLAIM_ENABLED but neither AMS_CLAIM_KEYS nor AMS_FLEET_ID set)")
 			return nil, false
 		}
-		if len(w.amsClaimKeys) == 0 && w.amsRegion == "" {
-			log.Printf("match-watcher: disabled (claim-by-fleet-ID requires AMS_REGION)")
+		if w.amsRegion == "" {
+			log.Printf("match-watcher: disabled (AMS claim requires AMS_REGION)")
 			return nil, false
 		}
 	} else if w.triggerURL == "" {
@@ -382,13 +387,20 @@ func (w *MatchWatcher) claimServer() (string, error) {
 
 	deadline := time.Now().Add(time.Duration(w.amsClaimRetryS) * time.Second)
 	for attempt := 1; ; attempt++ {
-		addr, notReady, err := w.claimOnce(amsBase, namespace, token)
+		fleetID, err := w.fleetIDForClaim(amsBase, namespace, token)
+		if err != nil {
+			return "", err
+		}
+		addr, notReady, err := w.claimOnce(amsBase, namespace, token, fleetID)
 		if err != nil {
 			return "", err
 		}
 		if !notReady {
 			return addr, nil
 		}
+		// 404 can mean "buffer refilling" OR "fleet replaced by a rollout" —
+		// drop the cached fleet ID so the next attempt re-resolves.
+		w.setResolvedFleet("")
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("no bot DS available after %ds (404) — fleet did not become ready", w.amsClaimRetryS)
 		}
@@ -397,28 +409,117 @@ func (w *MatchWatcher) claimServer() (string, error) {
 	}
 }
 
-// claimOnce makes a single claim call. notReady=true means HTTP 404 (a dev fleet
-// is still launching a DS) and the caller should retry.
-func (w *MatchWatcher) claimOnce(amsBase, namespace, token string) (addr string, notReady bool, err error) {
+func (w *MatchWatcher) setResolvedFleet(id string) {
+	w.dbgMu.Lock()
+	defer w.dbgMu.Unlock()
+	w.resolvedFleetID = id
+	w.resolvedAt = time.Now()
+}
+
+func (w *MatchWatcher) getResolvedFleet() (string, time.Time) {
+	w.dbgMu.Lock()
+	defer w.dbgMu.Unlock()
+	return w.resolvedFleetID, w.resolvedAt
+}
+
+// fleetIDForClaim returns the fleet ID to claim from. Fleet IDs change on every
+// image rollout, so when claim keys are configured the ID is RESOLVED at runtime:
+// list fleets, fetch each fleet's detail, and match an active fleet whose
+// claimKeys intersect ours (cached for 5 minutes; invalidated on claim 404).
+// Returns "" to claim by keys directly (e.g. fleet listing forbidden).
+// Requires ADMIN:NAMESPACE:{ns}:ARMADA:FLEET [READ] on the service client.
+func (w *MatchWatcher) fleetIDForClaim(amsBase, namespace, token string) (string, error) {
+	if len(w.amsClaimKeys) == 0 {
+		return w.amsFleetID, nil // legacy fixed-ID mode
+	}
+	if id, at := w.getResolvedFleet(); id != "" && time.Since(at) < 5*time.Minute {
+		return id, nil
+	}
+
+	get := func(url string, out any) (int, error) {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return 0, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := outboundHTTPClient.Do(req)
+		if err != nil {
+			return 0, err
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		if resp.StatusCode != http.StatusOK {
+			return resp.StatusCode, fmt.Errorf("%s returned %d: %s", url, resp.StatusCode, mwTruncate(string(body), 200))
+		}
+		return resp.StatusCode, json.Unmarshal(body, out)
+	}
+
+	var list struct {
+		Fleets []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"fleets"`
+	}
+	code, err := get(fmt.Sprintf("%s/ams/v1/admin/namespaces/%s/fleets", amsBase, namespace), &list)
+	if code == http.StatusForbidden {
+		log.Printf("match-watcher: fleet listing forbidden (need ARMADA:FLEET READ) — claiming by keys directly")
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve fleet: %w", err)
+	}
+
+	want := map[string]bool{}
+	for _, k := range w.amsClaimKeys {
+		want[k] = true
+	}
+	for _, f := range list.Fleets {
+		var detail struct {
+			ID        string   `json:"id"`
+			Active    bool     `json:"active"`
+			ClaimKeys []string `json:"claimKeys"`
+		}
+		if _, err := get(fmt.Sprintf("%s/ams/v1/admin/namespaces/%s/fleets/%s", amsBase, namespace, f.ID), &detail); err != nil {
+			continue
+		}
+		if !detail.Active {
+			continue
+		}
+		for _, k := range detail.ClaimKeys {
+			if want[k] {
+				log.Printf("match-watcher: resolved claim key(s) %v → fleet %s (%s)", w.amsClaimKeys, f.ID, f.Name)
+				w.setResolvedFleet(f.ID)
+				w.dbgSet(map[string]any{"resolvedFleetID": f.ID, "resolvedFleetName": f.Name})
+				return f.ID, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no active fleet with claim key(s) %v", w.amsClaimKeys)
+}
+
+// claimOnce makes a single claim call against fleetID (or by claim keys when
+// fleetID is ""). notReady=true means HTTP 404 (no server available yet) and the
+// caller should retry.
+func (w *MatchWatcher) claimOnce(amsBase, namespace, token, fleetID string) (addr string, notReady bool, err error) {
 	// A unique association id for the claim; the bot plays over PeerJS, so this
 	// need not map to an AGS session — it just identifies the claim.
 	sessionID := fmt.Sprintf("chessbot-%d", time.Now().UnixNano())
 
 	var reqURL string
 	var reqBody map[string]any
-	if len(w.amsClaimKeys) > 0 {
-		// Claim by claim keys (preferred): fleet IDs change on every image rollout,
-		// so the watcher must not depend on them. Servers are indexed under the
-		// fleet's claim keys at launch. fleet-commander expects camelCase.
+	if fleetID != "" {
+		// Claim by fleet ID (reliable; region REQUIRED). The ID is resolved from
+		// claim keys at runtime, so image rollouts (which change fleet IDs) are fine.
+		reqURL = fmt.Sprintf("%s/ams/v1/namespaces/%s/fleets/%s/claim", amsBase, namespace, fleetID)
+		reqBody = map[string]any{"region": w.amsRegion, "sessionId": sessionID}
+	} else {
+		// Direct claim-by-keys (fallback when fleet listing is forbidden; proved
+		// unreliable in this environment — grant ARMADA:FLEET READ if possible).
 		reqURL = fmt.Sprintf("%s/ams/v1/namespaces/%s/servers/claim", amsBase, namespace)
 		reqBody = map[string]any{"claimKeys": w.amsClaimKeys, "sessionId": sessionID}
 		if w.amsRegion != "" {
 			reqBody["region"] = w.amsRegion
 		}
-	} else {
-		// Legacy override: claim a specific fleet by ID (region REQUIRED).
-		reqURL = fmt.Sprintf("%s/ams/v1/namespaces/%s/fleets/%s/claim", amsBase, namespace, w.amsFleetID)
-		reqBody = map[string]any{"region": w.amsRegion, "sessionId": sessionID}
 	}
 	payload, _ := json.Marshal(reqBody)
 
