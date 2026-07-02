@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -44,6 +45,10 @@ type MatchWatcher struct {
 	amsClaimRetryS  int      // how long to retry claim on 404 (dev fleets launch on demand)
 	triggerSecret   string   // optional shared secret sent as x-trigger-secret
 	loggedClaimRaw  bool
+
+	// dbg holds recent activity for the /debug/watcher endpoint.
+	dbgMu  sync.Mutex
+	dbg    map[string]any
 }
 
 // NewMatchWatcherFromEnv builds the watcher when MATCH_WATCHER_ENABLED=true and a
@@ -113,6 +118,7 @@ func (w *MatchWatcher) Start(ctx context.Context) {
 		case <-t.C:
 			if err := w.poll(); err != nil {
 				log.Printf("match-watcher: poll error: %v", err)
+				w.dbgSet(map[string]any{"lastPollAt": time.Now().Format(time.RFC3339), "lastPollError": err.Error()})
 			}
 		}
 	}
@@ -214,14 +220,24 @@ func (w *MatchWatcher) poll() error {
 
 	now := time.Now()
 	active := map[string]bool{}
+	humanCount, botCount := 0, 0
+	var maxHumanWait float64
 	for _, t := range tickets {
 		id := t.id()
 		if id == "" {
 			continue
 		}
 		active[id] = true
-		if w.isBotTicket(t) || t.CreatedAt.IsZero() {
+		if w.isBotTicket(t) {
+			botCount++
 			continue
+		}
+		if t.CreatedAt.IsZero() {
+			continue
+		}
+		humanCount++
+		if wait := now.Sub(t.CreatedAt).Seconds(); wait > maxHumanWait {
+			maxHumanWait = wait
 		}
 		if now.Sub(t.CreatedAt) >= time.Duration(w.waitSeconds)*time.Second {
 			// Re-trigger a still-waiting human after a cooldown, in case the bot's
@@ -232,6 +248,7 @@ func (w *MatchWatcher) poll() error {
 			if !seen || now.Sub(last) >= time.Duration(w.retriggerSeconds)*time.Second {
 				log.Printf("match-watcher: human ticket %s waited %.0fs → triggering bot%s",
 					id, now.Sub(t.CreatedAt).Seconds(), map[bool]string{true: " (retry)"}[seen])
+				w.dbgSet(map[string]any{"lastTriggerAt": now.Format(time.RFC3339), "lastTriggerTicket": id, "lastTriggerWaitS": now.Sub(t.CreatedAt).Seconds()})
 				w.trigger()
 				w.triggered[id] = now
 			}
@@ -242,6 +259,11 @@ func (w *MatchWatcher) poll() error {
 			delete(w.triggered, id)
 		}
 	}
+	w.dbgSet(map[string]any{
+		"lastPollAt": now.Format(time.RFC3339), "pollHTTP": resp.StatusCode,
+		"ticketCount": len(tickets), "humanTickets": humanCount, "botTickets": botCount,
+		"maxHumanWaitS": maxHumanWait, "poolRawSample": mwTruncate(string(body), 500),
+	})
 	return nil
 }
 
@@ -264,10 +286,12 @@ func (w *MatchWatcher) trigger() {
 			addr, err := w.claimServer()
 			if err != nil {
 				log.Printf("match-watcher: AMS claim failed: %v", err)
+				w.dbgSet(map[string]any{"lastClaimAt": time.Now().Format(time.RFC3339), "lastClaimError": err.Error()})
 				return
 			}
 			url = "http://" + addr + "/trigger"
 			log.Printf("match-watcher: claimed bot DS at %s", addr)
+			w.dbgSet(map[string]any{"lastClaimAt": time.Now().Format(time.RFC3339), "lastClaimAddr": addr})
 		}
 		w.postTrigger(url)
 	}()
@@ -285,9 +309,53 @@ func (w *MatchWatcher) postTrigger(url string) {
 	resp, err := outboundHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("match-watcher: trigger POST %s failed: %v", url, err)
+		w.dbgSet(map[string]any{"lastTriggerPostAt": time.Now().Format(time.RFC3339), "lastTriggerPostError": err.Error(), "lastTriggerPostURL": url})
 		return
 	}
-	_ = resp.Body.Close()
+	defer resp.Body.Close()
+	w.dbgSet(map[string]any{"lastTriggerPostAt": time.Now().Format(time.RFC3339), "lastTriggerPostHTTP": resp.StatusCode, "lastTriggerPostURL": url})
+}
+
+// dbgSet merges keys into the debug activity map (for /debug/watcher).
+func (w *MatchWatcher) dbgSet(kv map[string]any) {
+	w.dbgMu.Lock()
+	defer w.dbgMu.Unlock()
+	if w.dbg == nil {
+		w.dbg = map[string]any{}
+	}
+	for k, v := range kv {
+		w.dbg[k] = v
+	}
+}
+
+// DebugHandler returns an HTTP handler exposing the watcher's config + recent
+// activity as JSON, gated by ?key=<secret> (if secret is non-empty).
+func (w *MatchWatcher) DebugHandler(secret string) http.HandlerFunc {
+	return func(rw http.ResponseWriter, r *http.Request) {
+		if secret != "" && r.URL.Query().Get("key") != secret {
+			rw.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.dbgMu.Lock()
+		activity := map[string]any{}
+		for k, v := range w.dbg {
+			activity[k] = v
+		}
+		w.dbgMu.Unlock()
+		out := map[string]any{
+			"now": time.Now().Format(time.RFC3339),
+			"config": map[string]any{
+				"pool": w.pool, "waitSeconds": w.waitSeconds, "pollSeconds": w.pollSeconds,
+				"botUserID": w.botUserID, "amsClaimEnabled": w.amsClaimEnabled,
+				"amsFleetID": w.amsFleetID, "amsClaimKeys": w.amsClaimKeys,
+				"amsRegion": w.amsRegion, "amsPortName": w.amsPortName, "amsBase": w.amsBase,
+				"triggerURL": w.triggerURL, "hasTriggerSecret": w.triggerSecret != "",
+			},
+			"activity": activity,
+		}
+		rw.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(rw).Encode(out)
+	}
 }
 
 // claimServer claims a bot DS from an AMS fleet by claim keys and returns the

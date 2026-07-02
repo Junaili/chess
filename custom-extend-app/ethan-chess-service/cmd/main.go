@@ -151,6 +151,8 @@ func main() {
 	// Cold-start bot gate: watch the match pool and trigger the bot to queue when
 	// a human has waited longer than the threshold (enabled via MATCH_WATCHER_*).
 	if w, ok := handler.NewMatchWatcherFromEnv(); ok {
+		// Debug endpoint: GET {basePath}/debug/watcher?key=<BOT_TRIGGER_SECRET>
+		mux.HandleFunc(basePath+"/debug/watcher", w.DebugHandler(os.Getenv("BOT_TRIGGER_SECRET")))
 		go w.Start(ctx)
 	}
 
