@@ -147,6 +147,18 @@ type poolTicket struct {
 			UserID string `json:"userID"`
 		} `json:"partyMembers"`
 	} `json:"parties"`
+	// Actual live shape (captured from the pool-tickets endpoint): PascalCase
+	// with the ticket nested — {"TicketID": "...", "Ticket": {"CreatedAt": ...,
+	// "Players": [{"PlayerID": "..."}]}}. Go's unmarshal matches field names
+	// case-insensitively, so TicketID/CreatedAt map onto the tags above; the
+	// nested Ticket needs its own struct (this is where the owner user id lives —
+	// without it isBotTicket never matched the bot's own tickets).
+	Ticket struct {
+		CreatedAt time.Time `json:"createdAt"`
+		Players   []struct {
+			PlayerID string `json:"playerID"`
+		} `json:"players"`
+	} `json:"ticket"`
 }
 
 func (t poolTicket) id() string {
@@ -165,6 +177,11 @@ func (t poolTicket) userIDs() []string {
 	if t.UserID != "" {
 		ids = append(ids, t.UserID)
 	}
+	for _, p := range t.Ticket.Players {
+		if p.PlayerID != "" {
+			ids = append(ids, p.PlayerID)
+		}
+	}
 	for _, p := range t.ProposedTickets {
 		if p.UserID != "" {
 			ids = append(ids, p.UserID)
@@ -179,6 +196,14 @@ func (t poolTicket) userIDs() []string {
 		}
 	}
 	return ids
+}
+
+// createdAt prefers the top-level field, falling back to the nested ticket's.
+func (t poolTicket) createdAt() time.Time {
+	if !t.CreatedAt.IsZero() {
+		return t.CreatedAt
+	}
+	return t.Ticket.CreatedAt
 }
 
 func (w *MatchWatcher) poll() error {
@@ -237,14 +262,15 @@ func (w *MatchWatcher) poll() error {
 			botCount++
 			continue
 		}
-		if t.CreatedAt.IsZero() {
+		created := t.createdAt()
+		if created.IsZero() {
 			continue
 		}
 		humanCount++
-		if wait := now.Sub(t.CreatedAt).Seconds(); wait > maxHumanWait {
+		if wait := now.Sub(created).Seconds(); wait > maxHumanWait {
 			maxHumanWait = wait
 		}
-		if now.Sub(t.CreatedAt) >= time.Duration(w.waitSeconds)*time.Second {
+		if now.Sub(created) >= time.Duration(w.waitSeconds)*time.Second {
 			// Re-trigger a still-waiting human after a cooldown, in case the bot's
 			// first ticket lost the race to pair with them (they'd otherwise be
 			// stuck). A spurious re-trigger is harmless: the bot's ticket self-
@@ -252,8 +278,8 @@ func (w *MatchWatcher) poll() error {
 			last, seen := w.triggered[id]
 			if !seen || now.Sub(last) >= time.Duration(w.retriggerSeconds)*time.Second {
 				log.Printf("match-watcher: human ticket %s waited %.0fs → triggering bot%s",
-					id, now.Sub(t.CreatedAt).Seconds(), map[bool]string{true: " (retry)"}[seen])
-				w.dbgSet(map[string]any{"lastTriggerAt": now.Format(time.RFC3339), "lastTriggerTicket": id, "lastTriggerWaitS": now.Sub(t.CreatedAt).Seconds()})
+					id, now.Sub(created).Seconds(), map[bool]string{true: " (retry)"}[seen])
+				w.dbgSet(map[string]any{"lastTriggerAt": now.Format(time.RFC3339), "lastTriggerTicket": id, "lastTriggerWaitS": now.Sub(created).Seconds()})
 				w.trigger()
 				w.triggered[id] = now
 			}
@@ -302,23 +328,36 @@ func (w *MatchWatcher) trigger() {
 	}()
 }
 
+// postTrigger wakes the claimed DS. A claimed server that never receives its
+// trigger idles forever (nothing else tells it it was claimed), so retry the
+// POST a few times before giving up.
 func (w *MatchWatcher) postTrigger(url string) {
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte(`{}`)))
-	if err != nil {
-		return
+	var lastErr error
+	for attempt := 1; attempt <= 4; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte(`{}`)))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if w.triggerSecret != "" {
+			req.Header.Set("x-trigger-secret", w.triggerSecret)
+		}
+		resp, err := outboundHTTPClient.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			resp.Body.Close()
+			w.dbgSet(map[string]any{"lastTriggerPostAt": time.Now().Format(time.RFC3339), "lastTriggerPostHTTP": resp.StatusCode, "lastTriggerPostURL": url})
+			return
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			resp.Body.Close()
+		}
+		log.Printf("match-watcher: trigger POST %s attempt %d failed: %v", url, attempt, lastErr)
+		time.Sleep(2 * time.Second)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if w.triggerSecret != "" {
-		req.Header.Set("x-trigger-secret", w.triggerSecret)
-	}
-	resp, err := outboundHTTPClient.Do(req)
-	if err != nil {
-		log.Printf("match-watcher: trigger POST %s failed: %v", url, err)
-		w.dbgSet(map[string]any{"lastTriggerPostAt": time.Now().Format(time.RFC3339), "lastTriggerPostError": err.Error(), "lastTriggerPostURL": url})
-		return
-	}
-	defer resp.Body.Close()
-	w.dbgSet(map[string]any{"lastTriggerPostAt": time.Now().Format(time.RFC3339), "lastTriggerPostHTTP": resp.StatusCode, "lastTriggerPostURL": url})
+	w.dbgSet(map[string]any{"lastTriggerPostAt": time.Now().Format(time.RFC3339), "lastTriggerPostError": lastErr.Error(), "lastTriggerPostURL": url})
 }
 
 // dbgSet merges keys into the debug activity map (for /debug/watcher).

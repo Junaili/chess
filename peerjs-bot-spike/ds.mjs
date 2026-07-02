@@ -62,6 +62,11 @@ const WATCHDOG_URL = argVal('watchdog_url') || process.env.AMS_WATCHDOG_URL || '
 const DSID = argVal('dsid') || process.env.DS_ID || ''
 // If claimed but the paired human never connects, don't hang the instance forever.
 const HOST_CONNECT_TIMEOUT_MS = 60000
+// Safety net: if this instance is never triggered (e.g. it was claimed but the
+// trigger POST never arrived — the DS has no other way to learn it was claimed),
+// exit after this long so AMS relaunches a fresh, claimable server. Healthy idle
+// buffer servers recycle too — harmless minor churn.
+const IDLE_MAX_MS = (Number(process.env.BOT_IDLE_MAX_MINUTES) || 60) * 60000
 // Optional shared secret: when set, /trigger requires header x-trigger-secret to
 // match (the DS port is publicly reachable on AMS). Unset = open (local dev).
 const TRIGGER_SECRET = process.env.BOT_TRIGGER_SECRET || ''
@@ -153,6 +158,12 @@ async function main() {
   } catch (e) {
     log('webrtc: LOAD FAILED —', e?.message || e)
   }
+
+  // 4. Idle self-recycle (see IDLE_MAX_MS).
+  const idleTimer = setTimeout(() => {
+    if (!busy) { log('never triggered within', IDLE_MAX_MS / 60000, 'min — recycling'); shutdown(wd, 0) }
+  }, IDLE_MAX_MS)
+  if (idleTimer.unref) idleTimer.unref()
 }
 
 // One claim -> one game -> drain. Guarded so a duplicate trigger is a no-op.
