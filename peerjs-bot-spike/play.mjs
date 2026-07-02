@@ -42,11 +42,25 @@ export function playGame(conn, role, opts = {}) {
   let done = false
 
   return new Promise((resolve) => {
-    const finish = (why) => { if (!done) { done = true; resolve(why) } }
+    const finish = (why) => { if (!done) { done = true; cleanup(); resolve(why) } }
     const isOver = () => {
       const s = String(game?.status || '')
       return s === 'checkmate' || s === 'stalemate' || s.startsWith('draw')
     }
+
+    // Never wedge forever (an ephemeral AMS DS must eventually drain): the game
+    // must start promptly, and a game with no peer data for a long stretch is
+    // considered abandoned.
+    const startTimeoutMs = opts.startTimeoutMs ?? 45000
+    const idleTimeoutMs = opts.idleTimeoutMs ?? 300000
+    let lastData = Date.now()
+    const startTimer = setTimeout(() => {
+      if (!game) { glog('✗ no game_start within', startTimeoutMs / 1000, 's — abandoning'); finish('no_game_start') }
+    }, startTimeoutMs)
+    const idleTimer = setInterval(() => {
+      if (Date.now() - lastData > idleTimeoutMs) { glog('✗ no peer data for', idleTimeoutMs / 1000, 's — abandoning'); finish('idle_timeout') }
+    }, 15000)
+    const cleanup = () => { clearTimeout(startTimer); clearInterval(idleTimer) }
     const maybeBotMove = () => {
       if (!game || game.currentTurn !== botColor) return
       if (isOver()) { glog('game over:', game.status, game.winner || ''); return finish('over') }
@@ -86,6 +100,7 @@ export function playGame(conn, role, opts = {}) {
 
     conn.on('data', (d) => {
       if (!d || typeof d.type !== 'string') return
+      lastData = Date.now()
       if (d.type === 'ping') { try { conn.send({ type: 'pong' }) } catch {}; return }
       if (d.type === 'pong') { lastPong = Date.now(); return }
       if (d.type === 'game_start') {
