@@ -1,6 +1,6 @@
 import { MatchTicketsApi } from '@accelbyte/sdk-matchmaking'
 import { GameSessionApi } from '@accelbyte/sdk-session'
-import { sdk } from './ags-client.js'
+import { sdk, agsBaseURL, agsNamespace } from './ags-client.js'
 import { sendEvent } from './telemetry.js'
 
 const MATCH_POOL     = 'chess-quickmatch'
@@ -11,6 +11,19 @@ let activeTicketId  = null
 let pollTimer       = null
 let cancelled       = false
 let searchStartedAt = 0
+
+// Zombie-ticket guard: refreshing/closing the page mid-queue would strand the
+// ticket in the pool until its TTL, where it can steal the next match (from a
+// real opponent or the cold-start bot) for a browser that no longer exists.
+// SDK calls don't survive unload, so fire a keepalive DELETE (cookie auth).
+function abandonTicketOnUnload() {
+  if (!activeTicketId) return
+  const url = `${agsBaseURL}/match2/v1/namespaces/${agsNamespace}/match-tickets/${activeTicketId}`
+  try { fetch(url, { method: 'DELETE', credentials: 'include', keepalive: true }) } catch { /* best effort */ }
+  activeTicketId = null
+}
+window.addEventListener('pagehide', abandonTicketOnUnload)
+window.addEventListener('beforeunload', abandonTicketOnUnload)
 
 // Emit the outcome of a matchmaking attempt so we can measure queue liquidity
 // (found vs. timeout vs. cancelled) — a timeout otherwise produces no event and
@@ -55,6 +68,7 @@ export async function startMatchmaking(onFound, onTimeout, onError) {
 
     if (status.matchFound) {
       stopPolling()
+      activeTicketId = null // consumed by the match — nothing to clean up on unload
       const sessionId = status.sessionID
       console.log('[MM] match found, sessionId:', sessionId)
       if (!sessionId) {
@@ -72,7 +86,11 @@ export async function startMatchmaking(onFound, onTimeout, onError) {
           return
         }
         reportResult('found')
-        onFound(userIds)
+        onFound({
+          sessionId,
+          session: s.data,
+          memberUserIds: userIds,
+        })
       } catch (e) {
         console.warn('[MM] getGamesession error:', e?.response?.status, e?.response?.data || e?.message)
         onError('Match found but could not retrieve session. Please try again.')
