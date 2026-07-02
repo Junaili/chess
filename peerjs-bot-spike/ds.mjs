@@ -53,7 +53,10 @@ const argVal = (name) => {
   const hit = argv.find((a) => a.startsWith(pre))
   return hit ? hit.slice(pre.length) : undefined
 }
-const TRIGGER_PORT = Number(argVal('port') || process.env.BOT_TRIGGER_PORT) || 8091
+// The HTTP /trigger must listen on the fleet's TCP port (named "trigger"), NOT
+// the auto-created "default" port (which is UDP and can't be changed). AMS injects
+// it as ${trigger_port}; fall back to -port then env for local runs.
+const TRIGGER_PORT = Number(argVal('trigger_port') || argVal('port') || process.env.BOT_TRIGGER_PORT) || 8091
 const WATCHDOG_URL = argVal('watchdog_url') || process.env.AMS_WATCHDOG_URL || 'ws://localhost:5555/watchdog'
 // AMS passes -dsid=<serverId>; the watchdog needs it as the ams-dsid header.
 const DSID = argVal('dsid') || process.env.DS_ID || ''
@@ -98,6 +101,9 @@ async function ensurePeer() {
 
 async function main() {
   log('starting — trigger port', TRIGGER_PORT, '| watchdog', WATCHDOG_URL, '| dsid', DSID || '(none)')
+  log('argv:', JSON.stringify(argv)) // diagnostic: confirms AMS substituted ${trigger_port}
+  // diagnostic: in case AMS exposes ports via env instead of args (non-secret only)
+  log('env ports:', Object.entries(process.env).filter(([k]) => /port/i.test(k) && !/PASSWORD|SECRET/i.test(k)).map(([k, v]) => `${k}=${v}`).join(' ') || '(none)')
   const wd = new Watchdog(WATCHDOG_URL, DSID)
   wd.onDrain = () => {
     draining = true
