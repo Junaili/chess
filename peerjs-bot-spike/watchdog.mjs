@@ -47,13 +47,16 @@ export class Watchdog {
     })
   }
 
-  _send(type) {
+  // Messages are DStoWatchdogMessage (protojson): a oneof member keyed by type.
+  // The ReadyMessage carries `dsid` (must match the connection's ams-dsid) — omit
+  // it and AMS logs "unexpected DSID" and closes the socket. Heartbeat is empty.
+  _send(type, payload = {}) {
     if (!this.ws || this.closed || this.ws.readyState !== WebSocket.OPEN) return
-    try { this.ws.send(JSON.stringify({ [type]: {} })) } catch (e) { wlog('send', type, 'failed:', e?.message || e) }
+    try { this.ws.send(JSON.stringify({ [type]: payload })) } catch (e) { wlog('send', type, 'failed:', e?.message || e) }
   }
 
   // Tell the watchdog the DS can now be allocated to a session.
-  sendReady() { this._send('ready') }
+  sendReady() { this._send('ready', { dsid: this.dsid }) }
 
   // Optionally extend the session timeout (e.g. a long game).
   resetSessionTimeout() { this._send('resetSessionTimeout') }
