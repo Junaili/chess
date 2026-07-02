@@ -206,10 +206,41 @@ async function runOneGame() {
   const hostPeerId = hostId.replace(/-/g, '')
   log(`[${tag}]`, 'matched — bot is JOINER, connecting to', shortTag(hostPeerId))
   await sleep(JOINER_CONNECT_DELAY_MS)
-  const conn = peer.connect(hostPeerId, { reliable: true })
+  const conn = await connectJoiner(hostPeerId, tag)
+  if (!conn) { log(`[${tag}]`, 'could not reach host peer after retries — giving up'); return }
   const why = await playGame(conn, 'joiner', { botName: 'Gambit Gus', botId: auth.userId, tag })
   log(`[${tag}]`, 'joiner game ended:', why)
   try { conn.close() } catch {}
+}
+
+// Connect to the host peer with retries. After a ~30s matchmaking wait the host's
+// PeerJS registration can land AFTER our first connect attempt → 'peer-unavailable'.
+// The web client tries once and gives up; we retry so a briefly-late host still works.
+async function connectJoiner(hostPeerId, tag) {
+  const ATTEMPTS = 8
+  const GAP_MS = 2000
+  for (let i = 1; i <= ATTEMPTS; i++) {
+    const conn = peer.connect(hostPeerId, { reliable: true })
+    const ok = await new Promise((resolve) => {
+      let done = false
+      const finish = (v) => {
+        if (done) return
+        done = true
+        try { peer.off('error', onPeerErr) } catch {}
+        resolve(v)
+      }
+      const onPeerErr = (e) => { if (String(e?.type || '') === 'peer-unavailable') finish(false) }
+      peer.on('error', onPeerErr)
+      conn.once('open', () => finish(true))
+      conn.once('error', () => finish(false))
+      setTimeout(() => finish(false), 8000)
+    })
+    if (ok) return conn
+    try { conn.close() } catch {}
+    log(`[${tag}]`, `joiner connect ${i}/${ATTEMPTS}: host peer not ready, retrying in ${GAP_MS}ms`)
+    await sleep(GAP_MS)
+  }
+  return null
 }
 
 async function waitForMatch(ticketId) {
