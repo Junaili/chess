@@ -37,8 +37,9 @@ type MatchWatcher struct {
 	// claimed server's public ip:port.
 	amsClaimEnabled bool
 	amsBase         string   // AMS/fleet-commander base URL (default: agsConfig base)
-	amsClaimKeys    []string // fleet claim keys, in preference order
-	amsRegion       string   // optional region hint
+	amsFleetID      string   // when set, claim by fleet ID (reliable) instead of by keys
+	amsClaimKeys    []string // fleet claim keys, in preference order (claim-by-keys fallback)
+	amsRegion       string   // region (REQUIRED for claim-by-fleet-ID)
 	amsPortName     string   // named port (from the fleet) that exposes /trigger
 	amsClaimRetryS  int      // how long to retry claim on 404 (dev fleets launch on demand)
 	triggerSecret   string   // optional shared secret sent as x-trigger-secret
@@ -69,6 +70,7 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 
 		amsClaimEnabled: strings.EqualFold(os.Getenv("AMS_CLAIM_ENABLED"), "true"),
 		amsBase:         strings.TrimRight(os.Getenv("AMS_BASE_URL"), "/"),
+		amsFleetID:      os.Getenv("AMS_FLEET_ID"),
 		amsClaimKeys:    mwEnvList("AMS_CLAIM_KEYS"),
 		amsRegion:       os.Getenv("AMS_REGION"),
 		amsPortName:     mwEnvOr("AMS_TRIGGER_PORT_NAME", "trigger"),
@@ -76,8 +78,12 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 		triggerSecret:   os.Getenv("BOT_TRIGGER_SECRET"),
 	}
 	if w.amsClaimEnabled {
-		if len(w.amsClaimKeys) == 0 {
-			log.Printf("match-watcher: disabled (AMS_CLAIM_ENABLED but AMS_CLAIM_KEYS empty)")
+		if w.amsFleetID == "" && len(w.amsClaimKeys) == 0 {
+			log.Printf("match-watcher: disabled (AMS_CLAIM_ENABLED but neither AMS_FLEET_ID nor AMS_CLAIM_KEYS set)")
+			return nil, false
+		}
+		if w.amsFleetID != "" && w.amsRegion == "" {
+			log.Printf("match-watcher: disabled (claim-by-fleet-ID requires AMS_REGION)")
 			return nil, false
 		}
 	} else if w.triggerURL == "" {
@@ -90,7 +96,11 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 func (w *MatchWatcher) Start(ctx context.Context) {
 	dst := w.triggerURL
 	if w.amsClaimEnabled {
-		dst = fmt.Sprintf("AMS claim keys=%v port=%q region=%q", w.amsClaimKeys, w.amsPortName, w.amsRegion)
+		if w.amsFleetID != "" {
+			dst = fmt.Sprintf("AMS claim fleet=%s port=%q region=%q", w.amsFleetID, w.amsPortName, w.amsRegion)
+		} else {
+			dst = fmt.Sprintf("AMS claim keys=%v port=%q region=%q", w.amsClaimKeys, w.amsPortName, w.amsRegion)
+		}
 	}
 	log.Printf("match-watcher: watching pool=%q wait=%ds poll=%ds retrigger=%ds trigger=[%s] botUser=%s",
 		w.pool, w.waitSeconds, w.pollSeconds, w.retriggerSeconds, dst, w.botUserID)
@@ -322,20 +332,26 @@ func (w *MatchWatcher) claimServer() (string, error) {
 // claimOnce makes a single claim call. notReady=true means HTTP 404 (a dev fleet
 // is still launching a DS) and the caller should retry.
 func (w *MatchWatcher) claimOnce(amsBase, namespace, token string) (addr string, notReady bool, err error) {
-	reqBody := map[string]any{
-		// Fleet-commander expects camelCase; snake_case is silently ignored and
-		// the claim fails with "claimKeys cannot be empty".
-		"claimKeys": w.amsClaimKeys,
-		// A unique association id for this claim. The bot plays over PeerJS, so
-		// this need not map to an AGS session — it just identifies the claim.
-		"sessionId": fmt.Sprintf("chessbot-%d", time.Now().UnixNano()),
-	}
-	if w.amsRegion != "" {
-		reqBody["region"] = w.amsRegion
+	// A unique association id for the claim; the bot plays over PeerJS, so this
+	// need not map to an AGS session — it just identifies the claim.
+	sessionID := fmt.Sprintf("chessbot-%d", time.Now().UnixNano())
+
+	var reqURL string
+	var reqBody map[string]any
+	if w.amsFleetID != "" {
+		// Claim by fleet ID — reliable; region is REQUIRED. (claim-by-keys matching
+		// proved flaky on the live fleet.) fleet-commander expects camelCase.
+		reqURL = fmt.Sprintf("%s/ams/v1/namespaces/%s/fleets/%s/claim", amsBase, namespace, w.amsFleetID)
+		reqBody = map[string]any{"region": w.amsRegion, "sessionId": sessionID}
+	} else {
+		reqURL = fmt.Sprintf("%s/ams/v1/namespaces/%s/servers/claim", amsBase, namespace)
+		reqBody = map[string]any{"claimKeys": w.amsClaimKeys, "sessionId": sessionID}
+		if w.amsRegion != "" {
+			reqBody["region"] = w.amsRegion
+		}
 	}
 	payload, _ := json.Marshal(reqBody)
 
-	reqURL := fmt.Sprintf("%s/ams/v1/namespaces/%s/servers/claim", amsBase, namespace)
 	req, err := http.NewRequest(http.MethodPut, reqURL, bytes.NewReader(payload))
 	if err != nil {
 		return "", false, err
