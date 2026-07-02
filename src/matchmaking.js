@@ -86,11 +86,15 @@ export async function startMatchmaking(onFound, onTimeout, onError) {
           return
         }
         reportResult('found')
-        onFound({
-          sessionId,
-          session: s.data,
-          memberUserIds: userIds,
-        })
+        // Backward-compatible payload: app.js's onFound treats this as the
+        // member-userId ARRAY (.slice().sort()), so pass the array itself and
+        // attach the richer fields as properties. Passing a plain object here
+        // broke matchmaking in prod ("memberUserIds.slice is not a function").
+        const payload = userIds.slice()
+        payload.sessionId = sessionId
+        payload.session = s.data
+        payload.memberUserIds = userIds
+        onFound(payload)
       } catch (e) {
         console.warn('[MM] getGamesession error:', e?.response?.status, e?.response?.data || e?.message)
         onError('Match found but could not retrieve session. Please try again.')
