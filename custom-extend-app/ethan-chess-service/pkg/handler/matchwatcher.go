@@ -83,11 +83,11 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 		triggerSecret:   os.Getenv("BOT_TRIGGER_SECRET"),
 	}
 	if w.amsClaimEnabled {
-		if w.amsFleetID == "" && len(w.amsClaimKeys) == 0 {
-			log.Printf("match-watcher: disabled (AMS_CLAIM_ENABLED but neither AMS_FLEET_ID nor AMS_CLAIM_KEYS set)")
+		if len(w.amsClaimKeys) == 0 && w.amsFleetID == "" {
+			log.Printf("match-watcher: disabled (AMS_CLAIM_ENABLED but neither AMS_CLAIM_KEYS nor AMS_FLEET_ID set)")
 			return nil, false
 		}
-		if w.amsFleetID != "" && w.amsRegion == "" {
+		if len(w.amsClaimKeys) == 0 && w.amsRegion == "" {
 			log.Printf("match-watcher: disabled (claim-by-fleet-ID requires AMS_REGION)")
 			return nil, false
 		}
@@ -101,10 +101,10 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 func (w *MatchWatcher) Start(ctx context.Context) {
 	dst := w.triggerURL
 	if w.amsClaimEnabled {
-		if w.amsFleetID != "" {
-			dst = fmt.Sprintf("AMS claim fleet=%s port=%q region=%q", w.amsFleetID, w.amsPortName, w.amsRegion)
-		} else {
+		if len(w.amsClaimKeys) > 0 {
 			dst = fmt.Sprintf("AMS claim keys=%v port=%q region=%q", w.amsClaimKeys, w.amsPortName, w.amsRegion)
+		} else {
+			dst = fmt.Sprintf("AMS claim fleet=%s port=%q region=%q", w.amsFleetID, w.amsPortName, w.amsRegion)
 		}
 	}
 	log.Printf("match-watcher: watching pool=%q wait=%ds poll=%ds retrigger=%ds trigger=[%s] botUser=%s",
@@ -406,17 +406,19 @@ func (w *MatchWatcher) claimOnce(amsBase, namespace, token string) (addr string,
 
 	var reqURL string
 	var reqBody map[string]any
-	if w.amsFleetID != "" {
-		// Claim by fleet ID — reliable; region is REQUIRED. (claim-by-keys matching
-		// proved flaky on the live fleet.) fleet-commander expects camelCase.
-		reqURL = fmt.Sprintf("%s/ams/v1/namespaces/%s/fleets/%s/claim", amsBase, namespace, w.amsFleetID)
-		reqBody = map[string]any{"region": w.amsRegion, "sessionId": sessionID}
-	} else {
+	if len(w.amsClaimKeys) > 0 {
+		// Claim by claim keys (preferred): fleet IDs change on every image rollout,
+		// so the watcher must not depend on them. Servers are indexed under the
+		// fleet's claim keys at launch. fleet-commander expects camelCase.
 		reqURL = fmt.Sprintf("%s/ams/v1/namespaces/%s/servers/claim", amsBase, namespace)
 		reqBody = map[string]any{"claimKeys": w.amsClaimKeys, "sessionId": sessionID}
 		if w.amsRegion != "" {
 			reqBody["region"] = w.amsRegion
 		}
+	} else {
+		// Legacy override: claim a specific fleet by ID (region REQUIRED).
+		reqURL = fmt.Sprintf("%s/ams/v1/namespaces/%s/fleets/%s/claim", amsBase, namespace, w.amsFleetID)
+		reqBody = map[string]any{"region": w.amsRegion, "sessionId": sessionID}
 	}
 	payload, _ := json.Marshal(reqBody)
 
