@@ -36,7 +36,10 @@ process.on('uncaughtException', (e) => log('uncaughtException (continuing):', e?
 process.on('unhandledRejection', (e) => log('unhandledRejection (continuing):', e?.message || e))
 
 const POOL = process.env.MATCH_POOL || 'chess-quickmatch'
-const POLL_MS = 2000
+// Fast ticket poll: when the bot ends up HOST it must learn of the match and
+// register the userId-derived peer BEFORE the human joiner dials it (a single
+// attempt ~2.2s after the human learns of the match). 500ms keeps ~1s of margin.
+const POLL_MS = 500
 // A genuinely-waiting human matches within a poll or two. If our ticket hasn't
 // matched in this window there was no waiting human (spurious claim) — cancel and
 // drain rather than linger.
@@ -86,22 +89,25 @@ async function ensureLogin() {
   return auth
 }
 
-// Register the PeerJS peer LAZILY (only when a game actually starts), so a warm
-// instance never holds peerId=botUserId — that avoids colliding with a draining
-// predecessor that shares the bot account.
-async function ensurePeer() {
-  if (peer) return peer
+// Register a PeerJS peer AFTER the match, choosing the id by role:
+//  - JOINER (~96% of Gus's games — his uuid sorts high): a RANDOM id. The bot
+//    dials the host; nobody dials the bot, so the fixed id isn't needed. This is
+//    what lets several bots on ONE account play concurrently.
+//  - HOST: the userId-derived id is REQUIRED (the human joiner computes it from
+//    the session members and dials it exactly once, ~2.2s after learning of the
+//    match). If another bot instance currently holds it, registration fails with
+//    'unavailable-id' — rare double-host collision; caller drains gracefully.
+async function registerPeer(id) {
   const { loadPeer } = await play()
   const Peer = await loadPeer()
-  const peerId = auth.userId.replace(/-/g, '')
-  peer = new Peer(peerId, { debug: 1 })
+  const p = new Peer(id, { debug: 1 }) // id === undefined → server-assigned random
   await new Promise((resolve, reject) => {
-    peer.on('open', (id) => { log('peer registered as', id); resolve() })
-    peer.on('error', reject)
+    p.on('open', (pid) => { log('peer registered as', pid, id ? '(host id)' : '(random joiner id)'); resolve() })
+    p.on('error', reject)
     setTimeout(() => reject(new Error('peer open timeout')), 15000)
   })
-  peer.on('error', (e) => log('peer error:', e?.type || e?.message || e))
-  return peer
+  p.on('error', (e) => log('peer error:', e?.type || e?.message || e))
+  return p
 }
 
 async function main() {
@@ -173,7 +179,8 @@ async function onTrigger(wd) {
   let code = 0
   try {
     await ensureLogin()
-    await ensurePeer()
+    // Peer registration happens INSIDE runOneGame, after the match reveals the
+    // bot's role (host → fixed id, joiner → random id).
     await runOneGame()
   } catch (e) {
     log('game error:', e?.message || e)
@@ -200,6 +207,15 @@ async function runOneGame() {
   const tag = shortTag(sessionId)
 
   if (botIsHost) {
+    // Must own the userId-derived id BEFORE the human dials it (once, ~2.2s after
+    // they learn of the match — hence the fast ticket poll). If another instance
+    // of this account holds it (double-host collision), drain gracefully.
+    try {
+      peer = await registerPeer(auth.userId.replace(/-/g, ''))
+    } catch (e) {
+      log(`[${tag}]`, 'host peerId unavailable (' + (e?.type || e?.message || e) + ') — another bot instance active; draining')
+      return
+    }
     log(`[${tag}]`, 'matched — bot is HOST, awaiting the opponent’s connection')
     await new Promise((resolve) => {
       const timer = setTimeout(() => { log(`[${tag}]`, 'opponent never connected within 60s'); resolve() }, HOST_CONNECT_TIMEOUT_MS)
@@ -214,6 +230,9 @@ async function runOneGame() {
     return
   }
 
+  // JOINER: a random peer id — nobody dials the bot, and this is what allows
+  // several bot instances on one account to play concurrently.
+  peer = await registerPeer(undefined)
   const hostPeerId = hostId.replace(/-/g, '')
   log(`[${tag}]`, 'matched — bot is JOINER, connecting to', shortTag(hostPeerId))
   await sleep(JOINER_CONNECT_DELAY_MS)
