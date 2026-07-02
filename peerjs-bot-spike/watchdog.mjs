@@ -12,8 +12,12 @@ const ts = () => new Date().toISOString().slice(11, 19)
 const wlog = (...a) => console.log(ts(), '[watchdog]', ...a)
 
 export class Watchdog {
-  constructor(url) {
+  constructor(url, dsid) {
     this.url = url || process.env.AMS_WATCHDOG_URL || 'ws://localhost:5555/watchdog'
+    // AMS ties the watchdog socket to this server via the ams-dsid header. Without
+    // it the socket connects but "ready" is ignored → the server never leaves
+    // Creating and AMS reaps it with CreationTimeout.
+    this.dsid = dsid || process.env.DS_ID || ''
     this.ws = null
     this.closed = false
     this.onDrain = null
@@ -24,12 +28,13 @@ export class Watchdog {
   // (e.g. local dev with no amssim), letting the caller run standalone.
   connect() {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(this.url)
+      const opts = this.dsid ? { headers: { 'ams-dsid': this.dsid } } : {}
+      const ws = new WebSocket(this.url, opts)
       let settled = false
       ws.on('open', () => {
         this.ws = ws
         settled = true
-        wlog('connected', this.url)
+        wlog('connected', this.url, this.dsid ? '(dsid ' + this.dsid.slice(0, 12) + '…)' : '(no dsid)')
         resolve()
       })
       ws.on('message', (data) => this._onMessage(data))

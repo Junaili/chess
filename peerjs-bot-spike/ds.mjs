@@ -55,6 +55,8 @@ const argVal = (name) => {
 }
 const TRIGGER_PORT = Number(argVal('port') || process.env.BOT_TRIGGER_PORT) || 8091
 const WATCHDOG_URL = argVal('watchdog_url') || process.env.AMS_WATCHDOG_URL || 'ws://localhost:5555/watchdog'
+// AMS passes -dsid=<serverId>; the watchdog needs it as the ams-dsid header.
+const DSID = argVal('dsid') || process.env.DS_ID || ''
 // If claimed but the paired human never connects, don't hang the instance forever.
 const HOST_CONNECT_TIMEOUT_MS = 60000
 // Optional shared secret: when set, /trigger requires header x-trigger-secret to
@@ -95,8 +97,8 @@ async function ensurePeer() {
 }
 
 async function main() {
-  log('starting — trigger port', TRIGGER_PORT, '| watchdog', WATCHDOG_URL)
-  const wd = new Watchdog(WATCHDOG_URL)
+  log('starting — trigger port', TRIGGER_PORT, '| watchdog', WATCHDOG_URL, '| dsid', DSID || '(none)')
+  const wd = new Watchdog(WATCHDOG_URL, DSID)
   wd.onDrain = () => {
     draining = true
     if (!busy) { log('drain while idle — exiting'); shutdown(wd, 0) }
