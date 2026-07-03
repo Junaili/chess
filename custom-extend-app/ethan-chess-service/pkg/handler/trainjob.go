@@ -223,6 +223,31 @@ func (j *TrainJob) RunTraining(ctx context.Context) (map[string]any, error) {
 	return status, nil
 }
 
+// TryRun executes one training pass unless one is already in flight
+// (conflict=true, nothing executed). Used by both the Task Scheduler gRPC
+// handler (sync) and the HTTP endpoint (async).
+func (j *TrainJob) TryRun(ctx context.Context) (map[string]any, bool, error) {
+	j.mu.Lock()
+	if j.running {
+		j.mu.Unlock()
+		return nil, true, nil
+	}
+	j.running = true
+	j.mu.Unlock()
+
+	st, err := j.RunTraining(ctx)
+	if err != nil {
+		st["error"] = err.Error()
+		log.Printf("train: run failed: %v", err)
+	}
+	st["finishedAt"] = time.Now().UTC().Format(time.RFC3339)
+	j.mu.Lock()
+	j.running = false
+	j.last = st
+	j.mu.Unlock()
+	return st, false, err
+}
+
 // ── HTTP surface ──────────────────────────────────────────────────────────────
 
 // TrainHandler is the Task Scheduler's target: POST {basePath}/bot/train.
@@ -240,28 +265,17 @@ func (j *TrainJob) TrainHandler(secret string) http.HandlerFunc {
 			return
 		}
 		j.mu.Lock()
-		if j.running {
-			j.mu.Unlock()
+		running := j.running
+		j.mu.Unlock()
+		if running {
 			w.WriteHeader(http.StatusConflict)
 			_, _ = w.Write([]byte(`{"ok":false,"reason":"training already running"}`))
 			return
 		}
-		j.running = true
-		j.mu.Unlock()
-
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
-			st, err := j.RunTraining(ctx)
-			if err != nil {
-				st["error"] = err.Error()
-				log.Printf("train: run failed: %v", err)
-			}
-			st["finishedAt"] = time.Now().UTC().Format(time.RFC3339)
-			j.mu.Lock()
-			j.running = false
-			j.last = st
-			j.mu.Unlock()
+			_, _, _ = j.TryRun(ctx)
 		}()
 
 		w.Header().Set("Content-Type", "application/json")

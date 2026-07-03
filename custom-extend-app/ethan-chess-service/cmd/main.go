@@ -32,6 +32,7 @@ import (
 	"github.com/junaili/ethan-chess-service/pkg/common"
 	"github.com/junaili/ethan-chess-service/pkg/handler"
 	pb "github.com/junaili/ethan-chess-service/pkg/pb"
+	taskscheduler "github.com/junaili/ethan-chess-service/pkg/pb/generic/task_scheduler/v1"
 	"github.com/junaili/ethan-chess-service/pkg/service"
 )
 
@@ -73,12 +74,25 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to generate internal gateway token: %v", err)
 	}
+	// Bot self-learning (created before gRPC registration: the Extend Task
+	// Scheduler sidecar invokes RunScheduledTask on this server daily).
+	botID := os.Getenv("BOT_ID")
+	if botID == "" {
+		botID = "gambit-gus"
+	}
+	botDir := os.Getenv("BOT_DIR")
+	if botDir == "" {
+		botDir = "bots/" + botID
+	}
+	trainJob := handler.NewTrainJob(botID, botDir)
+
 	grpcServer := grpc.NewServer(
 		grpc.UnaryInterceptor(internalGatewayAuthInterceptor(internalToken)),
 		grpc.MaxRecvMsgSize(64<<10),
 		grpc.MaxSendMsgSize(1<<20),
 	)
 	pb.RegisterChessServiceServer(grpcServer, service.NewChessServiceServer())
+	taskscheduler.RegisterScheduledTaskHandlerServer(grpcServer, handler.NewScheduledTaskHandler(trainJob))
 	if strings.EqualFold(os.Getenv("ENABLE_GRPC_REFLECTION"), "true") {
 		reflection.Register(grpcServer)
 	}
@@ -129,19 +143,10 @@ func main() {
 	mux.Handle(basePath+"/referral", corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(referralHandler))))
 
 	// Bot self-learning: game intake from the AMS bot DS (shared-secret auth)
-	botID := os.Getenv("BOT_ID")
-	if botID == "" {
-		botID = "gambit-gus"
-	}
-	botDir := os.Getenv("BOT_DIR")
-	if botDir == "" {
-		botDir = "bots/" + botID
-	}
 	mux.HandleFunc(basePath+"/bot/games", handler.BotGamesHandler(os.Getenv("BOT_TRIGGER_SECRET"), botID))
 
-	// Daily self-learning: POST /bot/train is the Extend Task Scheduler's target
-	// (configured in the Admin Portal on this app); /debug/trainer shows status.
-	trainJob := handler.NewTrainJob(botID, botDir)
+	// Daily self-learning: the Task Scheduler invokes training via gRPC
+	// (RunScheduledTask); this HTTP endpoint is the manual/debug trigger.
 	mux.HandleFunc(basePath+"/bot/train", trainJob.TrainHandler(os.Getenv("BOT_TRIGGER_SECRET")))
 	mux.HandleFunc(basePath+"/bot/brain", trainJob.BotBrainHandler(os.Getenv("BOT_TRIGGER_SECRET")))
 	mux.HandleFunc(basePath+"/debug/trainer", trainJob.TrainerDebugHandler(os.Getenv("BOT_TRIGGER_SECRET")))
@@ -193,6 +198,12 @@ func generateInternalGatewayToken() (string, error) {
 func internalGatewayAuthInterceptor(expectedToken string) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		if strings.HasPrefix(info.FullMethod, "/grpc.health.v1.Health/") {
+			return handler(ctx, req)
+		}
+		// Extend Task Scheduler: the platform sidecar (same pod, localhost) calls
+		// this without the internal gateway token; it only triggers the guarded,
+		// idempotent training run.
+		if strings.HasPrefix(info.FullMethod, "/accelbyte.extend.task_scheduler.v1.ScheduledTaskHandler/") {
 			return handler(ctx, req)
 		}
 		if !strings.HasPrefix(info.FullMethod, "/chessservice.ChessService/") {

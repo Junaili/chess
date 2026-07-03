@@ -1,0 +1,40 @@
+// Copyright (c) 2025 AccelByte Inc. All Rights Reserved.
+// This is licensed software from AccelByte Inc, for limitations
+// and restrictions contact your company contract manager.
+
+syntax = "proto3";
+
+package accelbyte.extend.task_scheduler.v1;
+// Version v1.0.0
+
+// --- options ---
+option csharp_namespace = "AccelByte.Extend.TaskScheduler";
+option go_package = "accelbyte.net/extend/taskscheduler";
+option java_multiple_files = true;
+option java_package = "net.accelbyte.extend.taskscheduler";
+
+import "google/protobuf/timestamp.proto";
+
+// ScheduledTaskHandler service - run by main container to handle scheduled tasks
+// This service is implemented by the Extend service's main container
+// and called by the Sidecar when a scheduled task needs to be run
+service ScheduledTaskHandler {
+  // RunScheduledTask runs a scheduled task
+  // The main container implements this RPC to handle task runs
+  rpc RunScheduledTask(ScheduledTaskRequest) returns (ScheduledTaskResponse);
+}
+message ScheduledTaskRequest {
+  string run_id = 1;             // Unique run ID for idempotency
+  string task_id = 2;            // Task definition ID
+  string namespace = 3;          // Namespace
+  string task_name = 4;          // Human-readable task name
+  google.protobuf.Timestamp scheduled_time = 5;      // Scheduled run time
+  int32 attempt_number = 6;      // Current attempt number (1-based)
+  string payload = 7;            // Task payload (JSON string)
+}
+message ScheduledTaskResponse {
+  bool success = 1;                        // Whether the task succeeded
+  string message = 2;                      // Optional message or error description
+  string result_data = 3;                  // Optional result data as JSON object
+  int32 http_status_code = 4;              // HTTP-style status code (200, 400, 500, etc.)
+}
