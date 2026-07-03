@@ -14,10 +14,10 @@ It is written for completeness: another game team should be able to build the
 same system from this document, reusing the architecture, the operational
 knowledge, and much of the code verbatim.
 
-> Code referenced throughout:
-> - Extend service (Go): `custom-extend-app/ethan-chess-service/`
-> - Bot dedicated server (Node.js): `peerjs-bot-spike/`
-> - Game client fixes (JS): `src/matchmaking.js`, `src/stats.js`
+> Code referenced throughout (github.com/junaili/chess, branch `main`):
+> - Extend service (Go): [`custom-extend-app/ethan-chess-service/`](https://github.com/junaili/chess/tree/main/custom-extend-app/ethan-chess-service)
+> - Bot dedicated server (Node.js): [`peerjs-bot-spike/`](https://github.com/junaili/chess/tree/main/peerjs-bot-spike)
+> - Game client fixes (JS): [`src/matchmaking.js`](https://github.com/junaili/chess/blob/main/src/matchmaking.js), [`src/stats.js`](https://github.com/junaili/chess/blob/main/src/stats.js)
 
 ---
 
@@ -91,9 +91,10 @@ training) and exits; AMS launches a fresh replacement into the buffer.
 
 ## 4. Component: the match watcher (Extend service)
 
-File: `pkg/handler/matchwatcher.go`. Started from `cmd/main.go` as a goroutine
-(`go w.Start(ctx)`) inside the existing Extend Service Extension app — no new
-deployable.
+File: [`pkg/handler/matchwatcher.go`](https://github.com/junaili/chess/blob/main/custom-extend-app/ethan-chess-service/pkg/handler/matchwatcher.go).
+Started from [`cmd/main.go`](https://github.com/junaili/chess/blob/main/custom-extend-app/ethan-chess-service/cmd/main.go)
+as a goroutine (`go w.Start(ctx)`) inside the existing Extend Service Extension
+app — no new deployable.
 
 ### 4.1 Watching the pool
 
@@ -160,8 +161,11 @@ Build it on day one.
 
 ## 5. Component: the bot dedicated server (AMS)
 
-Files: `peerjs-bot-spike/ds.mjs` (lifecycle), `watchdog.mjs` (AMS protocol),
-`ags.mjs` (AGS REST), `play.mjs` (transport + gameplay), `engine.mjs` (loads
+Files: [`ds.mjs`](https://github.com/junaili/chess/blob/main/peerjs-bot-spike/ds.mjs) (lifecycle),
+[`watchdog.mjs`](https://github.com/junaili/chess/blob/main/peerjs-bot-spike/watchdog.mjs) (AMS protocol),
+[`ags.mjs`](https://github.com/junaili/chess/blob/main/peerjs-bot-spike/ags.mjs) (AGS REST),
+[`play.mjs`](https://github.com/junaili/chess/blob/main/peerjs-bot-spike/play.mjs) (transport + gameplay),
+[`engine.mjs`](https://github.com/junaili/chess/blob/main/peerjs-bot-spike/engine.mjs) (loads
 the game's own rules/AI code).
 
 ### 5.1 Packaging for AMS
@@ -170,7 +174,7 @@ AMS uploads are a **directory + executable** (`ams upload -p <dir> -e run.sh
 -a linux-x86_64 --skip-script-validation`); AMS containerizes them on its own
 base image (Ubuntu 22.04 / glibc 2.35 at time of writing — you don't control
 it). For a Node.js server, ship a self-contained bundle
-(`build-bundle.sh`):
+([`build-bundle.sh`](https://github.com/junaili/chess/blob/main/peerjs-bot-spike/build-bundle.sh)):
 
 - the app + `node_modules` (extracted from a `--platform linux/amd64` Docker
   build, so native addons are the right binaries),
@@ -270,7 +274,8 @@ are assigned dynamically per server and injected via command-line placeholders
 
 ## 6. Component: playing the game (transport + protocol)
 
-File: `play.mjs`. This is the game-specific layer — the part you replace for
+File: [`play.mjs`](https://github.com/junaili/chess/blob/main/peerjs-bot-spike/play.mjs).
+This is the game-specific layer — the part you replace for
 your own game. For Ethan's Chess the client uses **PeerJS** (WebRTC data
 channels via the public PeerJS cloud broker), so the bot is a Node PeerJS peer:
 
@@ -307,7 +312,7 @@ records** (server-owned, namespace-level) — requires
 
 ### 7.1 Game capture
 
-`POST {basePath}/bot/games` (`pkg/handler/botgames.go`): the DS posts each
+`POST {basePath}/bot/games` ([`pkg/handler/botgames.go`](https://github.com/junaili/chess/blob/main/custom-extend-app/ethan-chess-service/pkg/handler/botgames.go)): the DS posts each
 finished game (same `MatchEntry` shape the game client itself records — id,
 opponent, result from the bot's perspective, timestamps, full coordinate move
 list). Appended to record `chess-bot-{botId}-history` with per-id dedup and a
@@ -331,18 +336,21 @@ date range; no URL — routing is implicit):
 - Keep an HTTP twin (`POST /bot/train`) as the manual/debug trigger, and
   `GET /debug/trainer` for status.
 
-The run (`pkg/handler/trainjob.go` → `pkg/trainer`):
+The scheduler handler is [`pkg/handler/taskscheduler.go`](https://github.com/junaili/chess/blob/main/custom-extend-app/ethan-chess-service/pkg/handler/taskscheduler.go);
+the run ([`pkg/handler/trainjob.go`](https://github.com/junaili/chess/blob/main/custom-extend-app/ethan-chess-service/pkg/handler/trainjob.go)
+→ [`pkg/trainer`](https://github.com/junaili/chess/tree/main/custom-extend-app/ethan-chess-service/pkg/trainer)):
 
 1. Load the brain from admin record `chess-bot-{botId}-brain` (first run seeds
    from a `brain.json` baked into the image — remember to `COPY` it into the
    **final** Docker stage).
 2. Fetch the last 24h of games; drop already-processed ids (idempotent).
-3. Replay each game (coordinate moves → SAN/PGN/outcome, `pkg/chessreplay`).
-4. **LLM reflection** (`pkg/llm`: provider-agnostic — Anthropic, OpenAI, or
+3. Replay each game (coordinate moves → SAN/PGN/outcome,
+   [`pkg/chessreplay`](https://github.com/junaili/chess/tree/main/custom-extend-app/ethan-chess-service/pkg/chessreplay)).
+4. **LLM reflection** ([`pkg/llm`](https://github.com/junaili/chess/tree/main/custom-extend-app/ethan-chess-service/pkg/llm): provider-agnostic — Anthropic, OpenAI, or
    any OpenAI-compatible local model via `LLM_BASE_URL`): persona + games in,
    JSON lessons/journal out. On any LLM failure, **continue** — deterministic
    learning must never depend on the LLM.
-5. Deterministic **play tuning** (`pkg/trainer/tuning.go`):
+5. Deterministic **play tuning** ([`pkg/trainer/tuning.go`](https://github.com/junaili/chess/blob/main/custom-extend-app/ethan-chess-service/pkg/trainer/tuning.go)):
    - *Opening book*: first 8 plies of games that scored, weighted, top 12
      lines, stored as coordinate moves (so the bot prefix-matches without SAN).
    - *Difficulty calibration*: nudge one step per day along
@@ -365,7 +373,8 @@ mid-queue, the ticket lives to its TTL (~2 min), the bot matches it, and
 connects to a browser that no longer exists. Two fixes:
 
 - The client cancels its ticket on `pagehide`/`beforeunload` via a
-  `keepalive` DELETE (`src/matchmaking.js` — SDK calls don't survive unload).
+  `keepalive` DELETE ([`src/matchmaking.js`](https://github.com/junaili/chess/blob/main/src/matchmaking.js)
+  — SDK calls don't survive unload).
 - Pool ticket TTL ≤ 60s (but > gate + claim + queue ≈ 35s).
 
 This is a bug fix that helps human-vs-human matchmaking too, not bot logic in
