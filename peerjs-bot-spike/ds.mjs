@@ -73,6 +73,9 @@ const IDLE_MAX_MS = (Number(process.env.BOT_IDLE_MAX_MINUTES) || 60) * 60000
 // Optional shared secret: when set, /trigger requires header x-trigger-secret to
 // match (the DS port is publicly reachable on AMS). Unset = open (local dev).
 const TRIGGER_SECRET = process.env.BOT_TRIGGER_SECRET || ''
+// Extend service public URL (incl. base path) — where game records are reported
+// for the daily self-learning trainer. Empty = reporting disabled.
+const EXTEND_BASE_URL = (process.env.EXTEND_BASE_URL || '').replace(/\/$/, '')
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const shortTag = (id) => (id ? id.slice(0, 6) : '?')
@@ -81,12 +84,64 @@ let auth = null // { token, userId }
 let peer = null
 let busy = false // one game per instance
 let draining = false
+let pendingReport = null // in-flight game-record POST; awaited before drain
+const onRecord = (r) => { pendingReport = reportGame(r) }
+let tuning = null // learned play tuning from /bot/brain (null = defaults)
+const tuningOpts = () => (tuning ? {
+  difficulty: tuning.difficulty || undefined,
+  thinkMsMean: tuning.thinkMsMean || undefined,
+  thinkMsJitter: tuning.thinkMsJitter ?? undefined,
+  book: Array.isArray(tuning.book) ? tuning.book : undefined,
+} : {})
 
 async function ensureLogin() {
   if (auth) return auth
   auth = await login(process.env.BOT_EMAIL, process.env.BOT_PASSWORD)
   log('logged in as bot — userId =', auth.userId)
   return auth
+}
+
+// Fetch the play tuning the daily trainer learned (difficulty, think-time,
+// opening book). Non-fatal: on any failure the bot plays with defaults.
+async function fetchBrain() {
+  if (!EXTEND_BASE_URL) return null
+  try {
+    const r = await fetch(`${EXTEND_BASE_URL}/bot/brain`, {
+      headers: { 'x-trigger-secret': TRIGGER_SECRET },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!r.ok) { log('brain fetch: HTTP', r.status); return null }
+    const b = await r.json()
+    log('brain v' + (b.version ?? 0), 'applied (difficulty=' + (b.difficulty || 'medium') +
+      ', thinkMs=' + (b.thinkMsMean || 1200) + '±' + (b.thinkMsJitter || 0) +
+      ', book=' + ((b.book || []).length) + ' lines)')
+    return b
+  } catch (e) {
+    log('brain fetch failed:', e?.message || e)
+    return null
+  }
+}
+
+// Report a finished game to the Extend service (feeds the daily trainer).
+// Fire-and-forget with one retry; never blocks or fails the drain.
+async function reportGame(record) {
+  if (!EXTEND_BASE_URL) return
+  const body = JSON.stringify(record)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const r = await fetch(`${EXTEND_BASE_URL}/bot/games`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-trigger-secret': TRIGGER_SECRET },
+        body,
+        signal: AbortSignal.timeout(6000),
+      })
+      if (r.ok) { log('game record reported (', record.result, record.moves.length, 'moves )'); return }
+      log('game report attempt', attempt, 'failed: HTTP', r.status)
+    } catch (e) {
+      log('game report attempt', attempt, 'failed:', e?.message || e)
+    }
+    await sleep(1500)
+  }
 }
 
 // Register a PeerJS peer AFTER the match, choosing the id by role:
@@ -178,6 +233,7 @@ async function onTrigger(wd) {
   busy = true
   let code = 0
   try {
+    fetchBrain().then((b) => { tuning = b }).catch(() => {}) // parallel with login/queue
     await ensureLogin()
     // Peer registration happens INSIDE runOneGame, after the match reveals the
     // bot's role (host → fixed id, joiner → random id).
@@ -186,6 +242,7 @@ async function onTrigger(wd) {
     log('game error:', e?.message || e)
     code = 1
   } finally {
+    if (pendingReport) { try { await pendingReport } catch {} }
     log('game finished — draining this instance')
     shutdown(wd, code)
   }
@@ -222,7 +279,7 @@ async function runOneGame() {
       peer.once('connection', (conn) => {
         clearTimeout(timer)
         log(`[${tag}]`, 'opponent connected (bot is HOST)')
-        playGame(conn, 'host', { botName: 'Gambit Gus', botId: auth.userId, tag })
+        playGame(conn, 'host', { botName: 'Gambit Gus', botId: auth.userId, tag, onRecord, ...tuningOpts() })
           .then((why) => { log(`[${tag}]`, 'host game ended:', why); resolve() })
           .catch((e) => { log(`[${tag}]`, 'host game error:', e?.message || e); resolve() })
       })
@@ -238,7 +295,7 @@ async function runOneGame() {
   await sleep(JOINER_CONNECT_DELAY_MS)
   const conn = await connectJoiner(hostPeerId, tag)
   if (!conn) { log(`[${tag}]`, 'could not reach host peer after retries — giving up'); return }
-  const why = await playGame(conn, 'joiner', { botName: 'Gambit Gus', botId: auth.userId, tag })
+  const why = await playGame(conn, 'joiner', { botName: 'Gambit Gus', botId: auth.userId, tag, onRecord, ...tuningOpts() })
   log(`[${tag}]`, 'joiner game ended:', why)
   try { conn.close() } catch {}
 }

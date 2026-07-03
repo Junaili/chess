@@ -85,6 +85,25 @@ type OpponentDossier struct {
 	UpdatedAt      string `json:"updatedAt"`
 }
 
+// BookLine is an opening line in coordinate-move form (both sides' moves, from
+// move 1) so the Node bot can prefix-match it without SAN parsing.
+type BookLine struct {
+	Moves  []Move  `json:"moves"`
+	Weight float64 `json:"weight"`
+}
+
+// PlayTuning is the machine-tuned, play-affecting part of the brain: the daily
+// trainer computes it deterministically from the bot's own recent games and the
+// playing bot (peerjs-bot-spike) fetches it via GET /bot/brain.
+type PlayTuning struct {
+	Difficulty      string     `json:"difficulty"`        // ai-engine level: easy|medium|hard
+	ThinkMsMean     int        `json:"think_ms_mean"`     // human-ness: per-move delay mean
+	ThinkMsJitter   int        `json:"think_ms_jitter"`   // ± jitter around the mean
+	MaxShufflePlies int        `json:"max_shuffle_plies"` // soft cap before preferring decisive play
+	WinRate         float64    `json:"win_rate"`          // trailing win rate the calibration saw
+	Book            []BookLine `json:"book"`              // opening lines that scored well
+}
+
 // Brain is the machine-grown memory. The trainer owns this file.
 type Brain struct {
 	Comment           string                      `json:"_comment,omitempty"`
@@ -97,6 +116,7 @@ type Brain struct {
 	OpeningBook       map[string]*OpeningStat     `json:"opening_book"`
 	Lessons           []Lesson                    `json:"lessons"`
 	OpponentDossiers  map[string]*OpponentDossier `json:"opponent_dossiers"`
+	PlayTuning        *PlayTuning                 `json:"play_tuning,omitempty"`
 }
 
 // processedSet returns the processed match IDs as a lookup set.

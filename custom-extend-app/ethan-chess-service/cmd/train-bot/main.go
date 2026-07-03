@@ -111,6 +111,7 @@ func main() {
 	}
 
 	outcome := trainer.Apply(bot, pairs, refl, time.Now())
+	trainer.ComputePlayTuning(bot.Brain, matches) // same play-tuning step the Extend job runs
 	fmt.Printf("Learned: +%d lesson(s), %d opening(s), %d opponent(s) across %d game(s).\n",
 		outcome.LessonsAdded, outcome.OpeningsTouched, outcome.OpponentsTouched, outcome.GamesLearned)
 	if outcome.Summary != "" {

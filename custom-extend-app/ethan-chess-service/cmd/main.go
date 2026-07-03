@@ -128,6 +128,24 @@ func main() {
 	// Referral report → unlock the inviter's chess-recruiter achievement (auth required)
 	mux.Handle(basePath+"/referral", corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(referralHandler))))
 
+	// Bot self-learning: game intake from the AMS bot DS (shared-secret auth)
+	botID := os.Getenv("BOT_ID")
+	if botID == "" {
+		botID = "gambit-gus"
+	}
+	botDir := os.Getenv("BOT_DIR")
+	if botDir == "" {
+		botDir = "bots/" + botID
+	}
+	mux.HandleFunc(basePath+"/bot/games", handler.BotGamesHandler(os.Getenv("BOT_TRIGGER_SECRET"), botID))
+
+	// Daily self-learning: POST /bot/train is the Extend Task Scheduler's target
+	// (configured in the Admin Portal on this app); /debug/trainer shows status.
+	trainJob := handler.NewTrainJob(botID, botDir)
+	mux.HandleFunc(basePath+"/bot/train", trainJob.TrainHandler(os.Getenv("BOT_TRIGGER_SECRET")))
+	mux.HandleFunc(basePath+"/bot/brain", trainJob.BotBrainHandler(os.Getenv("BOT_TRIGGER_SECRET")))
+	mux.HandleFunc(basePath+"/debug/trainer", trainJob.TrainerDebugHandler(os.Getenv("BOT_TRIGGER_SECRET")))
+
 	// API routes (auth required)
 	mux.Handle("/", corsMiddleware(allowedOrigins, auth.wrap(gateway)))
 
