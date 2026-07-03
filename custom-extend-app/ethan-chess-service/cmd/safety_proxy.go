@@ -103,7 +103,18 @@ func (h *safetyProxy) forward(
 		writeSafetyError(w, http.StatusInternalServerError, "could not prepare reporting request")
 		return
 	}
-	req.Header.Set("Authorization", incoming.Header.Get("Authorization"))
+	token := accessTokenFromContext(incoming.Context())
+	if token == "" {
+		parts := strings.Fields(playerAuthorizationHeader(incoming))
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			token = parts[1]
+		}
+	}
+	if token == "" {
+		writeSafetyError(w, http.StatusUnauthorized, "missing player token")
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

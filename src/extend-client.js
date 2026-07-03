@@ -25,7 +25,14 @@ export function extendFetch(path, options = {}) {
   const doRequest = () => {
     const token = sdk.getToken()?.accessToken
     const headers = { ...(options.headers || {}) }
-    if (token) headers.Authorization = 'Bearer ' + token
+    if (token) {
+      const bearer = 'Bearer ' + token
+      headers.Authorization = bearer
+      // AGS ingress consumes the standard Authorization header before the
+      // request reaches a Service Extension. Preserve the player token in an
+      // app-specific header so the service can introspect and forward it.
+      headers['X-Chess-Player-Authorization'] = bearer
+    }
     return fetch(`${EXTEND_BASE}${path}`, { ...options, headers })
   }
   return withRefreshRetry(doRequest, refreshSession)

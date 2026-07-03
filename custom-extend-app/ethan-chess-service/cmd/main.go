@@ -283,7 +283,7 @@ func corsMiddleware(allowed map[string]struct{}, next http.Handler) http.Handler
 			w.Header().Set("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Chess-Player-Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -379,7 +379,7 @@ func newAuthMiddleware(baseURL, clientID, clientSecret, namespace string) *authM
 
 func (a *authMiddleware) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := r.Header.Get("Authorization")
+		header := playerAuthorizationHeader(r)
 		parts := strings.Fields(header)
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 			http.Error(w, `{"error":"missing bearer token"}`, http.StatusUnauthorized)
@@ -420,7 +420,9 @@ func (a *authMiddleware) wrap(next http.Handler) http.Handler {
 		}
 
 		// Make the authenticated user id available to downstream handlers.
-		r = r.WithContext(context.WithValue(r.Context(), subCtxKey, sub))
+		ctx := context.WithValue(r.Context(), subCtxKey, sub)
+		ctx = context.WithValue(ctx, accessTokenCtxKey, token)
+		r = r.WithContext(ctx)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -428,11 +430,26 @@ func (a *authMiddleware) wrap(next http.Handler) http.Handler {
 // subCtxKey carries the authenticated user id (token sub) into handlers.
 type ctxKey string
 
-const subCtxKey ctxKey = "ab-sub"
+const (
+	subCtxKey         ctxKey = "ab-sub"
+	accessTokenCtxKey ctxKey = "ab-access-token"
+)
 
 func subFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(subCtxKey).(string)
 	return v
+}
+
+func accessTokenFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(accessTokenCtxKey).(string)
+	return v
+}
+
+func playerAuthorizationHeader(r *http.Request) string {
+	if header := r.Header.Get("X-Chess-Player-Authorization"); header != "" {
+		return header
+	}
+	return r.Header.Get("Authorization")
 }
 
 // referralHandler unlocks the inviter's chess-recruiter achievement when a
