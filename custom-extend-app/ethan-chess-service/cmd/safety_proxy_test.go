@@ -19,8 +19,8 @@ func TestSafetyReasonsProxyForwardsPlayerTokenAndFixedQuery(t *testing.T) {
 		if r.URL.Path != "/reporting/v1/public/namespaces/seal-chessags/reasons" {
 			t.Errorf("path: got %s", r.URL.Path)
 		}
-		if got := r.URL.Query().Get("group"); got != playerSafetyReasonGroup {
-			t.Errorf("group: got %q, want %q", got, playerSafetyReasonGroup)
+		if got := r.URL.Query().Get("group"); got != "" {
+			t.Errorf("group must not be set: got %q", got)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer player-token" {
 			t.Errorf("authorization: got %q", got)

@@ -13,9 +13,8 @@ import (
 )
 
 const (
-	maxSafetyReportBody     = 16 << 10
-	maxSafetyResponseBody   = 1 << 20
-	playerSafetyReasonGroup = "Player Safety"
+	maxSafetyReportBody   = 16 << 10
+	maxSafetyResponseBody = 1 << 20
 )
 
 type safetyProxy struct {
@@ -44,7 +43,6 @@ func (h *safetyProxy) reasons(w http.ResponseWriter, r *http.Request) {
 		url.PathEscape(h.namespace),
 	)
 	query := url.Values{}
-	query.Set("group", playerSafetyReasonGroup)
 	query.Set("limit", "100")
 	query.Set("offset", "0")
 
