@@ -29,9 +29,10 @@ export function extendFetch(path, options = {}) {
       const bearer = 'Bearer ' + token
       headers.Authorization = bearer
       // AGS ingress consumes the standard Authorization header before the
-      // request reaches a Service Extension. Preserve the player token in an
-      // app-specific header so the service can introspect and forward it.
-      headers['X-Chess-Player-Authorization'] = bearer
+      // request reaches a Service Extension. Preserve the raw player token in
+      // a neutral app-specific header; headers containing "Authorization" are
+      // also consumed by ingress.
+      headers['X-Chess-Player-Token'] = token
     }
     return fetch(`${EXTEND_BASE}${path}`, { ...options, headers })
   }

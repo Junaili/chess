@@ -283,7 +283,7 @@ func corsMiddleware(allowed map[string]struct{}, next http.Handler) http.Handler
 			w.Header().Set("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Chess-Player-Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Chess-Player-Token")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -446,8 +446,8 @@ func accessTokenFromContext(ctx context.Context) string {
 }
 
 func playerAuthorizationHeader(r *http.Request) string {
-	if header := r.Header.Get("X-Chess-Player-Authorization"); header != "" {
-		return header
+	if token := strings.TrimSpace(r.Header.Get("X-Chess-Player-Token")); token != "" {
+		return "Bearer " + token
 	}
 	return r.Header.Get("Authorization")
 }
