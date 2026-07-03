@@ -1,13 +1,14 @@
-import { PublicReasonsApi, PublicReportsApi } from '@accelbyte/sdk-reporting'
 import { PlayerApi } from '@accelbyte/sdk-lobby'
 import { sdk } from './ags-client.js'
+import { extendFetch } from './extend-client.js'
 import {
   buildChatReport,
   buildUserReport,
+  getSafetyError,
   normalizeBlockedPlayers,
 } from './safety-payloads.mjs'
 
-export { buildChatReport, buildUserReport, normalizeBlockedPlayers }
+export { buildChatReport, buildUserReport, getSafetyError, normalizeBlockedPlayers }
 
 export const PLAYER_SAFETY_REASON_GROUP = 'Player Safety'
 
@@ -17,13 +18,30 @@ function required(value, label) {
   return normalized
 }
 
+async function readSafetyResponse(response, fallback) {
+  const text = await response.text()
+  let data = null
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = { message: text }
+    }
+  }
+  if (!response.ok) {
+    const error = new Error(
+      data?.errorMessage || data?.message || data?.error || fallback
+    )
+    error.response = { status: response.status, data }
+    throw error
+  }
+  return data
+}
+
 export async function fetchPlayerSafetyReasons() {
-  const response = await PublicReasonsApi(sdk).getReasons({
-    group: PLAYER_SAFETY_REASON_GROUP,
-    limit: 100,
-    offset: 0,
-  })
-  return (response?.data?.data || [])
+  const response = await extendFetch('/safety/reasons')
+  const data = await readSafetyResponse(response, 'Could not load report reasons.')
+  return (data?.data || [])
     .map(reason => ({
       title: String(reason?.title || '').trim(),
       description: String(reason?.description || '').trim(),
@@ -33,14 +51,22 @@ export async function fetchPlayerSafetyReasons() {
 
 export async function reportChatMessage(input) {
   const payload = buildChatReport(input)
-  const response = await PublicReportsApi(sdk).createReport(payload)
-  return response.data
+  const response = await extendFetch('/safety/reports', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readSafetyResponse(response, 'Could not report this message.')
 }
 
 export async function reportPlayer(input) {
   const payload = buildUserReport(input)
-  const response = await PublicReportsApi(sdk).createReport(payload)
-  return response.data
+  const response = await extendFetch('/safety/reports', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readSafetyResponse(response, 'Could not report this player.')
 }
 
 export async function listBlockedPlayers() {
@@ -58,12 +84,4 @@ export async function unblockPlayer(userId) {
   const normalizedUserId = required(userId, 'Player ID')
   await PlayerApi(sdk).createPlayerUserMeUnblock({ userId: normalizedUserId })
   return { userId: normalizedUserId }
-}
-
-export function getSafetyError(error, fallback = 'The safety action could not be completed.') {
-  const status = error?.response?.status
-  const data = error?.response?.data
-  if (status === 409) return 'You already reported this item.'
-  if (status === 429) return 'Too many reports. Please wait and try again.'
-  return data?.errorMessage || data?.message || error?.message || fallback
 }

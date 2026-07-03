@@ -51,3 +51,16 @@ export function buildUserReport({ userId, reason, comment = '' }) {
     ...(String(comment || '').trim() ? { comment: String(comment).trim() } : {}),
   }
 }
+
+export function getSafetyError(error, fallback = 'The safety action could not be completed.') {
+  const status = error?.response?.status
+  const data = error?.response?.data
+  if (status === 409) return 'You already reported this item.'
+  if (status === 429) return 'Too many reports. Please wait and try again.'
+
+  const message = data?.errorMessage || data?.message || data?.error || error?.message
+  if (!status && /^(network error|failed to fetch|load failed)$/i.test(String(message || '').trim())) {
+    return fallback
+  }
+  return message || fallback
+}

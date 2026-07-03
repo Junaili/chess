@@ -468,7 +468,14 @@ export class AgsChatClient {
   }
 
   async _loadTopicHistory(topicId) {
-    const useRestHistory = this.loadHistory && !String(topicId || '').startsWith('s.')
+    const normalizedTopicId = String(topicId || '')
+    // AGS personal topic IDs begin with "#". The generated REST SDK inserts the
+    // topic into the URL without encoding it, so browsers interpret the topic
+    // and "/chats" suffix as a fragment. Query personal and session history over
+    // the already-connected Chat WebSocket instead.
+    const useRestHistory = this.loadHistory &&
+      !normalizedTopicId.startsWith('s.') &&
+      !normalizedTopicId.startsWith('#')
     if (useRestHistory) {
       try {
         const data = await this.loadHistory(topicId)

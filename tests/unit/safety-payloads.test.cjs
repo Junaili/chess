@@ -55,3 +55,16 @@ test('normalizes AGS Lobby blocked-player responses', async () => {
     [{ userId: 'blocked-a', blockedAt: '2026-07-02T00:00:00Z' }]
   )
 })
+
+test('does not expose raw browser transport errors to the safety UI', async () => {
+  const { getSafetyError } = await safetyPromise
+
+  assert.equal(
+    getSafetyError(new Error('Network Error'), 'Could not load report reasons.'),
+    'Could not load report reasons.'
+  )
+  assert.equal(
+    getSafetyError(new TypeError('Failed to fetch'), 'Could not report this player.'),
+    'Could not report this player.'
+  )
+})

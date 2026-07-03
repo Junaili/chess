@@ -227,6 +227,45 @@ test('skips REST history for session topics and queries history over WebSocket',
   client.disconnect();
 });
 
+test('skips REST history for AGS personal topics whose IDs begin with a hash', async () => {
+  let restHistoryCalls = 0;
+  const { client, socket } = await connectedClient({
+    loadHistory: async () => {
+      restHistoryCalls += 1;
+      return [];
+    },
+  });
+  const received = [];
+  client.subscribeMessages(message => received.push(message));
+
+  const activating = client.activatePersonalChat('user-b');
+  await tick();
+  const createRequest = socket.sent.at(-1);
+  assert.equal(createRequest.method, 'actionCreateTopic');
+  socket.respond(createRequest, { topicId: '#user-a,user-b' });
+  await tick();
+
+  const historyRequest = socket.sent.at(-1);
+  assert.equal(restHistoryCalls, 0);
+  assert.equal(historyRequest.method, 'queryChat');
+  assert.equal(historyRequest.params.topicId, '#user-a,user-b');
+  socket.respond(historyRequest, {
+    data: [{
+      chatId: 'old-chat',
+      topicId: '#user-a,user-b',
+      from: 'user-b',
+      message: 'Earlier move?',
+      createdAt: 1_700_000_000,
+    }],
+  });
+  await activating;
+
+  assert.equal(client.snapshot().state, 'ready');
+  assert.equal(received.length, 1);
+  assert.equal(received[0].source, 'history');
+  client.disconnect();
+});
+
 test('surfaces AGS mute events and disables ready state', async () => {
   const { client, socket } = await connectedClient({ loadHistory: async () => [] });
   const activating = client.activatePersonalChat('user-b');
