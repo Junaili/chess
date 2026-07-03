@@ -1,6 +1,7 @@
 import { UserStatisticApi } from '@accelbyte/sdk-social'
 import { PublicPlayerRecordApi } from '@accelbyte/sdk-cloudsave'
 import { sdk } from './ags-client.js'
+import { moderateIncomingDisplayName } from './content-moderation.mjs'
 
 const STREAK_CURRENT = 'chess-current-streak'
 const STREAK_LONGEST = 'chess-longest-streak'
@@ -93,6 +94,12 @@ export async function fetchMatchHistory(userId) {
     }
     const history = normalizeMatchHistory(res.data?.value?.matches)
       .filter(match => match?.endedAt && match?.durationMs)
+      .map(match => ({
+        ...match,
+        opponentName: moderateIncomingDisplayName(match.opponentName, 'Opponent'),
+        whiteName: moderateIncomingDisplayName(match.whiteName, 'White'),
+        blackName: moderateIncomingDisplayName(match.blackName, 'Black'),
+      }))
       .sort((a, b) => Date.parse(b.endedAt) - Date.parse(a.endedAt))
     if (localStorage.getItem('ags_match_history_debug') === '1') {
       console.debug('[AGS match history] fetched', { userId, count: history.length, record: res.data })
@@ -128,7 +135,7 @@ export async function recordMatchHistory(match) {
       id: match.id || `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       mode: match.mode || 'unknown',
       opponentUserId: match.opponentUserId || '',
-      opponentName: match.opponentName || 'Opponent',
+      opponentName: moderateIncomingDisplayName(match.opponentName, 'Opponent'),
       result: match.result || 'completed',
       startedAt: match.startedAt,
       endedAt: match.endedAt,
@@ -142,8 +149,8 @@ export async function recordMatchHistory(match) {
             promType: move.promType || 'queen',
           }))
         : [],
-      whiteName: match.whiteName || '',
-      blackName: match.blackName || '',
+      whiteName: moderateIncomingDisplayName(match.whiteName, 'White'),
+      blackName: moderateIncomingDisplayName(match.blackName, 'Black'),
     }
     const history = [entry, ...current.filter(item => item.id !== entry.id)].slice(0, MAX_MATCH_HISTORY)
     const record = {

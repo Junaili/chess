@@ -1,5 +1,6 @@
 import { LeaderboardDataV3Api } from '@accelbyte/sdk-leaderboard'
 import { sdk } from './ags-client.js'
+import { moderateIncomingDisplayName } from './content-moderation.mjs'
 
 const LEADERBOARD_CODE = 'chess-wins-lb'
 const NAME_CACHE_KEY = 'ags-name-cache'
@@ -8,7 +9,10 @@ export function cacheDisplayName(userId, displayName) {
   if (!userId) return
   try {
     const cache = JSON.parse(localStorage.getItem(NAME_CACHE_KEY) || '{}')
-    cache[userId] = { name: displayName ?? null, ts: Date.now() }
+    const safeName = displayName
+      ? moderateIncomingDisplayName(displayName, 'Player')
+      : null
+    cache[userId] = { name: safeName, ts: Date.now() }
     localStorage.setItem(NAME_CACHE_KEY, JSON.stringify(cache))
   } catch {}
 }
@@ -67,7 +71,7 @@ export function resolveDisplayNames(rankings) {
       const id = entry.userId
       // Prefer fresh IAM/Basic name from cache; fall back to stale cache; last resort: additionalData
       const name = getCachedNameAnyAge(cache, id) || entry.additionalData?.displayName
-      if (name) map[id] = name
+      if (name) map[id] = moderateIncomingDisplayName(name, 'Player')
     }
     return map
   } catch {
@@ -82,7 +86,8 @@ export async function fetchInviterName(userId) {
   // generic label, same as the previous 404 → null behaviour.
   try {
     const cache = JSON.parse(localStorage.getItem(NAME_CACHE_KEY) || '{}')
-    return getCachedNameAnyAge(cache, userId)
+    const name = getCachedNameAnyAge(cache, userId)
+    return name ? moderateIncomingDisplayName(name, 'Player') : null
   } catch {
     return null
   }

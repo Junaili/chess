@@ -4,6 +4,7 @@ import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
 import { resolveDisplayNames } from './leaderboard.js'
 import { fetchPresenceMap } from './presence.js'
+import { moderateIncomingDisplayName } from './content-moderation.mjs'
 
 const PAGE = { limit: 50, offset: 0 }
 
@@ -70,7 +71,8 @@ async function withNames(items) {
     for (const outcome of results) {
       if (outcome.status !== 'fulfilled') continue
       const u = outcome.value?.data
-      const name = u?.displayName || u?.uniqueDisplayName
+      const rawName = u?.displayName || u?.uniqueDisplayName
+      const name = rawName ? moderateIncomingDisplayName(rawName, 'Player') : ''
       if (name && u?.userId) {
         cacheDisplayName(u.userId, name)
         nameMap = { ...nameMap, [u.userId]: name }
@@ -80,7 +82,10 @@ async function withNames(items) {
 
   return items.map(item => ({
     ...item,
-    displayName: nameMap[item.userId] || item.raw?.displayName || item.raw?.name || item.userId,
+    displayName: moderateIncomingDisplayName(
+      nameMap[item.userId] || item.raw?.displayName || item.raw?.name,
+      item.userId.slice(0, 8)
+    ),
   }))
 }
 
@@ -178,7 +183,10 @@ export async function lookupUserByEmail(email) {
       ok: true,
       found: true,
       userId: data.userId,
-      displayName: data.displayName || data.userId?.slice(0, 8),
+      displayName: moderateIncomingDisplayName(
+        data.displayName,
+        data.userId?.slice(0, 8) || 'Player'
+      ),
     }
   } catch (e) {
     console.warn('[AGS friends] lookupUserByEmail:', e?.message)
