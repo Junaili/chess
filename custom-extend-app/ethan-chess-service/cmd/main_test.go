@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -63,7 +62,7 @@ func TestCORSMiddlewareRejectsUnknownOrigin(t *testing.T) {
 	}
 }
 
-func TestCORSMiddlewareAllowsPlayerAuthorizationHeader(t *testing.T) {
+func TestCORSMiddlewareAllowsCredentialedBrowserRequests(t *testing.T) {
 	t.Parallel()
 
 	handler := corsMiddleware(
@@ -73,7 +72,7 @@ func TestCORSMiddlewareAllowsPlayerAuthorizationHeader(t *testing.T) {
 	req := httptest.NewRequest(http.MethodOptions, "https://service.example/safety/reasons", nil)
 	req.Header.Set("Origin", "https://junaili.github.io")
 	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
-	req.Header.Set("Access-Control-Request-Headers", "x-chess-player-token")
+	req.Header.Set("Access-Control-Request-Headers", "authorization")
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -81,8 +80,8 @@ func TestCORSMiddlewareAllowsPlayerAuthorizationHeader(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", rec.Code)
 	}
-	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "X-Chess-Player-Token") {
-		t.Fatalf("player authorization header is not allowed: %q", got)
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Fatalf("credentials are not allowed: %q", got)
 	}
 }
 
@@ -164,10 +163,10 @@ func TestAuthMiddlewareWrap(t *testing.T) {
 		})
 	}
 
-	t.Run("valid token in player authorization header", func(t *testing.T) {
+	t.Run("valid token in access token cookie", func(t *testing.T) {
 		nextCalled = false
 		req := httptest.NewRequest(http.MethodGet, "https://service.example/safety/reasons", nil)
-		req.Header.Set("X-Chess-Player-Token", "valid")
+		req.AddCookie(&http.Cookie{Name: "access_token", Value: "valid"})
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK || !nextCalled {

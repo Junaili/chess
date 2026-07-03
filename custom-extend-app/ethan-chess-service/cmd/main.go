@@ -283,7 +283,8 @@ func corsMiddleware(allowed map[string]struct{}, next http.Handler) http.Handler
 			w.Header().Set("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Chess-Player-Token")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -446,10 +447,13 @@ func accessTokenFromContext(ctx context.Context) string {
 }
 
 func playerAuthorizationHeader(r *http.Request) string {
-	if token := strings.TrimSpace(r.Header.Get("X-Chess-Player-Token")); token != "" {
-		return "Bearer " + token
+	if header := r.Header.Get("Authorization"); header != "" {
+		return header
 	}
-	return r.Header.Get("Authorization")
+	if cookie, err := r.Cookie("access_token"); err == nil && cookie.Value != "" {
+		return "Bearer " + cookie.Value
+	}
+	return ""
 }
 
 // referralHandler unlocks the inviter's chess-recruiter achievement when a

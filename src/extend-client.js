@@ -25,16 +25,15 @@ export function extendFetch(path, options = {}) {
   const doRequest = () => {
     const token = sdk.getToken()?.accessToken
     const headers = { ...(options.headers || {}) }
-    if (token) {
-      const bearer = 'Bearer ' + token
-      headers.Authorization = bearer
-      // AGS ingress consumes the standard Authorization header before the
-      // request reaches a Service Extension. Preserve the raw player token in
-      // a neutral app-specific header; headers containing "Authorization" are
-      // also consumed by ingress.
-      headers['X-Chess-Player-Token'] = token
-    }
-    return fetch(`${EXTEND_BASE}${path}`, { ...options, headers })
+    if (token) headers.Authorization = 'Bearer ' + token
+    // AGS ingress consumes Authorization before forwarding to a deployed
+    // Service Extension. IAM sets an HttpOnly access_token cookie during login,
+    // which is the supported browser-auth fallback at the service boundary.
+    return fetch(`${EXTEND_BASE}${path}`, {
+      ...options,
+      credentials: 'include',
+      headers,
+    })
   }
   return withRefreshRetry(doRequest, refreshSession)
 }
