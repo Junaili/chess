@@ -147,6 +147,9 @@ let rematchPending = false;  // true while waiting for opponent to respond to ou
 let matchmakingActive = false;
 let matchmakingWaitInterval = null;
 let chatMessages   = [];
+let chatTransportState = { state: 'idle', detail: '', topicId: '' };
+let pendingChatContext = null;
+let chatActivationKey = '';
 let currentOpponent = null;
 let pendingFriendMatchInvite = null;
 let matchStartedAt = null;
@@ -384,6 +387,7 @@ function startGame() {
   if (rsBtn) rsBtn.style.display = showVsComputerControls ? '' : 'none';
   document.getElementById('online-chat').style.display = isOnline ? 'flex' : 'none';
   updateChatAvailability();
+  if (isOnline) activateChatForCurrentMatch();
 
   showScreen('game');
   renderBoard();
@@ -1105,6 +1109,7 @@ function startRematch() {
   document.getElementById('rematch-notification').style.display = 'none';
   moveLog   = [];
   moveQueue = [];
+  chatActivationKey = '';
   startGame();
 }
 
@@ -1127,6 +1132,9 @@ function destroyPeer() {
   connRole = null;
   moveQueue = [];
   moveLog   = [];
+  pendingChatContext = null;
+  chatActivationKey = '';
+  if (typeof window.agsDeactivateChat === 'function') window.agsDeactivateChat();
   remotePeerId = null;
   setCurrentOpponent('', '');
   if (peerConn) { try { peerConn.close(); } catch {} peerConn = null; }
@@ -1182,6 +1190,25 @@ function getCurrentPlayerDisplayName() {
   return document.getElementById('ags-signedin-name')?.textContent || playerName || 'You';
 }
 
+function moderateIncomingDisplayName(value, fallback = 'Opponent') {
+  const moderation = window.chessContentModeration;
+  if (moderation?.moderateIncomingDisplayName) {
+    return moderation.moderateIncomingDisplayName(value, fallback);
+  }
+  return String(value || '').trim() || fallback;
+}
+
+function moderateIncomingChat(value) {
+  const moderation = window.chessContentModeration;
+  if (moderation?.moderateIncomingChat) return moderation.moderateIncomingChat(value);
+  return String(value || '').trim();
+}
+
+function showChatModerationMessage(message = '') {
+  const messageEl = document.getElementById('online-chat-message');
+  if (messageEl) messageEl.textContent = message;
+}
+
 function resetChatState() {
   chatMessages = [];
   const messagesEl = document.getElementById('online-chat-messages');
@@ -1190,6 +1217,7 @@ function resetChatState() {
     messagesEl.innerHTML = '<div class="chat-empty">Chat is available while playing another person online.</div>';
   }
   if (inputEl) inputEl.value = '';
+  showChatModerationMessage();
 }
 
 function updateChatAvailability() {
@@ -1197,10 +1225,24 @@ function updateChatAvailability() {
   const inputEl = document.getElementById('online-chat-input');
   const sendBtn = document.getElementById('btn-chat-send');
   const isOnline = gameMode === 'online';
-  const connected = !!peerConn?.open && !connectionLost;
-  const enabled = isOnline && connected;
+  const state = chatTransportState.state || 'idle';
+  const enabled = isOnline && state === 'ready';
+  const labels = {
+    idle: 'Unavailable',
+    connecting: 'Connecting…',
+    connected: 'Connecting to match…',
+    activating: 'Joining match chat…',
+    ready: 'Connected',
+    reconnecting: 'Reconnecting…',
+    muted: 'Muted',
+    unavailable: 'Unavailable',
+    error: 'Unavailable',
+  };
 
-  if (statusEl) statusEl.textContent = enabled ? 'Connected' : 'Reconnecting…';
+  if (statusEl) {
+    statusEl.textContent = isOnline ? (labels[state] || 'Unavailable') : 'Unavailable';
+    statusEl.dataset.state = isOnline ? state : 'unavailable';
+  }
   if (inputEl) inputEl.disabled = !enabled;
   if (sendBtn) sendBtn.disabled = !enabled;
 }
@@ -1235,28 +1277,70 @@ function appendChatMessageToDOM(message) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function appendChatMessage(side, name, text) {
+function appendChatMessage(side, name, text, chatId = '') {
   const trimmed = String(text || '').trim();
   if (!trimmed) return;
-  const message = { side, name: name || (side === 'self' ? 'You' : 'Opponent'), text: trimmed };
+  const existing = chatId && chatMessages.find(message => message.chatId === chatId);
+  if (existing) {
+    if (existing.text !== trimmed || existing.name !== name) {
+      existing.text = trimmed;
+      existing.name = name || existing.name;
+      renderChatMessages();
+    }
+    return;
+  }
+  const message = {
+    chatId,
+    side,
+    name: name || (side === 'self' ? 'You' : 'Opponent'),
+    text: trimmed,
+  };
   chatMessages.push(message);
   if (chatMessages.length > 100) chatMessages = chatMessages.slice(-100);
   appendChatMessageToDOM(message);
 }
 
-function sendChatMessage() {
-  if (gameMode !== 'online' || !peerConn?.open || connectionLost) return;
+function getChatErrorMessage(error) {
+  if (error?.kind === 'muted') return 'You are temporarily muted in match chat.';
+  if (error?.kind === 'banned') return 'Chat is unavailable for this account.';
+  if (error?.kind === 'filtered') return 'That message was rejected by the chat filter.';
+  if (error?.kind === 'rate-limit') return 'Slow down before sending another message.';
+  if (error?.kind === 'authentication') return 'Sign in to use match chat.';
+  return error?.message || 'Message could not be sent. Try again.';
+}
+
+async function sendChatMessage() {
+  if (gameMode !== 'online' || chatTransportState.state !== 'ready') return;
   const inputEl = document.getElementById('online-chat-input');
   if (!inputEl) return;
 
   const text = inputEl.value.trim();
   if (!text) return;
+  const moderation = window.chessContentModeration;
+  const moderated = moderation?.moderateOutgoingChat
+    ? moderation.moderateOutgoingChat(text)
+    : { ok: true, value: text };
+  if (!moderated.ok) {
+    showChatModerationMessage(moderated.error);
+    inputEl.focus();
+    return;
+  }
 
-  const name = getCurrentPlayerDisplayName();
-  appendChatMessage('self', name, text);
-  sendOrQueue({ type: 'chat', name, text });
-  inputEl.value = '';
-  inputEl.focus();
+  showChatModerationMessage();
+  const sendBtn = document.getElementById('btn-chat-send');
+  if (sendBtn) sendBtn.disabled = true;
+  try {
+    if (typeof window.agsSendChatMessage !== 'function') {
+      throw new Error('AGS Chat is unavailable.');
+    }
+    await window.agsSendChatMessage(moderated.value);
+    inputEl.value = '';
+  } catch (error) {
+    showChatModerationMessage(getChatErrorMessage(error));
+  } finally {
+    if (sendBtn) sendBtn.disabled = chatTransportState.state !== 'ready';
+    inputEl.focus();
+  }
 }
 
 function handleChatInputKeydown(event) {
@@ -1267,6 +1351,68 @@ function handleChatInputKeydown(event) {
 
 window.sendChatMessage = sendChatMessage;
 window.handleChatInputKeydown = handleChatInputKeydown;
+
+window.handleAGSChatState = function(state) {
+  chatTransportState = state || { state: 'unavailable', detail: 'Match chat is unavailable.' };
+  updateChatAvailability();
+  if (state?.detail && ['muted', 'unavailable', 'error'].includes(state.state)) {
+    showChatModerationMessage(state.detail);
+  }
+};
+
+window.handleAGSChatMessage = function(message) {
+  if (gameMode !== 'online' || !message) return;
+  const isSelf = message.from === window.agsCurrentUserId;
+  const name = isSelf
+    ? moderateIncomingDisplayName(getCurrentPlayerDisplayName(), 'You')
+    : moderateIncomingDisplayName(currentOpponent?.name, 'Opponent');
+  const text = moderateIncomingChat(message.message);
+  if (text) appendChatMessage(isSelf ? 'self' : 'opponent', name, text, message.chatId);
+};
+
+async function activateChatForCurrentMatch() {
+  if (gameMode !== 'online') return;
+  let key = '';
+  let activation = null;
+  if (pendingChatContext?.type === 'session' && pendingChatContext.sessionId) {
+    key = `session:${pendingChatContext.sessionId}`;
+    activation = () => window.agsActivateSessionChat?.(pendingChatContext.sessionId);
+  } else if (pendingChatContext?.type === 'personal' &&
+             window.agsCurrentUserId &&
+             pendingChatContext.otherUserId) {
+    const otherUserId = pendingChatContext.otherUserId;
+    key = `personal:${[window.agsCurrentUserId, otherUserId].sort().join(':')}`;
+    activation = () => window.agsActivatePersonalChat?.(otherUserId);
+  } else if (window.agsCurrentUserId && currentOpponent?.userId) {
+    key = `personal:${[window.agsCurrentUserId, currentOpponent.userId].sort().join(':')}`;
+    activation = () => window.agsActivatePersonalChat?.(currentOpponent.userId);
+  }
+
+  if (!activation) {
+    chatTransportState = {
+      state: 'unavailable',
+      detail: 'Chat requires both players to be signed in.',
+      topicId: '',
+    };
+    updateChatAvailability();
+    showChatModerationMessage(chatTransportState.detail);
+    return;
+  }
+  if (chatActivationKey === key) return;
+  chatActivationKey = key;
+  try {
+    await activation();
+  } catch (error) {
+    if (chatActivationKey !== key) return;
+    chatTransportState = {
+      state: 'unavailable',
+      detail: getChatErrorMessage(error),
+      topicId: '',
+    };
+    updateChatAvailability();
+    showChatModerationMessage(chatTransportState.detail);
+  }
+}
 
 function flushMoveQueue(conn) {
   while (moveQueue.length > 0 && conn?.open) {
@@ -1378,6 +1524,7 @@ function startFriendMatchInvite(friend) {
   playerColor = 'white';
   setCurrentOpponent(friend.displayName || 'Friend', friend.userId);
   createOnlineRoom({ friendInvite: friend });
+  pendingChatContext = { type: 'personal', otherUserId: friend.userId };
 }
 
 async function sendFriendMatchInvite(friend, peerId) {
@@ -1414,6 +1561,9 @@ function acceptFriendMatchInvite() {
   gameMode = 'online';
   setCurrentOpponent(invite.fromName || 'Friend', invite.fromUserId || '');
   joinOnlineRoom(invite.peerId);
+  if (invite.fromUserId) {
+    pendingChatContext = { type: 'personal', otherUserId: invite.fromUserId };
+  }
 }
 
 function declineFriendMatchInvite() {
@@ -1467,7 +1617,6 @@ function joinOnlineRoom(hostPeerId) {
 }
 
 const PEER_MESSAGE_MAX_BYTES = 128 * 1024;
-const PEER_CHAT_MAX_CHARS = 280;
 const PEER_NAME_MAX_CHARS = 64;
 const PEER_USER_ID_MAX_CHARS = 128;
 const PEER_MOVE_MAX_COUNT = 500;
@@ -1544,7 +1693,10 @@ function setupPeerConnection(conn, role) {
 
     if (data.type === 'game_start') {
       if (!['white', 'black'].includes(data.yourColor)) return;
-      const opponentName = sanitizePeerText(data.opponentName, PEER_NAME_MAX_CHARS) || 'Opponent';
+      const opponentName = moderateIncomingDisplayName(
+        sanitizePeerText(data.opponentName, PEER_NAME_MAX_CHARS),
+        'Opponent'
+      );
       const opponentId = sanitizePeerText(data.opponentId, PEER_USER_ID_MAX_CHARS);
       playerColor = data.yourColor;
       setCurrentOpponent(opponentName, opponentId);
@@ -1560,7 +1712,10 @@ function setupPeerConnection(conn, role) {
       const myId   = window.agsCurrentUserId || '';
       try { conn.send({ type: 'player_info', name: myName, userId: myId }); } catch {}
     } else if (data.type === 'player_info') {
-      const opponentName = sanitizePeerText(data.name, PEER_NAME_MAX_CHARS) || 'Opponent';
+      const opponentName = moderateIncomingDisplayName(
+        sanitizePeerText(data.name, PEER_NAME_MAX_CHARS),
+        'Opponent'
+      );
       const opponentId = sanitizePeerText(data.userId, PEER_USER_ID_MAX_CHARS);
       setCurrentOpponent(opponentName, opponentId);
       if (opponentId && opponentName) {
@@ -1568,16 +1723,13 @@ function setupPeerConnection(conn, role) {
       }
       const oppColor = playerColor === 'white' ? 'black' : 'white';
       setPlayerInfo(oppColor, opponentName, opponentId);
-    } else if (data.type === 'chat') {
-      const name = sanitizePeerText(data.name, PEER_NAME_MAX_CHARS) || 'Opponent';
-      const text = sanitizePeerText(data.text, PEER_CHAT_MAX_CHARS);
-      if (text) appendChatMessage('opponent', name, text);
+      activateChatForCurrentMatch();
     } else if (data.type === 'move') {
       const move = normalizePeerMove(data);
       if (move) applyOpponentMove(move.fr, move.fc, move.toR, move.toC, move.promType);
     } else if (data.type === 'reconnect_req') {
       // Joiner reconnected — send full game state so they can resync
-      try { conn.send({ type: 'resync', moves: moveLog, chatMessages }); } catch {}
+      try { conn.send({ type: 'resync', moves: moveLog }); } catch {}
       connectionLost = false;
       reconnectCount = 0;
       updateChatAvailability();
@@ -1599,13 +1751,6 @@ function setupPeerConnection(conn, role) {
       document.getElementById('move-list').innerHTML = '';
       document.getElementById('captured-by-white').innerHTML = '';
       document.getElementById('captured-by-black').innerHTML = '';
-      chatMessages = Array.isArray(data.chatMessages)
-        ? data.chatMessages.slice(-100).map(message => ({
-            side: message?.side === 'self' ? 'self' : 'opponent',
-            name: sanitizePeerText(message?.name, PEER_NAME_MAX_CHARS) || 'Opponent',
-            text: sanitizePeerText(message?.text, PEER_CHAT_MAX_CHARS),
-          })).filter(message => message.text)
-        : [];
       for (const m of moves) {
         const notation = game.getMoveNotation(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen');
         game.makeMove(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen');
@@ -1614,7 +1759,6 @@ function setupPeerConnection(conn, role) {
       updateCapturedPieces();
       updateStatus();
       renderBoard();
-      renderChatMessages();
       updateChatAvailability();
       showConnBanner('Reconnected!', 'success');
     } else if (data.type === 'resign') {
@@ -1758,10 +1902,21 @@ function startRandomMatchmaking() {
   const queueStartedAt = Date.now();
   showWaitingScreen('matchmaking');
   startMatchmakingWaitTimer(queueStartedAt);
+  if (typeof window.agsPrepareSessionChat === 'function') window.agsPrepareSessionChat();
   if (typeof window.agsSendEvent === 'function') window.agsSendEvent('matchmaking_started', {});
   window.agsStartMatchmaking(
-    function onFound(memberUserIds) {
+    function onFound(match) {
       if (!matchmakingActive) return;
+      const memberUserIds = Array.isArray(match) ? match : match?.memberUserIds;
+      const sessionId = match?.sessionId || '';
+      if (!Array.isArray(memberUserIds) || memberUserIds.length < 2) {
+        matchmakingActive = false;
+        stopMatchmakingWaitTimer();
+        destroyPeer();
+        showScreen('home');
+        alert('Match found but player information was incomplete. Please try again.');
+        return;
+      }
       if (typeof window.agsSendEvent === 'function') {
         window.agsSendEvent('matchmaking_matched', { wait_time_ms: Date.now() - queueStartedAt });
       }
@@ -1776,6 +1931,9 @@ function startRandomMatchmaking() {
       showWaitingScreen(isHost ? 'matchmaking-host' : 'matchmaking-joiner');
 
       destroyPeer();
+      pendingChatContext = sessionId
+        ? { type: 'session', sessionId }
+        : null;
       peer = new Peer(isHost ? peerId : undefined);
       setupCallHandler();
 
