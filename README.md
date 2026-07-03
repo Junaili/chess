@@ -1,6 +1,6 @@
 # Ethan's Chess
 
-A fully-featured browser chess game built with vanilla HTML, CSS, and JavaScript — integrated with [AccelByte Gaming Services (AGS)](https://docs.accelbyte.io/) for authentication, player stats, leaderboards, matchmaking, friends, and live spectating.
+A fully-featured browser chess game built with vanilla HTML, CSS, and JavaScript — integrated with [AccelByte Gaming Services (AGS)](https://docs.accelbyte.io/) for authentication, player stats, leaderboards, matchmaking, match chat, friends, and live spectating.
 
 This project is intended to serve as a practical reference for integrating a browser-based game with AGS using the TypeScript Web SDK.
 
@@ -9,6 +9,7 @@ This project is intended to serve as a practical reference for integrating a bro
 - **Play vs Computer** — three difficulty levels powered by a minimax AI
 - **Invite Friend** — share a link and play peer-to-peer via WebRTC (PeerJS)
 - **Play vs Random** — AGS Matchmaking pairs you with a random online player
+- **Match Chat** — AGS Chat provides session/private topics, history, and server-side filtering
 - **Sign in with Google** — tracks wins/losses and shows a global leaderboard
 - **Video Chat** — built-in video/voice during online games (requires HTTPS)
 - **Live Spectating** — watch a friend's match in real time; replay moves after it ends
@@ -32,6 +33,7 @@ chess-ethan/
 │   ├── stats.js          # Win/loss stats + CloudSave match history
 │   ├── leaderboard.js    # Global leaderboard (LeaderboardDataV3Api)
 │   ├── matchmaking.js    # Random matchmaking (MatchTicketsApi + GameSessionApi)
+│   ├── chat.mjs          # AGS Chat JSON-RPC WebSocket transport
 │   ├── spectator.js      # Live match publishing/watching via CloudSave
 │   └── telemetry.js      # Match telemetry stored in CloudSave
 ├── .env.example          # Environment variable template
@@ -100,6 +102,7 @@ This section explains what AGS does in this game and how each service was integr
 | Match History | CloudSave | Stores per-player match records |
 | Leaderboard | Leaderboard | Global win rankings |
 | Matchmaking | Matchmaking v2 | Queues players and pairs them |
+| Match Chat | Chat | Session/private topics, history, filtering, and mute enforcement |
 | Friends & Presence | Lobby | Friend list and online status |
 | Live Spectating | CloudSave | Publishes live board state for watchers |
 
@@ -134,7 +137,8 @@ Copy the **Client ID** — this goes into your `.env` as `VITE_ACCELBYTE_CLIENT_
 ```bash
 npm install @accelbyte/sdk @accelbyte/sdk-iam @accelbyte/sdk-social \
             @accelbyte/sdk-leaderboard @accelbyte/sdk-matchmaking \
-            @accelbyte/sdk-session @accelbyte/sdk-cloudsave @accelbyte/sdk-lobby
+            @accelbyte/sdk-session @accelbyte/sdk-cloudsave @accelbyte/sdk-lobby \
+            @accelbyte/sdk-chat
 ```
 
 Each package maps to one AGS service. Only install the ones you use.
@@ -395,7 +399,32 @@ await MatchTicketsApi(sdk).deleteMatchTicket_ByTicketid(ticketId)
 
 ---
 
-### Step 10 — Friends & Presence (Lobby)
+### Step 10 — Match Chat
+
+The app connects an authenticated player to the AGS Chat WebSocket after login.
+Random matches use the `s.` topic created for their AGS game session. Direct
+friend matches create an AGS personal topic for the two authenticated user IDs.
+PeerJS continues carrying chess moves, rematches, reconnection state, and video,
+but never carries text-chat messages or chat history.
+
+The TypeScript Chat package supplies public configuration and history REST
+calls. `src/chat.mjs` implements the realtime JSON-RPC commands used by the
+official game SDKs (`actionCreateTopic`, `sendChat`, `queryChat`, and
+`actionRefreshToken`) because the TypeScript package does not include the Chat
+WebSocket wrapper.
+
+Required AGS configuration:
+
+- Enable Chat and its profanity filter under **Multiplayer → Chat → Chat Configurations**.
+- Enable the default dictionary and configure message/rate/spam/mute limits.
+- Set `textChat: true` and `textChatMode: GAME` on the session template used by
+  the `chess-quickmatch` pool.
+- Use authenticated accounts for both players. Anonymous invite-link players see
+  chat as unavailable; the app does not fall back to unmoderated P2P chat.
+
+---
+
+### Step 11 — Friends & Presence (Lobby)
 
 The AGS Lobby service provides a WebSocket connection for real-time events. This game uses it for:
 
@@ -487,7 +516,7 @@ Add `https://yourusername.github.io/your-repo/` to **AGS Admin Portal → IAM �
 
 - Vanilla JavaScript (no frameworks)
 - [Vite](https://vitejs.dev/) — dev server and build tool
-- [PeerJS](https://peerjs.com/) — WebRTC peer-to-peer connections
-- [AccelByte Gaming Services SDK](https://docs.accelbyte.io/) — auth, stats, leaderboard, matchmaking, CloudSave, friends
+- [PeerJS](https://peerjs.com/) — WebRTC peer-to-peer chess moves and video
+- [AccelByte Gaming Services SDK](https://docs.accelbyte.io/) — auth, stats, leaderboard, matchmaking, Chat, CloudSave, friends
 - Web Audio API — sound effects
 - WebRTC `getUserMedia` — video chat

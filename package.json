@@ -36,6 +36,7 @@
   "dependencies": {
     "@accelbyte/sdk": "^4.3.1",
     "@accelbyte/sdk-achievement": "^5.3.5",
+    "@accelbyte/sdk-chat": "^6.3.5",
     "@accelbyte/sdk-cloudsave": "^6.3.4",
     "@accelbyte/sdk-gametelemetry": "^5.2.7",
     "@accelbyte/sdk-iam": "^6.3.4",
@@ -50,6 +51,7 @@
     "@capacitor/cli": "^8.4.1",
     "@capacitor/core": "^8.4.1",
     "@capacitor/ios": "^8.4.1",
+    "obscenity": "^0.4.6",
     "peerjs": "1.5.5"
   }
 }

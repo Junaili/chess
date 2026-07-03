@@ -11,7 +11,7 @@ const haveTwo = !!(creds && creds.user2);
 test.describe('Live online match (two players)', () => {
   test.skip(!haveTwo, 'Set TEST_USER_2_* in .env.test to run the two-player online match test');
 
-  test('two queued players are matched and a move syncs across the wire', async ({ browser }) => {
+  test('two queued players sync a move over PeerJS and chat over AGS', async ({ browser }) => {
     test.setTimeout(180_000);
 
     const ctxA = await browser.newContext({ ignoreHTTPSErrors: true });
@@ -33,6 +33,14 @@ test.describe('Live online match (two players)', () => {
       await expect(pageA.locator('#screen-game')).toBeVisible({ timeout: 120_000 });
       await expect(pageB.locator('#screen-game')).toBeVisible({ timeout: 120_000 });
       await expect(pageA.locator('#chess-board .piece')).toHaveCount(32);
+      await expect(pageA.locator('#online-chat-status')).toHaveText('Connected', { timeout: 30_000 });
+      await expect(pageB.locator('#online-chat-status')).toHaveText('Connected', { timeout: 30_000 });
+
+      const chatText = `AGS chat ${Date.now()}`;
+      await pageA.locator('#online-chat-input').fill(chatText);
+      await pageA.locator('#btn-chat-send').click();
+      await expect(pageA.locator('.chat-message-body', { hasText: chatText })).toHaveCount(1);
+      await expect(pageB.locator('.chat-message-body', { hasText: chatText })).toHaveCount(1, { timeout: 30_000 });
 
       // Whoever is White (moves first) plays e2-e4; try A, fall back to B.
       let whitePage = pageA;

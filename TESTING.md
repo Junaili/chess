@@ -11,9 +11,9 @@ npm run test:precommit
 
 | Command | What it covers | Needs |
 | --- | --- | --- |
-| `npm run test:unit` | Chess rules engine + AI engine (pure logic) | node only — fast |
+| `npm run test:unit` | Chess/AI logic, content moderation, and AGS Chat protocol | node only — fast |
 | `npm run test:e2e` | Full app E2E on **Chromium (browser)** and **WebKit/iPad (iOS engine)** | Playwright browsers |
-| `npm run test:live` | Live AGS integration (auth, leaderboard, stats, friends, achievements, matchmaking, online match) | `.env.test` creds |
+| `npm run test:live` | Live AGS integration (auth, stats, social, matchmaking, AGS Chat, online match) | `.env.test` creds |
 | `npm run test:ios` | iOS/iPad **simulator** boot + render smoke | Xcode + iPad sim |
 | `npm run test:precommit` | unit → build → e2e → live (the commit gate) | — |
 | `npm run test:all` | precommit **plus** the iOS simulator smoke | Xcode |
@@ -33,6 +33,10 @@ an iPad simulator. `test:ios` is kept out of `test:precommit` because
   material, fifty-move, threefold repetition), move notation.
 - **AI opponent** (`tests/unit/ai-engine.test.cjs`): returns legal moves, takes
   hanging material, material-symmetric evaluation, all difficulty depths.
+- **AGS Chat transport** (`tests/unit/chat.test.cjs`): JSON-RPC connection and
+  fragmentation, session/personal topics, history, send deduplication,
+  authoritative filter updates, mute state, token refresh, and the invariant
+  that PeerJS contains no chat payload.
 - **Gameplay UI** (`tests/e2e/gameplay.spec.js`): play vs computer as white and
   black, computer replies, illegal-move rejection, hint, new game, resign /
   game-over — on Chromium and WebKit/iPad.
@@ -40,7 +44,8 @@ an iPad simulator. `test:ios` is kept out of `test:precommit` because
   flow, login/register screens, board renders 32 pieces, no uncaught errors.
 - **Live AGS** (`tests/e2e/live/`): password login + profile + logout,
   leaderboard + stats fetch, friends list, achievements modal, matchmaking
-  ticket create/cancel, and a two-player online match with move sync over PeerJS.
+  ticket create/cancel, and a two-player online match with move sync over PeerJS
+  plus text delivery over AGS Chat.
 
 ## Live tests setup
 
@@ -52,6 +57,10 @@ npm run test:live
 Without `.env.test`, the live specs **skip** (they don't fail), so
 `test:precommit` still passes on a machine without credentials. The two-player
 online match needs the optional `TEST_USER_2_*` account.
+
+The live Chat assertion also requires Chat to be enabled and the
+`chess-quickmatch` session template to use `textChat: true` and
+`textChatMode: GAME`.
 
 Live tests run against real AGS through the vite dev server proxy (which avoids
 CORS), so they need network access to the configured AccelByte environment.

@@ -25,6 +25,7 @@ export default defineConfig(({ mode, command }) => {
       '/friends':      { target: agsTarget, changeOrigin: true },
       '/presence':     { target: agsTarget, changeOrigin: true },
       '/lobby':        { target: agsTarget, changeOrigin: true, ws: true },
+      '/chat':         { target: agsTarget, changeOrigin: true },
       '/social':       { target: agsTarget, changeOrigin: true },
       '/leaderboard':  { target: agsTarget, changeOrigin: true },
       '/match2':           { target: agsTarget, changeOrigin: true },

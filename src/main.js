@@ -1,9 +1,10 @@
 import { Peer } from 'peerjs'
+import { ConfigApi as ChatConfigApi, TopicApi as ChatTopicApi } from '@accelbyte/sdk-chat'
 import { loginWithGoogle, loginWithApple, loginWithPassword, requestPasswordReset, resetPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
 import { setQueueUIHandler, cancelLoginQueue } from './login-queue.js'
 import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
-import { installSessionKeepAlive, scheduleProactiveRefresh } from './session.js'
+import { installSessionKeepAlive, scheduleProactiveRefresh, subscribeAccessTokenRefresh } from './session.js'
 import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
 import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave } from './stats.js'
 import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache, fetchMergedAchievements } from './achievements.js'
@@ -14,9 +15,58 @@ import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
+import {
+  moderateIncomingChat,
+  moderateIncomingDisplayName,
+  moderateOutgoingChat,
+} from './content-moderation.mjs'
+import { createAgsChatClient } from './chat.mjs'
 
 window.Peer = Peer
+window.chessContentModeration = Object.freeze({
+  moderateIncomingChat,
+  moderateIncomingDisplayName,
+  moderateOutgoingChat,
+})
 window.agsPublicAppURL = import.meta.env.VITE_PUBLIC_APP_URL || 'https://junaili.github.io/chess/'
+
+const chatClient = createAgsChatClient({
+  baseURL: import.meta.env.VITE_ACCELBYTE_BASE_URL ||
+    'https://seal-chessags.prod.gamingservices.accelbyte.io',
+  namespace: import.meta.env.VITE_ACCELBYTE_NAMESPACE || 'seal-chessags',
+  getAccessToken: () => sdk.getToken()?.accessToken || '',
+  getUserId: () => currentUserId || '',
+  loadHistory: async topicId => {
+    const response = await ChatTopicApi(sdk).getChats_ByTopic(topicId, {
+      limit: 100,
+      order: 'DESC',
+    })
+    return response.data
+  },
+})
+
+chatClient.subscribeState(state => window.handleAGSChatState?.(state))
+chatClient.subscribeMessages(message => window.handleAGSChatMessage?.(message))
+subscribeAccessTokenRefresh(accessToken => {
+  chatClient.refreshToken(accessToken).catch(() => {})
+})
+
+window.agsPrepareSessionChat = () => chatClient.prepareSessionChat()
+window.agsActivateSessionChat = sessionId => chatClient.activateSessionChat(sessionId)
+window.agsActivatePersonalChat = otherUserId => chatClient.activatePersonalChat(otherUserId)
+window.agsSendChatMessage = message => chatClient.send(message)
+window.agsDeactivateChat = () => chatClient.deactivateTopic()
+window.agsGetChatState = () => chatClient.snapshot()
+
+async function connectAuthenticatedChat() {
+  try {
+    const response = await ChatConfigApi(sdk).getConfig_ByNamespace()
+    window.agsChatConfig = response.data
+  } catch (error) {
+    console.warn('[Chat] could not read public configuration:', error?.response?.data || error?.message)
+  }
+  return chatClient.connect()
+}
 
 function getShareableAppURL(params = {}) {
   const native = !!window.Capacitor?.isNativePlatform?.()
@@ -249,6 +299,9 @@ function showInviteScreen(inviterName) {
 async function hydrateAuthenticatedUser(profile) {
   currentUserId = profile.userId
   window.agsCurrentUserId = currentUserId
+  connectAuthenticatedChat().catch(error => {
+    console.warn('[Chat] connection unavailable:', error?.message || error)
+  })
   // Flush any events queued before authentication (invite_link_clicked, etc.)
   // and expose the send function to non-module scripts (app.js).
   await flushPendingEvents()
@@ -460,6 +513,7 @@ async function initAuth() {
       stopInviteJoinUpdates()
       currentUserId = null
       window.agsCurrentUserId = null
+      chatClient.disconnect()
       updateAuthUI(false, null, null)
       updateStatsUI(null)
       refreshLeaderboard()
@@ -471,6 +525,7 @@ async function initAuth() {
     stopInviteJoinUpdates()
     currentUserId = null
     window.agsCurrentUserId = null
+    chatClient.disconnect()
     updateAuthUI(false, null, null)
     updateStatsUI(null)
     refreshLeaderboard()
@@ -534,6 +589,7 @@ async function initAuth() {
     seenIncomingRequestIds = null
     currentStreak = 0
     clearUnlockedCache()
+    chatClient.disconnect()
     await signOutPresence()
     await logout()
   }
@@ -739,6 +795,7 @@ async function initAuth() {
     stopPresenceUpdates()
     stopGameInviteUpdates()
     stopInviteJoinUpdates()
+    chatClient.disconnect()
     await signOutPresence()
     await logout()
   }
@@ -1031,7 +1088,9 @@ async function initAuth() {
     const nameEl = document.getElementById('profile-display-name')
     const form = document.getElementById('profile-name-edit-form')
     const input = document.getElementById('profile-name-edit-input')
+    const message = document.getElementById('profile-name-edit-message')
     if (!form || !input) return
+    if (message) message.textContent = ''
     input.value = nameEl?.textContent || ''
     form.style.display = ''
     input.focus()
@@ -1040,20 +1099,37 @@ async function initAuth() {
   window.agsProfileCancelEdit = () => {
     const form = document.getElementById('profile-name-edit-form')
     if (form) form.style.display = 'none'
+    const message = document.getElementById('profile-name-edit-message')
+    if (message) message.textContent = ''
   }
   window.agsProfileSaveName = async () => {
     const input = document.getElementById('profile-name-edit-input')
     const saveBtn = document.getElementById('profile-btn-save-name')
     const nameEl = document.getElementById('profile-display-name')
     const form = document.getElementById('profile-name-edit-form')
+    const message = document.getElementById('profile-name-edit-message')
     if (!input) return
     const newName = input.value.trim()
-    if (!newName) return
+    if (!newName) {
+      if (message) {
+        message.className = 'auth-message error'
+        message.textContent = 'Enter a display name.'
+      }
+      return
+    }
+    if (message) message.textContent = ''
     if (saveBtn) saveBtn.disabled = true
     const updated = await updateDisplayName(newName)
     if (saveBtn) saveBtn.disabled = false
-    if (updated) {
-      const name = getDisplayName(updated)
+    if (!updated.ok) {
+      if (message) {
+        message.className = 'auth-message error'
+        message.textContent = updated.error
+      }
+      return
+    }
+    if (updated.data) {
+      const name = getDisplayName(updated.data)
       cacheDisplayName(currentUserId, name)
       if (nameEl) nameEl.textContent = name
       const homeNameEl = document.getElementById('ags-signedin-name')
@@ -1067,7 +1143,9 @@ async function initAuth() {
     const nameEl = document.getElementById('ags-signedin-name')
     const form = document.getElementById('name-edit-form')
     const input = document.getElementById('name-edit-input')
+    const message = document.getElementById('name-edit-message')
     if (!form || !input) return
+    if (message) message.textContent = ''
     input.value = nameEl?.textContent || ''
     form.style.display = ''
     input.focus()
@@ -1077,20 +1155,37 @@ async function initAuth() {
   window.agsCancelEdit = () => {
     const form = document.getElementById('name-edit-form')
     if (form) form.style.display = 'none'
+    const message = document.getElementById('name-edit-message')
+    if (message) message.textContent = ''
   }
 
   window.agsSaveName = async () => {
     const input = document.getElementById('name-edit-input')
     const saveBtn = document.getElementById('btn-save-name')
     const form = document.getElementById('name-edit-form')
+    const message = document.getElementById('name-edit-message')
     if (!input) return
     const newName = input.value.trim()
-    if (!newName) return
+    if (!newName) {
+      if (message) {
+        message.className = 'auth-message error'
+        message.textContent = 'Enter a display name.'
+      }
+      return
+    }
+    if (message) message.textContent = ''
     if (saveBtn) saveBtn.disabled = true
     const updated = await updateDisplayName(newName)
     if (saveBtn) saveBtn.disabled = false
-    if (updated) {
-      const name = getDisplayName(updated)
+    if (!updated.ok) {
+      if (message) {
+        message.className = 'auth-message error'
+        message.textContent = updated.error
+      }
+      return
+    }
+    if (updated.data) {
+      const name = getDisplayName(updated.data)
       cacheDisplayName(currentUserId, name)
       document.getElementById('ags-signedin-name').textContent = name
       if (typeof window.setPlayerFromAGS === 'function') window.setPlayerFromAGS(name)

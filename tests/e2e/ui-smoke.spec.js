@@ -46,6 +46,25 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#screen-home')).toBeVisible();
   });
 
+  test('registration and chat filters reject inappropriate language locally', async ({ page }) => {
+    await gotoApp(page);
+    await page.getByRole('button', { name: 'Create Free Account' }).click();
+    await page.locator('#ags-register-email').fill('test@example.com');
+    await page.locator('#ags-register-display-name').fill('f.u.c.k');
+    await page.locator('#ags-register-password').fill('not-a-real-password');
+    await page.locator('#ags-register-minimum-age').check();
+    await page.locator('#ags-register-submit').click();
+
+    await expect(page.locator('#ags-register-message')).toContainText(/inappropriate language/i);
+    await expect(page.locator('#ags-register-submit')).toBeEnabled();
+
+    const chatResult = await page.evaluate(() =>
+      window.chessContentModeration.moderateOutgoingChat('fuck you')
+    );
+    expect(chatResult.ok).toBe(false);
+    expect(chatResult.error).toMatch(/not sent/i);
+  });
+
   test('board renders 32 pieces when a guest game starts', async ({ page }) => {
     await gotoApp(page);
     await openGuestColorSelect(page);

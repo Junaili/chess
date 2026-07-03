@@ -2,6 +2,7 @@ import { IamUserAuthorizationClient, OAuth20ExtensionApi, UsersApi } from '@acce
 import { sdk } from './ags-client.js'
 import { isQueueTicket, runLoginQueue } from './login-queue.js'
 import { getDeviceId } from './anon-id.js'
+import { moderateIncomingDisplayName, validateDisplayNameLocally } from './content-moderation.mjs'
 
 // True when running inside the Capacitor native shell (iOS app), where the
 // app is served from capacitor://localhost and in-WebView OAuth redirects are
@@ -429,6 +430,9 @@ export async function registerWithPassword({ emailAddress, displayName, password
   if (reachMinimumAge !== true) {
     return { ok: false, error: 'Confirm that you meet the minimum age requirement.' }
   }
+  const displayNameValidation = await validateDisplayName(displayName)
+  if (!displayNameValidation.ok) return displayNameValidation
+  displayName = displayNameValidation.value
   const { baseURL, namespace } = getAuthConfig()
   const payload = {
     authType: 'EMAILPASSWD',
@@ -472,7 +476,8 @@ export async function getProfile() {
 }
 
 export function getDisplayName(profile) {
-  return profile?.displayName || profile?.userName || profile?.emailAddress || ''
+  const displayName = profile?.displayName || profile?.userName || profile?.emailAddress || ''
+  return moderateIncomingDisplayName(displayName, 'Player')
 }
 
 export async function syncBasicProfile(displayName) {
@@ -482,13 +487,44 @@ export async function syncBasicProfile(displayName) {
   // profile upsert probes, which makes successful login look broken in DevTools.
 }
 
-export async function updateDisplayName(displayName) {
+export async function validateDisplayName(displayName) {
+  const localResult = validateDisplayNameLocally(displayName)
+  if (!localResult.ok) return localResult
+
   try {
-    const res = await UsersApi(sdk).patchUserMe_v3({ displayName })
-    return res.data
+    const response = await UsersApi(sdk).createUserInputValidation_v3({
+      displayName: localResult.value,
+      uniqueDisplayName: localResult.value,
+    })
+    if (response.data?.valid === false) {
+      return {
+        ok: false,
+        error: response.data.message || 'Choose a display name without inappropriate language.',
+      }
+    }
+  } catch (error) {
+    // AGS validation is authoritative when available. Keep the local filter as
+    // the offline fallback so temporary validation-service failures do not
+    // prevent account creation or profile edits.
+    console.warn('[AGS] display-name validation unavailable; using local filter:', error?.response?.status || error?.message)
+  }
+
+  return localResult
+}
+
+export async function updateDisplayName(displayName) {
+  const validation = await validateDisplayName(displayName)
+  if (!validation.ok) return validation
+
+  try {
+    const res = await UsersApi(sdk).patchUserMe_v3({ displayName: validation.value })
+    return { ok: true, data: res.data }
   } catch (e) {
     console.error('[AGS] updateDisplayName:', e?.response?.data || e?.message)
-    return null
+    return {
+      ok: false,
+      error: extractErrorMessage(e?.response?.data, 'Could not update your display name.'),
+    }
   }
 }
 

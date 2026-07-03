@@ -2315,6 +2315,22 @@ input[type="checkbox"] {
   letter-spacing: 0.04em;
 }
 
+.online-chat-status[data-state="connecting"],
+.online-chat-status[data-state="activating"],
+.online-chat-status[data-state="reconnecting"] {
+  color: #c2d6ff;
+  background: rgba(126, 166, 255, 0.12);
+  border-color: rgba(126, 166, 255, 0.2);
+}
+
+.online-chat-status[data-state="muted"],
+.online-chat-status[data-state="unavailable"],
+.online-chat-status[data-state="error"] {
+  color: #ffb8b3;
+  background: rgba(194, 59, 48, 0.13);
+  border-color: rgba(194, 59, 48, 0.22);
+}
+
 .online-chat-messages {
   flex: 1;
   min-height: 130px;
@@ -2374,6 +2390,14 @@ input[type="checkbox"] {
 .online-chat-compose {
   display: flex;
   gap: 8px;
+}
+
+.online-chat-notice {
+  min-height: 1.1rem;
+  margin: 0;
+  color: #ff998f;
+  font-size: 0.76rem;
+  line-height: 1.4;
 }
 
 .online-chat-input:disabled {

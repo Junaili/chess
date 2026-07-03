@@ -15,12 +15,26 @@ import { refreshSession, hasStoredSession } from './auth.js'
 let refreshPromise = null
 let refreshTimer = null
 let installed = false
+const accessTokenRefreshListeners = new Set()
+
+export function subscribeAccessTokenRefresh(listener) {
+  accessTokenRefreshListeners.add(listener)
+  return () => accessTokenRefreshListeners.delete(listener)
+}
 
 // Single-flight refresh: concurrent callers (interceptor, timer, resume) share
 // one in-flight refresh instead of stampeding the token endpoint.
 export function refreshOnce() {
   if (!refreshPromise) {
-    refreshPromise = Promise.resolve(refreshSession()).finally(() => { refreshPromise = null })
+    refreshPromise = Promise.resolve(refreshSession())
+      .then(result => {
+        const accessToken = sdk.getToken()?.accessToken
+        if (result?.ok && accessToken) {
+          for (const listener of accessTokenRefreshListeners) listener(accessToken)
+        }
+        return result
+      })
+      .finally(() => { refreshPromise = null })
   }
   return refreshPromise
 }

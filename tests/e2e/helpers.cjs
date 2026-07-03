@@ -7,7 +7,7 @@ const APP_PATH = '/chess/';
 const BACKEND_PATTERNS = [
   '**/iam/**', '**/basic/**', '**/cloudsave/**', '**/friends/**',
   '**/presence/**', '**/lobby/**', '**/social/**', '**/leaderboard/**',
-  '**/match2/**', '**/session/**', '**/game-telemetry/**', '**/achievement/**',
+  '**/match2/**', '**/session/**', '**/chat/**', '**/game-telemetry/**', '**/achievement/**',
   '**/peerjs/**', 'https://0.peerjs.com/**', 'https://api4.ipify.org/**',
 ];
 
