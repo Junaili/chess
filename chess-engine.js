@@ -19,6 +19,9 @@ class ChessGame {
     this.status = 'playing';
     this.winner = null;
     this.lastMoveHint = null;
+    this.halfmoveClock = 0;
+    this.positionCounts = new Map();
+    this._recordCurrentPosition();
   }
 
   _createInitialBoard() {
@@ -248,9 +251,73 @@ class ChessGame {
     return this.isAttacked(king.r, king.c, color === 'white' ? 'black' : 'white');
   }
 
+  _hasLegalEnPassantCapture() {
+    const target = this.enPassantTarget;
+    if (!target) return false;
+    const pawnRow = this.currentTurn === 'white' ? target.r + 1 : target.r - 1;
+    for (const pawnCol of [target.c - 1, target.c + 1]) {
+      if (!this.isValidSquare(pawnRow, pawnCol)) continue;
+      const pawn = this.board[pawnRow][pawnCol];
+      if (pawn?.type !== 'pawn' || pawn.color !== this.currentTurn) continue;
+      if (this.getLegalMoves(pawnRow, pawnCol).some(move =>
+        move.enPassant && move.toR === target.r && move.toC === target.c
+      )) return true;
+    }
+    return false;
+  }
+
+  _positionKey() {
+    const pieceCodes = {
+      white: { pawn:'P', knight:'N', bishop:'B', rook:'R', queen:'Q', king:'K' },
+      black: { pawn:'p', knight:'n', bishop:'b', rook:'r', queen:'q', king:'k' }
+    };
+    const board = this.board
+      .map(row => row.map(piece => piece ? pieceCodes[piece.color][piece.type] : '.').join(''))
+      .join('/');
+    const rights = [
+      this.castlingRights.white.kingSide ? 'K' : '',
+      this.castlingRights.white.queenSide ? 'Q' : '',
+      this.castlingRights.black.kingSide ? 'k' : '',
+      this.castlingRights.black.queenSide ? 'q' : '',
+    ].join('') || '-';
+    const ep = this._hasLegalEnPassantCapture()
+      ? `${this.enPassantTarget.r},${this.enPassantTarget.c}`
+      : '-';
+    return `${board} ${this.currentTurn} ${rights} ${ep}`;
+  }
+
+  _recordCurrentPosition() {
+    const key = this._positionKey();
+    this.positionCounts.set(key, (this.positionCounts.get(key) || 0) + 1);
+  }
+
+  _currentPositionCount() {
+    return this.positionCounts.get(this._positionKey()) || 0;
+  }
+
+  hasInsufficientMaterial() {
+    const nonKings = [];
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const piece = this.board[r][c];
+        if (!piece || piece.type === 'king') continue;
+        if (piece.type === 'pawn' || piece.type === 'rook' || piece.type === 'queen') return false;
+        nonKings.push({ ...piece, r, c });
+      }
+    }
+
+    if (nonKings.length <= 1) return true;
+    if (nonKings.every(piece => piece.type === 'bishop')) {
+      const squareColors = new Set(nonKings.map(piece => (piece.r + piece.c) % 2));
+      return squareColors.size === 1;
+    }
+    return false;
+  }
+
   _updateStatus() {
     const color = this.currentTurn;
     const moves = this.getAllLegalMoves(color);
+    this.winner = null;
     if (moves.length === 0) {
       if (this.isInCheck(color)) {
         this.status = 'checkmate';
@@ -258,6 +325,12 @@ class ChessGame {
       } else {
         this.status = 'stalemate';
       }
+    } else if (this.hasInsufficientMaterial()) {
+      this.status = 'draw-insufficient';
+    } else if (this.halfmoveClock >= 100) {
+      this.status = 'draw-fifty-move';
+    } else if (this._currentPositionCount() >= 3) {
+      this.status = 'draw-repetition';
     } else if (this.isInCheck(color)) {
       this.status = 'check';
     } else {
@@ -275,7 +348,10 @@ class ChessGame {
     const piece = this.board[fr][fc];
     const captured = this.board[toR][toC];
 
-    // Record history for undo
+    // Record history for a future undo. Nothing reads the prev* fields yet
+    // (the AI searches on clones, not undo); they are kept complete so an undo
+    // can be added without a schema change. Note: undo would also need to
+    // decrement positionCounts for the position being left.
     const record = {
       fr, fc, toR, toC,
       piece: { ...piece },
@@ -284,7 +360,8 @@ class ChessGame {
       promType,
       prevEP: this.enPassantTarget,
       prevCR: JSON.parse(JSON.stringify(this.castlingRights)),
-      prevStatus: this.status
+      prevStatus: this.status,
+      prevHalfmoveClock: this.halfmoveClock
     };
 
     // Track captures
@@ -322,6 +399,9 @@ class ChessGame {
     this.enPassantTarget = move.doublePush
       ? { r: piece.color === 'white' ? toR + 1 : toR - 1, c: toC }
       : null;
+    this.halfmoveClock = piece.type === 'pawn' || captured || move.enPassant
+      ? 0
+      : this.halfmoveClock + 1;
 
     // Castling rights
     if (piece.type === 'king') {
@@ -335,6 +415,7 @@ class ChessGame {
 
     this.moveHistory.push(record);
     this.currentTurn = this.currentTurn === 'white' ? 'black' : 'white';
+    this._recordCurrentPosition();
     this._updateStatus();
     return { move, isPromotion };
   }
