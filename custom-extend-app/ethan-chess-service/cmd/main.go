@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -526,8 +527,30 @@ func (a *authMiddleware) introspect(token string) (sub string, active bool, err 
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return "", false, err
 	}
-	if result.Namespace != a.namespace {
+	tokenNamespace := result.Namespace
+	if tokenNamespace == "" {
+		tokenNamespace = namespaceFromAccessToken(token)
+	}
+	if tokenNamespace != a.namespace {
 		return "", false, nil
 	}
 	return result.Sub, result.Active, nil
+}
+
+func namespaceFromAccessToken(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Namespace string `json:"namespace"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	return claims.Namespace
 }

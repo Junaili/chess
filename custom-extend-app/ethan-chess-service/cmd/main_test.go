@@ -174,3 +174,15 @@ func TestAuthMiddlewareWrap(t *testing.T) {
 		}
 	})
 }
+
+func TestNamespaceFromAccessToken(t *testing.T) {
+	t.Parallel()
+
+	token := "eyJhbGciOiJub25lIn0.eyJuYW1lc3BhY2UiOiJzZWFsLWNoZXNzYWdzIn0."
+	if got := namespaceFromAccessToken(token); got != "seal-chessags" {
+		t.Fatalf("namespace: got %q, want seal-chessags", got)
+	}
+	if got := namespaceFromAccessToken("not-a-jwt"); got != "" {
+		t.Fatalf("malformed token namespace: got %q, want empty", got)
+	}
+}
