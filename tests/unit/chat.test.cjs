@@ -203,6 +203,30 @@ test('uses the added-to-topic event when a session topic ID is opaque', async ()
   client.disconnect();
 });
 
+test('skips REST history for session topics and queries history over WebSocket', async () => {
+  let restHistoryCalls = 0;
+  const { client, socket } = await connectedClient({
+    loadHistory: async () => {
+      restHistoryCalls += 1;
+      return [];
+    },
+  });
+  client.prepareSessionChat();
+
+  const activating = client.activateSessionChat('game-session-1');
+  await tick();
+
+  const historyRequest = socket.sent.at(-1);
+  assert.equal(restHistoryCalls, 0);
+  assert.equal(historyRequest.method, 'queryChat');
+  assert.equal(historyRequest.params.topicId, 's.game-session-1');
+  socket.respond(historyRequest, { data: [] });
+  await activating;
+
+  assert.equal(client.snapshot().state, 'ready');
+  client.disconnect();
+});
+
 test('surfaces AGS mute events and disables ready state', async () => {
   const { client, socket } = await connectedClient({ loadHistory: async () => [] });
   const activating = client.activatePersonalChat('user-b');

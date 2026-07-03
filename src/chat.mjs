@@ -468,7 +468,8 @@ export class AgsChatClient {
   }
 
   async _loadTopicHistory(topicId) {
-    if (this.loadHistory) {
+    const useRestHistory = this.loadHistory && !String(topicId || '').startsWith('s.')
+    if (useRestHistory) {
       try {
         const data = await this.loadHistory(topicId)
         return (Array.isArray(data) ? data : [])
