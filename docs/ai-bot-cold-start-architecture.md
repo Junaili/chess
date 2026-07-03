@@ -305,6 +305,9 @@ client connects to. The cold-start machinery (§4, §5) is unchanged.
 
 ## 7. Component: the self-learning loop
 
+> Operational guide (setup, testing, troubleshooting):
+> [`ai-bot-training-setup.md`](./ai-bot-training-setup.md)
+
 All endpoints live in the same Extend app, authenticated by one shared secret
 (`x-trigger-secret` header or `?key=`). Storage is CloudSave **admin game
 records** (server-owned, namespace-level) — requires
