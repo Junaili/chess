@@ -1208,6 +1208,82 @@ input[type="checkbox"] {
   margin: 0;
 }
 
+.profile-account-safety {
+  margin-top: 22px;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.profile-safety-copy,
+.profile-safety-empty {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.profile-blocked-players {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.profile-blocked-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.profile-blocked-row strong,
+.profile-blocked-row span {
+  display: block;
+}
+
+.profile-blocked-row strong {
+  color: #fff8f1;
+  font-size: 0.88rem;
+}
+
+.profile-blocked-row span {
+  max-width: 360px;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+}
+
+.profile-danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.profile-danger-zone strong,
+.profile-danger-zone span {
+  display: block;
+}
+
+.profile-danger-zone strong {
+  color: #ffb8b3;
+}
+
+.profile-danger-zone span {
+  margin-top: 3px;
+  color: var(--text-soft);
+  font-size: 0.76rem;
+}
+
 .profile-history-card {
   margin-top: 22px;
 }
@@ -2304,6 +2380,34 @@ input[type="checkbox"] {
   margin-bottom: 0;
 }
 
+.online-chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-chat-safety,
+.chat-report-button {
+  border: 0;
+  color: var(--text-soft);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.btn-chat-safety {
+  padding: 5px 7px;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.btn-chat-safety:hover,
+.chat-report-button:hover {
+  color: #ffb8b3;
+  background: rgba(194, 59, 48, 0.1);
+}
+
 .online-chat-status {
   padding: 5px 10px;
   border-radius: 999px;
@@ -2372,6 +2476,19 @@ input[type="checkbox"] {
   font-weight: 700;
 }
 
+.chat-message-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chat-report-button {
+  padding: 1px 4px;
+  border-radius: 5px;
+  font-size: 0.64rem;
+}
+
 .chat-message-body {
   padding: 10px 12px;
   border-radius: 16px;
@@ -2418,6 +2535,65 @@ input[type="checkbox"] {
   border-color: rgba(240, 195, 122, 0.32);
   color: var(--accent-2);
   box-shadow: none;
+}
+
+.safety-modal-content,
+.delete-account-modal-content {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.safety-action-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.safety-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 16px;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.safety-field select,
+.safety-field textarea,
+.safety-field input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font: inherit;
+}
+
+.safety-field select,
+.safety-field input {
+  min-height: 44px;
+  padding: 0 12px;
+}
+
+.safety-field textarea {
+  resize: vertical;
+  padding: 11px 12px;
+}
+
+.safety-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 14px;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
+.safety-checkbox input {
+  width: 18px;
+  height: 18px;
 }
 
 .game-status {

@@ -305,6 +305,31 @@ export async function loginWithApple() {
   }
 }
 
+// Account deletion for an Apple-linked user must revoke the Apple grant before
+// AGS deletion is submitted. This obtains a fresh, one-time authorization code
+// from AuthenticationServices but deliberately does not exchange it in the
+// browser. The code is sent directly to the authenticated Extend endpoint.
+export async function reauthorizeAppleForDeletion() {
+  if (!isNativeApp()) {
+    return { ok: false, error: 'Apple reauthorization is only available in the iOS app.' }
+  }
+  try {
+    const { SignInWithApple } = await import('@capacitor-community/apple-sign-in')
+    const result = await SignInWithApple.authorize({
+      clientId: import.meta.env.VITE_ACCELBYTE_APPLE_CLIENT_ID || 'io.github.junaili.chess',
+      redirectURI: import.meta.env.VITE_ACCELBYTE_REDIRECT_URI || 'https://junaili.github.io/chess/',
+      scopes: 'email name',
+    })
+    const authorizationCode = result?.response?.authorizationCode
+    if (!authorizationCode) {
+      return { ok: false, error: 'Apple returned no authorization code. Your account was not deleted.' }
+    }
+    return { ok: true, authorizationCode }
+  } catch (error) {
+    return { ok: false, error: error?.message || 'Apple reauthorization was cancelled.' }
+  }
+}
+
 export async function loginWithPassword(identifier, password) {
   const { baseURL, clientId } = getAuthConfig()
   try {
@@ -540,4 +565,18 @@ export async function logout() {
     window.history.replaceState({}, '', cleanUrl)
     window.location.reload()
   }
+}
+
+export function clearLocalAccountData() {
+  for (const storage of [localStorage, sessionStorage]) {
+    const keys = []
+    for (let index = 0; index < storage.length; index++) {
+      const key = storage.key(index)
+      if (key && (key.startsWith('ags_') || key.startsWith('chess_') || key === 'authorized')) {
+        keys.push(key)
+      }
+    }
+    for (const key of keys) storage.removeItem(key)
+  }
+  sdk.setToken({ accessToken: '', refreshToken: '' })
 }

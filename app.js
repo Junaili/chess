@@ -151,6 +151,8 @@ let chatTransportState = { state: 'idle', detail: '', topicId: '' };
 let pendingChatContext = null;
 let chatActivationKey = '';
 let currentOpponent = null;
+let currentOpponentBlocked = false;
+let activeSafetyReport = null;
 let pendingFriendMatchInvite = null;
 let matchStartedAt = null;
 let matchHistoryRecorded = false;
@@ -328,6 +330,7 @@ async function loadPlayerStats(color, userId) {
 
 function setCurrentOpponent(name, userId) {
   currentOpponent = userId ? { name: name || 'Opponent', userId } : null;
+  currentOpponentBlocked = !!(userId && window.agsIsBlockedPlayer?.(userId));
   window.agsLastOpponent = currentOpponent;
 }
 
@@ -931,13 +934,13 @@ function showGameOver() {
   const isOnline = gameMode === 'online';
   document.getElementById('btn-play-again').style.display = isOnline ? 'none' : '';
   const rematchBtn = document.getElementById('btn-rematch');
-  rematchBtn.style.display = isOnline ? '' : 'none';
+  rematchBtn.style.display = isOnline && !currentOpponentBlocked ? '' : 'none';
   rematchBtn.textContent = 'Rematch';
   rematchBtn.disabled = false;
   setRematchMessage('');
 
   const addFriendBtn = document.getElementById('btn-add-match-friend');
-  if (addFriendBtn) addFriendBtn.style.display = isOnline && currentOpponent?.userId ? '' : 'none';
+  if (addFriendBtn) addFriendBtn.style.display = isOnline && currentOpponent?.userId && !currentOpponentBlocked ? '' : 'none';
   const matchFriendMessage = document.getElementById('match-friend-message');
   if (matchFriendMessage) matchFriendMessage.textContent = '';
   if (isOnline && currentOpponent?.userId && typeof window.agsUpdateMatchFriendAction === 'function') {
@@ -1060,6 +1063,7 @@ function setRematchMessage(text, tone = '') {
 }
 
 function requestRematch() {
+  if (currentOpponentBlocked) return;
   if (document.getElementById('rematch-notification').style.display === 'flex') {
     acceptRematch();
     return;
@@ -1075,6 +1079,7 @@ function requestRematch() {
 }
 
 function acceptRematch() {
+  if (currentOpponentBlocked) return;
   stopGameOverCountdown();
   document.getElementById('rematch-notification').style.display = 'none';
   setRematchMessage('Rematch accepted. Starting...', 'success');
@@ -1214,7 +1219,9 @@ function resetChatState() {
   const messagesEl = document.getElementById('online-chat-messages');
   const inputEl = document.getElementById('online-chat-input');
   if (messagesEl) {
-    messagesEl.innerHTML = '<div class="chat-empty">Chat is available while playing another person online.</div>';
+    messagesEl.innerHTML = currentOpponentBlocked
+      ? '<div class="chat-empty">Chat is hidden because this player is blocked.</div>'
+      : '<div class="chat-empty">Chat is available while playing another person online.</div>';
   }
   if (inputEl) inputEl.value = '';
   showChatModerationMessage();
@@ -1224,9 +1231,10 @@ function updateChatAvailability() {
   const statusEl = document.getElementById('online-chat-status');
   const inputEl = document.getElementById('online-chat-input');
   const sendBtn = document.getElementById('btn-chat-send');
+  const composeEl = document.querySelector('#online-chat .online-chat-compose');
   const isOnline = gameMode === 'online';
   const state = chatTransportState.state || 'idle';
-  const enabled = isOnline && state === 'ready';
+  const enabled = isOnline && state === 'ready' && !currentOpponentBlocked;
   const labels = {
     idle: 'Unavailable',
     connecting: 'Connecting…',
@@ -1240,11 +1248,14 @@ function updateChatAvailability() {
   };
 
   if (statusEl) {
-    statusEl.textContent = isOnline ? (labels[state] || 'Unavailable') : 'Unavailable';
-    statusEl.dataset.state = isOnline ? state : 'unavailable';
+    statusEl.textContent = currentOpponentBlocked
+      ? 'Blocked'
+      : isOnline ? (labels[state] || 'Unavailable') : 'Unavailable';
+    statusEl.dataset.state = currentOpponentBlocked ? 'unavailable' : isOnline ? state : 'unavailable';
   }
   if (inputEl) inputEl.disabled = !enabled;
   if (sendBtn) sendBtn.disabled = !enabled;
+  if (composeEl) composeEl.style.display = currentOpponentBlocked ? 'none' : 'flex';
 }
 
 function renderChatMessages() {
@@ -1252,16 +1263,14 @@ function renderChatMessages() {
   if (!messagesEl) return;
 
   if (chatMessages.length === 0) {
-    messagesEl.innerHTML = '<div class="chat-empty">Chat is available while playing another person online.</div>';
+    messagesEl.innerHTML = currentOpponentBlocked
+      ? '<div class="chat-empty">Chat is hidden because this player is blocked.</div>'
+      : '<div class="chat-empty">Chat is available while playing another person online.</div>';
     return;
   }
 
-  messagesEl.innerHTML = chatMessages.map(m => `
-    <div class="chat-message ${m.side}">
-      <span class="chat-message-meta">${escapeHtml(m.name)}</span>
-      <div class="chat-message-body">${escapeHtml(m.text)}</div>
-    </div>
-  `).join('');
+  messagesEl.textContent = '';
+  for (const message of chatMessages) appendChatMessageToDOM(message);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
@@ -1272,19 +1281,42 @@ function appendChatMessageToDOM(message) {
   if (empty) empty.remove();
   const div = document.createElement('div');
   div.className = 'chat-message ' + message.side;
-  div.innerHTML = `<span class="chat-message-meta">${escapeHtml(message.name)}</span><div class="chat-message-body">${escapeHtml(message.text)}</div>`;
+  const meta = document.createElement('div');
+  meta.className = 'chat-message-meta-row';
+  const name = document.createElement('span');
+  name.className = 'chat-message-meta';
+  name.textContent = message.name;
+  meta.appendChild(name);
+  if (message.side === 'opponent' && message.chatId) {
+    const report = document.createElement('button');
+    report.type = 'button';
+    report.className = 'chat-report-button';
+    report.textContent = 'Report';
+    report.setAttribute('aria-label', `Report message from ${message.name}`);
+    report.addEventListener('click', () => openSafetyReport({ kind: 'message-report', message }));
+    meta.appendChild(report);
+  }
+  const body = document.createElement('div');
+  body.className = 'chat-message-body';
+  body.textContent = message.text;
+  div.append(meta, body);
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function appendChatMessage(side, name, text, chatId = '') {
+function appendChatMessage(side, name, text, metadata = {}) {
+  if (typeof metadata === 'string') metadata = { chatId: metadata };
   const trimmed = String(text || '').trim();
   if (!trimmed) return;
+  const chatId = String(metadata.chatId || '');
   const existing = chatId && chatMessages.find(message => message.chatId === chatId);
   if (existing) {
     if (existing.text !== trimmed || existing.name !== name) {
       existing.text = trimmed;
       existing.name = name || existing.name;
+      existing.topicId = metadata.topicId || existing.topicId;
+      existing.createdAt = metadata.createdAt || existing.createdAt;
+      existing.from = metadata.from || existing.from;
       renderChatMessages();
     }
     return;
@@ -1294,6 +1326,9 @@ function appendChatMessage(side, name, text, chatId = '') {
     side,
     name: name || (side === 'self' ? 'You' : 'Opponent'),
     text: trimmed,
+    topicId: String(metadata.topicId || ''),
+    createdAt: metadata.createdAt || Date.now(),
+    from: String(metadata.from || ''),
   };
   chatMessages.push(message);
   if (chatMessages.length > 100) chatMessages = chatMessages.slice(-100);
@@ -1310,7 +1345,7 @@ function getChatErrorMessage(error) {
 }
 
 async function sendChatMessage() {
-  if (gameMode !== 'online' || chatTransportState.state !== 'ready') return;
+  if (gameMode !== 'online' || chatTransportState.state !== 'ready' || currentOpponentBlocked) return;
   const inputEl = document.getElementById('online-chat-input');
   if (!inputEl) return;
 
@@ -1363,15 +1398,186 @@ window.handleAGSChatState = function(state) {
 window.handleAGSChatMessage = function(message) {
   if (gameMode !== 'online' || !message) return;
   const isSelf = message.from === window.agsCurrentUserId;
+  if (!isSelf && currentOpponentBlocked) return;
   const name = isSelf
     ? moderateIncomingDisplayName(getCurrentPlayerDisplayName(), 'You')
     : moderateIncomingDisplayName(currentOpponent?.name, 'Opponent');
   const text = moderateIncomingChat(message.message);
-  if (text) appendChatMessage(isSelf ? 'self' : 'opponent', name, text, message.chatId);
+  if (text) {
+    appendChatMessage(isSelf ? 'self' : 'opponent', name, text, {
+      chatId: message.chatId,
+      topicId: message.topicId,
+      createdAt: message.createdAt,
+      from: message.from,
+    });
+  }
 };
 
+function setSafetyMessage(id, text, tone = '') {
+  const element = document.getElementById(id);
+  if (!element) return;
+  element.className = `auth-message${tone ? ` ${tone}` : ''}`;
+  element.textContent = text || '';
+}
+
+function openMatchSafety() {
+  if (gameMode !== 'online' || !currentOpponent?.userId || !window.agsCurrentUserId) {
+    showChatModerationMessage('Sign in and join an online match to use player safety tools.');
+    return;
+  }
+  const modal = document.getElementById('match-safety-modal');
+  const context = document.getElementById('match-safety-opponent');
+  const blockButton = document.getElementById('btn-block-current-opponent');
+  if (context) context.textContent = `Report or block ${currentOpponent.name || 'this opponent'}. Blocking will not end the current game.`;
+  if (blockButton) {
+    blockButton.disabled = currentOpponentBlocked;
+    blockButton.textContent = currentOpponentBlocked ? 'Player Blocked' : 'Block Player';
+  }
+  setSafetyMessage('match-safety-message', '');
+  if (modal) modal.style.display = 'flex';
+}
+
+async function openSafetyReport(target) {
+  if (!currentOpponent?.userId || !window.agsCurrentUserId) return;
+  activeSafetyReport = target;
+  const modal = document.getElementById('report-player-modal');
+  const title = document.getElementById('report-player-title');
+  const context = document.getElementById('report-player-context');
+  const reasonSelect = document.getElementById('report-player-reason');
+  const comment = document.getElementById('report-player-comment');
+  const block = document.getElementById('report-player-block');
+  const submit = document.getElementById('btn-submit-player-report');
+  if (title) title.textContent = target.kind === 'message-report' ? 'Report Message' : 'Report Player';
+  if (context) {
+    context.textContent = target.kind === 'message-report'
+      ? `Report this message from ${currentOpponent.name || 'your opponent'}.`
+      : `Report ${currentOpponent.name || 'this opponent'}.`;
+  }
+  if (reasonSelect) {
+    reasonSelect.disabled = true;
+    reasonSelect.innerHTML = '<option value="">Loading reasons…</option>';
+  }
+  if (comment) comment.value = '';
+  if (block) {
+    block.checked = false;
+    block.disabled = currentOpponentBlocked;
+  }
+  if (submit) submit.disabled = true;
+  setSafetyMessage('report-player-message', '');
+  closeModal('match-safety-modal');
+  if (modal) modal.style.display = 'flex';
+
+  const result = await window.agsGetSafetyReasons?.();
+  if (!activeSafetyReport || !reasonSelect || !submit) return;
+  if (!result?.ok) {
+    reasonSelect.innerHTML = '<option value="">Reasons unavailable</option>';
+    setSafetyMessage('report-player-message', result?.error || 'Could not load report reasons.', 'error');
+    return;
+  }
+  reasonSelect.textContent = '';
+  for (const reason of result.reasons || []) {
+    const option = document.createElement('option');
+    option.value = reason.title;
+    option.textContent = reason.title;
+    if (reason.description) option.title = reason.description;
+    reasonSelect.appendChild(option);
+  }
+  if (!reasonSelect.options.length) {
+    reasonSelect.innerHTML = '<option value="">No report reasons configured</option>';
+    setSafetyMessage('report-player-message', 'Player Safety report reasons are not configured.', 'error');
+    return;
+  }
+  reasonSelect.disabled = false;
+  submit.disabled = false;
+}
+
+function reportCurrentOpponent() {
+  openSafetyReport({ kind: 'player-report' });
+}
+
+async function submitSafetyReport() {
+  if (!activeSafetyReport || !currentOpponent?.userId) return;
+  const reason = document.getElementById('report-player-reason')?.value || '';
+  const comment = document.getElementById('report-player-comment')?.value || '';
+  const shouldBlock = document.getElementById('report-player-block')?.checked === true;
+  const submit = document.getElementById('btn-submit-player-report');
+  if (!reason) return;
+  if (submit) submit.disabled = true;
+  setSafetyMessage('report-player-message', 'Submitting report…');
+
+  const input = {
+    userId: currentOpponent.userId,
+    reason,
+    comment,
+  };
+  const result = activeSafetyReport.kind === 'message-report'
+    ? await window.agsReportChatMessage?.({ ...input, message: activeSafetyReport.message })
+    : await window.agsReportPlayer?.(input);
+
+  if (!result?.ok) {
+    if (submit) submit.disabled = false;
+    setSafetyMessage('report-player-message', result?.error || 'The report could not be submitted.', 'error');
+    return;
+  }
+
+  if (shouldBlock && !currentOpponentBlocked) {
+    const blockResult = await window.agsBlockPlayer?.(currentOpponent.userId);
+    if (!blockResult?.ok) {
+      setSafetyMessage('report-player-message', `Report submitted, but blocking failed: ${blockResult?.error || 'try again.'}`, 'error');
+      return;
+    }
+  }
+  setSafetyMessage('report-player-message', 'Report submitted. Thank you.', 'success');
+  window.setTimeout(closeSafetyReport, 700);
+}
+
+function closeSafetyReport() {
+  activeSafetyReport = null;
+  closeModal('report-player-modal');
+}
+
+async function blockCurrentOpponent() {
+  if (!currentOpponent?.userId || currentOpponentBlocked) return;
+  const button = document.getElementById('btn-block-current-opponent');
+  if (button) button.disabled = true;
+  setSafetyMessage('match-safety-message', 'Blocking player…');
+  const result = await window.agsBlockPlayer?.(currentOpponent.userId);
+  if (!result?.ok) {
+    if (button) button.disabled = false;
+    setSafetyMessage('match-safety-message', result?.error || 'Could not block this player.', 'error');
+    return;
+  }
+  if (button) button.textContent = 'Player Blocked';
+  setSafetyMessage('match-safety-message', 'Player blocked. The current game will continue.', 'success');
+}
+
+window.handleAGSPlayerBlocked = function(userId) {
+  if (!currentOpponent?.userId || currentOpponent.userId !== userId) return;
+  currentOpponentBlocked = true;
+  chatMessages = [];
+  chatTransportState = {
+    state: 'unavailable',
+    detail: 'Chat is hidden because this player is blocked.',
+    topicId: '',
+  };
+  window.agsDeactivateChat?.();
+  resetChatState();
+  updateChatAvailability();
+  const rematchButton = document.getElementById('btn-rematch');
+  const friendButton = document.getElementById('btn-add-match-friend');
+  if (rematchButton) rematchButton.style.display = 'none';
+  if (friendButton) friendButton.style.display = 'none';
+  document.getElementById('rematch-notification').style.display = 'none';
+};
+
+window.openMatchSafety = openMatchSafety;
+window.reportCurrentOpponent = reportCurrentOpponent;
+window.submitSafetyReport = submitSafetyReport;
+window.closeSafetyReport = closeSafetyReport;
+window.blockCurrentOpponent = blockCurrentOpponent;
+
 async function activateChatForCurrentMatch() {
-  if (gameMode !== 'online') return;
+  if (gameMode !== 'online' || currentOpponentBlocked) return;
   let key = '';
   let activation = null;
   if (pendingChatContext?.type === 'session' && pendingChatContext.sessionId) {
@@ -1772,6 +1978,7 @@ function setupPeerConnection(conn, role) {
         showScreen('home');
       }, 2500);
     } else if (data.type === 'rematch_request') {
+      if (currentOpponentBlocked) return;
       if (rematchPending && connRole === 'host') {
         // Both clicked Rematch simultaneously — host takes initiative
         sendRematchStart();
@@ -1788,6 +1995,7 @@ function setupPeerConnection(conn, role) {
       }
       // If rematchPending && joiner, just wait — host will send rematch_start
     } else if (data.type === 'rematch_accept') {
+      if (currentOpponentBlocked) return;
       // Only the host receives this (joiner accepted host's request)
       sendRematchStart();
     } else if (data.type === 'rematch_decline') {
@@ -1797,6 +2005,7 @@ function setupPeerConnection(conn, role) {
       setRematchMessage('Your opponent declined the rematch request.', 'muted');
       if (document.getElementById('game-over-modal').style.display === 'flex') startGameOverCountdown();
     } else if (data.type === 'rematch_start') {
+      if (currentOpponentBlocked) return;
       playerColor = data.yourColor;
       startRematch();
     }

@@ -142,6 +142,14 @@ func main() {
 	// Referral report → unlock the inviter's chess-recruiter achievement (auth required)
 	mux.Handle(basePath+"/referral", corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(referralHandler))))
 
+	// Native account deletion. The authenticated user comes from token
+	// introspection; Apple credentials and the AGS S2S client stay server-side.
+	accountDeletion := newAccountDeletionHandlerFromEnv()
+	mux.Handle(basePath+"/account/deletion-requirements",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(accountDeletion.requirements))))
+	mux.Handle(basePath+"/account/deletion",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(accountDeletion.deleteAccount))))
+
 	// Bot self-learning: game intake from the AMS bot DS (shared-secret auth)
 	mux.HandleFunc(basePath+"/bot/games", handler.BotGamesHandler(os.Getenv("BOT_TRIGGER_SECRET"), botID))
 

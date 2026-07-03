@@ -1,6 +1,6 @@
 import { Peer } from 'peerjs'
 import { ConfigApi as ChatConfigApi, TopicApi as ChatTopicApi } from '@accelbyte/sdk-chat'
-import { loginWithGoogle, loginWithApple, loginWithPassword, requestPasswordReset, resetPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession } from './auth.js'
+import { loginWithGoogle, loginWithApple, loginWithPassword, requestPasswordReset, resetPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession, clearLocalAccountData } from './auth.js'
 import { setQueueUIHandler, cancelLoginQueue } from './login-queue.js'
 import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
@@ -21,6 +21,21 @@ import {
   moderateOutgoingChat,
 } from './content-moderation.mjs'
 import { createAgsChatClient } from './chat.mjs'
+import {
+  blockPlayer,
+  fetchPlayerSafetyReasons,
+  getSafetyError,
+  listBlockedPlayers,
+  reportChatMessage,
+  reportPlayer,
+  unblockPlayer,
+} from './safety.js'
+import {
+  authorizeAppleDeletionIfRequired,
+  fetchDeletionRequirements,
+  submitAccountDeletion,
+  validateDeletionConfirmation,
+} from './account-deletion.js'
 
 window.Peer = Peer
 window.chessContentModeration = Object.freeze({
@@ -97,6 +112,8 @@ let unsubscribeLobbyOpen = null
 let activeProfileUser = null
 let spectatorPrevScreen = null
 let profileMatchHistoryRows = []
+let blockedPlayers = []
+let deletionRequirements = null
 
 function setAuthMessage(kind, text, tone = '') {
   const el = document.getElementById(`ags-${kind}-message`)
@@ -319,6 +336,12 @@ async function hydrateAuthenticatedUser(profile) {
   startInviteJoinUpdates()
   startFriendsRefresh()
   await refreshFriendsUI()
+  try {
+    blockedPlayers = await listBlockedPlayers()
+  } catch (error) {
+    blockedPlayers = []
+    console.warn('[AGS safety] blocked-player list unavailable:', getSafetyError(error))
+  }
 
   const urlParams = new URLSearchParams(window.location.search)
   const invitedBy = urlParams.get('invitedBy')
@@ -946,8 +969,64 @@ async function initAuth() {
   window.agsRequestLastOpponent = async () => {
     const opponent = window.agsLastOpponent
     if (!opponent?.userId) return
+    if (blockedPlayers.some(item => item.userId === opponent.userId)) return
     await runFriendAction(() => requestFriend(opponent.userId), 'Friend request sent.')
     await updatePostMatchFriendAction(opponent)
+  }
+  window.agsGetSafetyReasons = async () => {
+    try {
+      return { ok: true, reasons: await fetchPlayerSafetyReasons() }
+    } catch (error) {
+      return { ok: false, error: getSafetyError(error, 'Could not load report reasons.') }
+    }
+  }
+  window.agsReportChatMessage = async input => {
+    try {
+      return { ok: true, data: await reportChatMessage(input) }
+    } catch (error) {
+      return { ok: false, error: getSafetyError(error, 'Could not report this message.') }
+    }
+  }
+  window.agsReportPlayer = async input => {
+    try {
+      return { ok: true, data: await reportPlayer(input) }
+    } catch (error) {
+      return { ok: false, error: getSafetyError(error, 'Could not report this player.') }
+    }
+  }
+  window.agsBlockPlayer = async userId => {
+    try {
+      await blockPlayer(userId)
+      if (!blockedPlayers.some(item => item.userId === userId)) {
+        blockedPlayers.push({ userId, blockedAt: new Date().toISOString() })
+      }
+      window.handleAGSPlayerBlocked?.(userId)
+      await refreshFriendsUI(false)
+      renderBlockedPlayers()
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: getSafetyError(error, 'Could not block this player.') }
+    }
+  }
+  window.agsUnblockPlayer = async userId => {
+    try {
+      await unblockPlayer(userId)
+      blockedPlayers = blockedPlayers.filter(item => item.userId !== userId)
+      renderBlockedPlayers()
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: getSafetyError(error, 'Could not unblock this player.') }
+    }
+  }
+  window.agsIsBlockedPlayer = userId => blockedPlayers.some(item => item.userId === userId)
+  window.agsOpenDeleteAccount = openDeleteAccountModal
+  window.agsUpdateDeleteConfirmation = updateDeleteAccountConfirmation
+  window.agsConfirmDeleteAccount = confirmAccountDeletion
+  window.agsCloseDeleteAccount = () => {
+    const modal = document.getElementById('delete-account-modal')
+    if (modal) modal.style.display = 'none'
+    deletionRequirements = null
+    setAccountDeletionMessage('')
   }
   window.agsGetStats = (userId) => fetchStats(userId)
   window.agsGetToken = () => sdk.getToken()?.accessToken ?? null
@@ -1268,6 +1347,7 @@ async function openPublicProfile(userId, displayName = '') {
   const addBtn = document.getElementById('profile-add-friend-btn')
   const matchHistoryEl = document.getElementById('profile-match-history')
   const matchHistoryCountEl = document.getElementById('profile-match-history-count')
+  const accountSafetyCard = document.getElementById('profile-account-safety')
 
   const editBtn = document.getElementById('profile-btn-edit-name')
   const editForm = document.getElementById('profile-name-edit-form')
@@ -1276,6 +1356,7 @@ async function openPublicProfile(userId, displayName = '') {
   if (nameEl) nameEl.textContent = displayName || userId.slice(0, 8)
   if (editBtn) editBtn.style.display = 'none'
   if (editForm) editForm.style.display = 'none'
+  if (accountSafetyCard) accountSafetyCard.style.display = 'none'
 
   if (!currentUserId) {
     profileMatchHistoryRows = []
@@ -1326,6 +1407,8 @@ async function openPublicProfile(userId, displayName = '') {
   if (userId === currentUserId) {
     if (statusEl) statusEl.textContent = 'This is your profile.'
     if (editBtn) editBtn.style.display = ''
+    if (accountSafetyCard) accountSafetyCard.style.display = ''
+    renderBlockedPlayers()
     return
   }
 
@@ -1363,6 +1446,139 @@ async function openPublicProfile(userId, displayName = '') {
     addBtn.textContent = 'Add Friend'
   }
   activeProfileUser = { userId, displayName, action: 'request' }
+}
+
+function renderBlockedPlayers() {
+  const list = document.getElementById('profile-blocked-players')
+  const count = document.getElementById('profile-blocked-count')
+  if (!list) return
+  if (count) count.textContent = String(blockedPlayers.length)
+  list.textContent = ''
+  if (!blockedPlayers.length) {
+    const empty = document.createElement('p')
+    empty.className = 'profile-safety-empty'
+    empty.textContent = 'You have not blocked any players.'
+    list.appendChild(empty)
+    return
+  }
+
+  const names = resolveDisplayNames(blockedPlayers.map(item => ({ userId: item.userId })))
+  for (const player of blockedPlayers) {
+    const row = document.createElement('div')
+    row.className = 'profile-blocked-row'
+    const identity = document.createElement('div')
+    const name = document.createElement('strong')
+    name.textContent = names[player.userId] || `Player ${player.userId.slice(0, 8)}`
+    const id = document.createElement('span')
+    id.textContent = player.userId
+    identity.append(name, id)
+
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'btn-mini'
+    button.textContent = 'Unblock'
+    button.addEventListener('click', async () => {
+      button.disabled = true
+      const result = await window.agsUnblockPlayer?.(player.userId)
+      if (!result?.ok) {
+        button.disabled = false
+        const message = document.getElementById('profile-safety-message')
+        if (message) {
+          message.className = 'auth-message error'
+          message.textContent = result?.error || 'Could not unblock this player.'
+        }
+      }
+    })
+    row.append(identity, button)
+    list.appendChild(row)
+  }
+}
+
+function setAccountDeletionMessage(text, tone = '') {
+  const message = document.getElementById('delete-account-message')
+  if (!message) return
+  message.className = `auth-message${tone ? ` ${tone}` : ''}`
+  message.textContent = text || ''
+}
+
+async function openDeleteAccountModal() {
+  const modal = document.getElementById('delete-account-modal')
+  const input = document.getElementById('delete-account-confirmation')
+  const submit = document.getElementById('delete-account-submit')
+  if (!modal || !currentUserId) return
+  deletionRequirements = null
+  modal.style.display = 'flex'
+  if (input) {
+    input.value = ''
+    input.disabled = true
+  }
+  if (submit) submit.disabled = true
+  setAccountDeletionMessage('Checking account deletion requirements…')
+  try {
+    deletionRequirements = await fetchDeletionRequirements()
+    if (input) {
+      input.disabled = false
+      input.focus()
+    }
+    setAccountDeletionMessage(
+      deletionRequirements.appleReauthorizationRequired
+        ? 'This account uses Sign in with Apple. Apple will ask you to authenticate once more before deletion.'
+        : 'This action cannot be undone. Type DELETE to continue.'
+    )
+  } catch (error) {
+    setAccountDeletionMessage(error?.message || 'Account deletion is temporarily unavailable.', 'error')
+  }
+}
+
+function updateDeleteAccountConfirmation() {
+  const input = document.getElementById('delete-account-confirmation')
+  const submit = document.getElementById('delete-account-submit')
+  if (submit) submit.disabled = !deletionRequirements || !validateDeletionConfirmation(input?.value)
+}
+
+async function confirmAccountDeletion() {
+  const input = document.getElementById('delete-account-confirmation')
+  const submit = document.getElementById('delete-account-submit')
+  const confirmation = input?.value || ''
+  if (!deletionRequirements || !validateDeletionConfirmation(confirmation)) {
+    setAccountDeletionMessage('Type DELETE exactly to confirm.', 'error')
+    return
+  }
+  if (submit) submit.disabled = true
+  if (input) input.disabled = true
+  try {
+    setAccountDeletionMessage(
+      deletionRequirements.appleReauthorizationRequired
+        ? 'Waiting for Sign in with Apple…'
+        : 'Submitting deletion request…'
+    )
+    const appleAuthorizationCode = await authorizeAppleDeletionIfRequired(deletionRequirements)
+    setAccountDeletionMessage('Submitting deletion request…')
+    await submitAccountDeletion({ confirmation, appleAuthorizationCode })
+    setAccountDeletionMessage('Deletion accepted. Signing out…', 'success')
+
+    stopFriendsRefresh()
+    stopPresenceUpdates()
+    stopGameInviteUpdates()
+    stopInviteJoinUpdates()
+    clearUnlockedCache()
+    chatClient.disconnect()
+    clearLiveMatch()
+    try {
+      await signOutPresence()
+    } catch {}
+    clearLocalAccountData()
+    currentUserId = null
+    window.agsCurrentUserId = null
+    window.setTimeout(() => {
+      window.history.replaceState({}, '', window.location.pathname)
+      window.location.reload()
+    }, 500)
+  } catch (error) {
+    if (input) input.disabled = false
+    if (submit) submit.disabled = !validateDeletionConfirmation(input?.value)
+    setAccountDeletionMessage(error?.message || 'Deletion failed. Your account was not deleted.', 'error')
+  }
 }
 
 async function requestProfileFriend(profile) {
@@ -1889,6 +2105,11 @@ async function updatePostMatchFriendAction(opponent) {
   const note = document.getElementById('match-friend-message')
   if (!btn || !note) return
   if (!opponent?.userId || opponent.userId === currentUserId) {
+    btn.style.display = 'none'
+    note.textContent = ''
+    return
+  }
+  if (blockedPlayers.some(item => item.userId === opponent.userId)) {
     btn.style.display = 'none'
     note.textContent = ''
     return

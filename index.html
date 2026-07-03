@@ -244,6 +244,22 @@
         <p id="profile-friend-status" class="auth-message"></p>
         <button class="btn btn-primary" id="profile-add-friend-btn" onclick="window.agsProfileAddFriend && window.agsProfileAddFriend()">Add Friend</button>
       </div>
+      <section id="profile-account-safety" class="profile-account-safety" style="display:none">
+        <div class="profile-history-head">
+          <h3>Account &amp; Safety</h3>
+          <span><span id="profile-blocked-count">0</span> blocked</span>
+        </div>
+        <p class="profile-safety-copy">Manage players you blocked or permanently delete your account.</p>
+        <div id="profile-blocked-players" class="profile-blocked-players"></div>
+        <p id="profile-safety-message" class="auth-message" aria-live="polite"></p>
+        <div class="profile-danger-zone">
+          <div>
+            <strong>Delete account</strong>
+            <span>Request permanent deletion of your account and game data.</span>
+          </div>
+          <button type="button" class="btn btn-danger" onclick="window.agsOpenDeleteAccount && window.agsOpenDeleteAccount()">Delete Account</button>
+        </div>
+      </section>
       <section class="profile-history-card">
         <div class="profile-history-head">
           <h3>Match History</h3>
@@ -511,7 +527,10 @@
         <div class="online-chat" id="online-chat" style="display:none">
           <div class="online-chat-header">
             <h3>Match Chat</h3>
-            <span class="online-chat-status" id="online-chat-status" data-state="connecting">Connecting…</span>
+            <div class="online-chat-header-actions">
+              <span class="online-chat-status" id="online-chat-status" data-state="connecting">Connecting…</span>
+              <button type="button" class="btn-chat-safety" id="btn-match-safety" onclick="openMatchSafety()" aria-label="Open match safety options" title="Report or block opponent">Safety</button>
+            </div>
           </div>
           <div class="online-chat-messages" id="online-chat-messages"></div>
           <div class="online-chat-compose">
@@ -641,6 +660,65 @@
       <p id="game-over-countdown" class="game-over-countdown"></p>
       <p id="match-friend-message" class="auth-message"></p>
       <div id="game-over-invite-prompt" class="game-over-invite-prompt"></div>
+    </div>
+  </div>
+
+  <!-- ── Player Safety Modals ─────────────────────────────────────────────── -->
+  <div id="match-safety-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="match-safety-title">
+    <div class="modal-content safety-modal-content">
+      <h2 id="match-safety-title">Match Safety</h2>
+      <p id="match-safety-opponent">Choose an action for this opponent.</p>
+      <div class="safety-action-list">
+        <button type="button" class="btn btn-secondary" onclick="reportCurrentOpponent()">Report Player</button>
+        <button type="button" class="btn btn-danger" id="btn-block-current-opponent" onclick="blockCurrentOpponent()">Block Player</button>
+      </div>
+      <p id="match-safety-message" class="auth-message" aria-live="polite"></p>
+      <div class="modal-buttons">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('match-safety-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="report-player-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="report-player-title">
+    <div class="modal-content safety-modal-content">
+      <h2 id="report-player-title">Report Player</h2>
+      <p id="report-player-context">Tell us what happened.</p>
+      <label class="safety-field">
+        <span>Reason</span>
+        <select id="report-player-reason" disabled>
+          <option>Loading reasons…</option>
+        </select>
+      </label>
+      <label class="safety-field">
+        <span>Additional details (optional)</span>
+        <textarea id="report-player-comment" maxlength="500" rows="4" placeholder="Do not include passwords or other sensitive information."></textarea>
+      </label>
+      <label class="safety-checkbox">
+        <input type="checkbox" id="report-player-block" />
+        <span>Block this player after reporting</span>
+      </label>
+      <p id="report-player-message" class="auth-message" aria-live="polite"></p>
+      <div class="modal-buttons">
+        <button type="button" class="btn btn-primary" id="btn-submit-player-report" onclick="submitSafetyReport()" disabled>Submit Report</button>
+        <button type="button" class="btn btn-secondary" onclick="closeSafetyReport()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Account Deletion Modal ───────────────────────────────────────────── -->
+  <div id="delete-account-modal" class="modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-account-title">
+    <div class="modal-content delete-account-modal-content">
+      <h2 id="delete-account-title">Delete Account</h2>
+      <p>Permanently deleting your account removes access to your profile, friends, stats, achievements, and match history. This cannot be undone.</p>
+      <label class="safety-field">
+        <span>Type <strong>DELETE</strong> to confirm</span>
+        <input id="delete-account-confirmation" type="text" autocomplete="off" autocapitalize="characters" oninput="window.agsUpdateDeleteConfirmation && window.agsUpdateDeleteConfirmation()" disabled />
+      </label>
+      <p id="delete-account-message" class="auth-message" aria-live="polite"></p>
+      <div class="modal-buttons">
+        <button type="button" class="btn btn-danger" id="delete-account-submit" onclick="window.agsConfirmDeleteAccount && window.agsConfirmDeleteAccount()" disabled>Delete My Account</button>
+        <button type="button" class="btn btn-secondary" onclick="window.agsCloseDeleteAccount && window.agsCloseDeleteAccount()">Cancel</button>
+      </div>
     </div>
   </div>
 
