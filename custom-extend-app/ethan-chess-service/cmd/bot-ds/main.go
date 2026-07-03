@@ -37,6 +37,7 @@ func main() {
 	botDir := flag.String("bot-dir", "bots/gambit-gus", "bot directory (persona/style/brain)")
 	watchdogURL := flag.String("watchdog-url", envOr("AMS_WATCHDOG_URL", "ws://localhost:5555/watchdog"), "AMS watchdog websocket URL")
 	heartbeat := flag.Duration("heartbeat", 5*time.Second, "watchdog heartbeat interval")
+	serveAddr := flag.String("serve-addr", "", "local game-serving address, e.g. :8090 (dev: lets a browser play the bot over WebRTC via POST /offer)")
 	envFile := flag.String("env", ".env", "AGS credentials env file")
 	flag.Parse()
 
@@ -51,9 +52,20 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Local dev: serve games directly so a browser can play the bot over WebRTC
+	// without AMS/AGS signaling. (On a real fleet, signaling comes via AGS.)
+	localServe := *serveAddr != ""
+	if localServe {
+		serveGames(*serveAddr, bot)
+	}
+
 	// 1. Connect to the AMS watchdog and announce readiness.
 	wd := NewWatchdog(*watchdogURL)
 	wd.OnDrain(func() {
+		if localServe {
+			log.Printf("bot-ds: drain received (ignored — local serve mode keeps hosting games)")
+			return
+		}
 		log.Printf("bot-ds: draining — will finish the active session and exit")
 		stop()
 	})

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"sync"
 	"time"
@@ -11,13 +12,12 @@ import (
 
 // Watchdog is the DS-side client for the AMS local watchdog. The DS connects via
 // WebSocket (default ws://localhost:5555/watchdog), announces "ready" once it can
-// serve a session, heartbeats to stay healthy, and exits cleanly on "drain".
-// (AMS DS states: Creating -> Ready -> In Session -> Draining.)
+// serve a session, sends a "heartbeat" at least every 15s to stay healthy, and
+// exits cleanly on "drain". (AMS DS states: Creating -> Ready -> In Session ->
+// Draining.)
 //
-// NOTE: the exact watchdog message wire format must be confirmed against the
-// official AMS watchdog protocol / AccelByte DS SDK before production — the
-// field names here are a placeholder. The semantics (ready / heartbeat / drain)
-// and the transport (ws localhost:5555/watchdog) follow the AMS docs.
+// AMS watchdog messages are JSON objects keyed by the message type with an object
+// value, e.g. {"ready":{}}, {"heartbeat":{}}, and (received) {"drain":{}}.
 type Watchdog struct {
 	url     string
 	conn    *websocket.Conn
@@ -43,16 +43,21 @@ func (w *Watchdog) Connect(ctx context.Context) error {
 	return nil
 }
 
-type wdMessage struct {
-	Type string `json:"type"` // placeholder: "ready" | "heartbeat" | "drain"
-}
-
 // SendReady tells the watchdog the DS can now be allocated to a session.
-func (w *Watchdog) SendReady() error { return w.send(wdMessage{Type: "ready"}) }
+func (w *Watchdog) SendReady() error { return w.sendType("ready") }
 
-// StartHeartbeat sends periodic heartbeats until ctx is cancelled.
+// SendHeartbeat keeps the DS marked healthy.
+func (w *Watchdog) SendHeartbeat() error { return w.sendType("heartbeat") }
+
+// ResetSessionTimeout optionally extends the session timeout (e.g. a long game).
+func (w *Watchdog) ResetSessionTimeout() error { return w.sendType("resetSessionTimeout") }
+
+// StartHeartbeat sends a heartbeat on an interval until ctx is cancelled. AMS
+// expects one at least every 15s.
 func (w *Watchdog) StartHeartbeat(ctx context.Context, every time.Duration) {
 	go func() {
+		// Send one immediately so the DS is marked healthy right after ready.
+		_ = w.SendHeartbeat()
 		t := time.NewTicker(every)
 		defer t.Stop()
 		for {
@@ -60,28 +65,34 @@ func (w *Watchdog) StartHeartbeat(ctx context.Context, every time.Duration) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				_ = w.send(wdMessage{Type: "heartbeat"})
+				_ = w.SendHeartbeat()
 			}
 		}
 	}()
 }
 
-func (w *Watchdog) send(m wdMessage) error {
+// sendType writes a watchdog message of the form {"<msgType>":{}}.
+func (w *Watchdog) sendType(msgType string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.conn == nil || w.closed {
 		return nil
 	}
-	return w.conn.WriteJSON(m)
+	return w.conn.WriteJSON(map[string]map[string]any{msgType: {}})
 }
 
 func (w *Watchdog) readLoop() {
 	for {
-		var m wdMessage
-		if err := w.conn.ReadJSON(&m); err != nil {
+		_, data, err := w.conn.ReadMessage()
+		if err != nil {
 			return
 		}
-		if m.Type == "drain" {
+		log.Printf("watchdog <- %s", data) // debug: raw inbound message
+		var msg map[string]json.RawMessage
+		if json.Unmarshal(data, &msg) != nil {
+			continue
+		}
+		if _, ok := msg["drain"]; ok {
 			log.Printf("watchdog: drain received")
 			if w.onDrain != nil {
 				w.onDrain()
