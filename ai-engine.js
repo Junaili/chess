@@ -80,7 +80,7 @@ class ChessAI {
   evaluate(game) {
     if (game.status === 'checkmate')
       return game.winner === 'white' ? 100000 : -100000;
-    if (game.status === 'stalemate') return 0;
+    if (game.status === 'stalemate' || game.status.startsWith('draw-')) return 0;
 
     let score = 0;
     for (let r = 0; r < 8; r++) {
@@ -95,7 +95,7 @@ class ChessAI {
   }
 
   minimax(game, depth, alpha, beta, maximizing) {
-    if (depth === 0 || game.status === 'checkmate' || game.status === 'stalemate')
+    if (depth === 0 || game.status === 'checkmate' || game.status === 'stalemate' || game.status.startsWith('draw-'))
       return this.evaluate(game);
 
     const color = maximizing ? 'white' : 'black';
@@ -137,6 +137,8 @@ class ChessAI {
     clone.capturedByBlack = [...game.capturedByBlack];
     clone.status = game.status;
     clone.winner = game.winner;
+    clone.halfmoveClock = game.halfmoveClock;
+    clone.positionCounts = new Map(game.positionCounts);
     clone.moveHistory = [];
     return clone;
   }

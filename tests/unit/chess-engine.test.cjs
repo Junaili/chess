@@ -110,6 +110,84 @@ test('detects threefold repetition', () => {
   assert.equal(game.status, 'draw-repetition');
 });
 
+test('captures reset the fifty-move counter', () => {
+  const game = new ChessGame();
+  assert.ok(move(game, 'e2', 'e4'));
+  assert.ok(move(game, 'd7', 'd5'));
+  game.halfmoveClock = 42;
+  assert.ok(move(game, 'e4', 'd5')); // pawn takes pawn
+  assert.equal(game.halfmoveClock, 0);
+});
+
+test('single knight is insufficient material', () => {
+  const game = emptyGame();
+  game.board[7][4] = { type: 'king', color: 'white', hasMoved: true };
+  game.board[5][5] = { type: 'knight', color: 'white', hasMoved: true };
+  game.board[0][4] = { type: 'king', color: 'black', hasMoved: true };
+  game._updateStatus();
+  assert.equal(game.status, 'draw-insufficient');
+});
+
+test('opposite-colored bishops are NOT insufficient material', () => {
+  const game = emptyGame();
+  game.board[7][4] = { type: 'king', color: 'white', hasMoved: true };
+  game.board[6][3] = { type: 'bishop', color: 'white', hasMoved: true }; // (6+3)%2 = 1
+  game.board[1][3] = { type: 'bishop', color: 'black', hasMoved: true }; // (1+3)%2 = 0
+  game.board[0][4] = { type: 'king', color: 'black', hasMoved: true };
+  game._updateStatus();
+  assert.equal(game.status, 'playing');
+});
+
+test('a rook is NOT insufficient material', () => {
+  const game = emptyGame();
+  game.board[7][4] = { type: 'king', color: 'white', hasMoved: true };
+  game.board[6][0] = { type: 'rook', color: 'white', hasMoved: true };
+  game.board[0][4] = { type: 'king', color: 'black', hasMoved: true };
+  game._updateStatus();
+  assert.equal(game.status, 'playing');
+});
+
+test('losing castling rights breaks position repetition', () => {
+  // Rook shuffles that RETURN to the same squares are not "the same position"
+  // the first time around: the initial position still had castling rights and
+  // the returned one does not, so their repetition keys differ.
+  const game = emptyGame();
+  game.board[7][4] = { type: 'king', color: 'white', hasMoved: false };
+  game.board[7][7] = { type: 'rook', color: 'white', hasMoved: false };
+  game.board[0][4] = { type: 'king', color: 'black', hasMoved: false };
+  game.board[0][7] = { type: 'rook', color: 'black', hasMoved: false };
+  game.castlingRights = {
+    white: { kingSide: true, queenSide: false },
+    black: { kingSide: true, queenSide: false },
+  };
+  game.positionCounts = new Map();
+  game._recordCurrentPosition();
+
+  const shuffle = () => {
+    assert.ok(game.makeMove(7, 7, 6, 7)); // Rh1-h2
+    assert.ok(game.makeMove(0, 7, 1, 7)); // Rh8-h7
+    assert.ok(game.makeMove(6, 7, 7, 7)); // Rh2-h1
+    assert.ok(game.makeMove(1, 7, 0, 7)); // Rh7-h8
+  };
+
+  shuffle();
+  // Same piece layout as the start, but castling rights differ → count is 1.
+  assert.equal(game._currentPositionCount(), 1);
+  assert.equal(game.status, 'playing');
+
+  shuffle(); // the rights-less position seen a second time
+  assert.equal(game.status, 'playing');
+  shuffle(); // …and a third time → draw
+  assert.equal(game.status, 'draw-repetition');
+});
+
+test('position key only records en passant when a capture is legal', () => {
+  const game = new ChessGame();
+  assert.ok(move(game, 'e2', 'e4')); // double push, but no black pawn can take
+  assert.ok(game.enPassantTarget, 'engine still tracks the ep square internally');
+  assert.ok(game._positionKey().endsWith(' -'), 'key ignores uncapturable ep');
+});
+
 // ─── Piece movement & special moves ──────────────────────────────────────────
 
 test('rejects an illegal move and accepts a legal one', () => {

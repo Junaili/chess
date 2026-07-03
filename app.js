@@ -161,6 +161,25 @@ let gameOverCountdownRemaining = 0;
 let homeIdleTimer = null;
 let homeIdleShown = false;
 
+function isDrawStatus(status) {
+  return status === 'stalemate' || String(status || '').startsWith('draw-');
+}
+
+function isGameOverStatus(status) {
+  return status === 'checkmate' || isDrawStatus(status);
+}
+
+function isGameActiveStatus(status) {
+  return status === 'playing' || status === 'check';
+}
+
+function getDrawMessage(status) {
+  if (status === 'draw-insufficient') return 'Draw by insufficient material.';
+  if (status === 'draw-fifty-move') return 'Draw by the fifty-move rule.';
+  if (status === 'draw-repetition') return 'Draw by threefold repetition.';
+  return 'The game ended in stalemate.';
+}
+
 // ─── Audio State ──────────────────────────────────────────────────────────────
 
 let audioCtx = null;
@@ -538,7 +557,7 @@ function isPlayerTurn() {
 
 function onSquareClick(r, c) {
   if (!isPlayerTurn() || aiThinking || pendingPromotion || connectionLost) return;
-  if (game.status === 'checkmate' || game.status === 'stalemate') return;
+  if (isGameOverStatus(game.status)) return;
 
   const piece = game.board[r][c];
 
@@ -623,7 +642,7 @@ function executeMove(fr, fc, toR, toC, promType) {
   suggestedMoveBeforePlay = null;
   if (gameMode === 'online') window.agsPublishLiveMove?.()
 
-  if (game.status === 'checkmate' || game.status === 'stalemate') {
+  if (isGameOverStatus(game.status)) {
     setTimeout(showGameOver, 600);
     return;
   }
@@ -647,7 +666,7 @@ function applyOpponentMove(fr, fc, toR, toC, promType = 'queen') {
   renderBoard();
   window.agsPublishLiveMove?.()
 
-  if (game.status === 'checkmate' || game.status === 'stalemate')
+  if (isGameOverStatus(game.status))
     setTimeout(showGameOver, 600);
 }
 
@@ -785,7 +804,7 @@ function getTurnStatusText() {
   if (game.status === 'checkmate') {
     return `${game.winner === 'white' ? 'White' : 'Black'} wins by checkmate!`;
   }
-  if (game.status === 'stalemate') return 'Stalemate — Draw!';
+  if (isDrawStatus(game.status)) return getDrawMessage(game.status);
   if (game.status === 'check') {
     return `${game.currentTurn === 'white' ? 'White' : 'Black'} is in check!`;
   }
@@ -809,7 +828,7 @@ function updateStatus(lastMove = null) {
   if (statusBar) {
     statusBar.classList.toggle('status-check', game.status === 'check');
     statusBar.classList.toggle('status-checkmate', game.status === 'checkmate');
-    statusBar.classList.toggle('status-stalemate', game.status === 'stalemate');
+    statusBar.classList.toggle('status-stalemate', isDrawStatus(game.status));
   }
 }
 
@@ -818,7 +837,7 @@ function updateActivePlayerCards() {
   const blackCard = document.getElementById('black-player-card');
   if (!whiteCard || !blackCard || !game) return;
 
-  const active = game.status === 'playing' || game.status === 'check';
+  const active = isGameActiveStatus(game.status);
   whiteCard.classList.toggle('active-player', active && game.currentTurn === 'white');
   blackCard.classList.toggle('active-player', active && game.currentTurn === 'black');
   whiteCard.classList.toggle('waiting-player', active && game.currentTurn !== 'white');
@@ -909,7 +928,7 @@ function showGameOver() {
     if (typeof window.agsIncrementWin === 'function') window.agsIncrementWin();
   } else if (game.status === 'checkmate' && game.winner && game.winner !== playerColor) {
     if (typeof window.agsIncrementLoss === 'function') window.agsIncrementLoss();
-  } else if (game.status === 'stalemate') {
+  } else if (isDrawStatus(game.status)) {
     if (typeof window.agsIncrementDraw === 'function') window.agsIncrementDraw();
   }
   if (typeof window.agsIncrementGamePlayed === 'function') window.agsIncrementGamePlayed(gameMode);
@@ -928,7 +947,7 @@ function showGameOver() {
       msg.textContent = `${winner} wins by checkmate!`;
   } else {
     title.textContent = 'Draw!';
-    msg.textContent = 'The game ended in stalemate.';
+    msg.textContent = getDrawMessage(game.status);
   }
 
   const isOnline = gameMode === 'online';
@@ -980,7 +999,7 @@ function recordMatchHistoryOnce() {
 
   const endedAt = new Date();
   const startedAt = matchStartedAt || endedAt;
-  const result = game.status === 'stalemate'
+  const result = isDrawStatus(game.status)
     ? 'draw'
     : game.winner === playerColor
       ? 'win'
@@ -1661,7 +1680,11 @@ function createOnlineRoom(options = {}) {
     }
 
     const showLink = base => {
-      currentInviteLink = `${base}?peer=${id}`;
+      const inviteUrl = new URL(base, window.location.href);
+      inviteUrl.search = '';
+      inviteUrl.hash = '';
+      inviteUrl.searchParams.set('peer', id);
+      currentInviteLink = inviteUrl.toString();
       document.getElementById('invite-link-text').textContent = currentInviteLink;
       document.getElementById('invite-link-section').style.display = 'block';
       document.getElementById('waiting-sub').textContent = options.friendInvite
@@ -2014,7 +2037,7 @@ function setupPeerConnection(conn, role) {
   conn.on('close', () => {
     if (peerConn !== conn) return;   // stale event from a replaced/manually-closed connection
     if (!game) { peerConn = null; return; }   // pre-game drop — clear so new connections are accepted
-    if (game.status === 'playing' || game.status === 'check') {
+    if (isGameActiveStatus(game.status)) {
       handleConnectionLost();
     }
   });
@@ -2023,7 +2046,7 @@ function setupPeerConnection(conn, role) {
     console.error('Peer connection error:', err);
     if (peerConn !== conn) return;
     if (!game) { peerConn = null; return; }
-    if (game.status === 'playing' || game.status === 'check') {
+    if (isGameActiveStatus(game.status)) {
       handleConnectionLost();
     }
   });
@@ -2444,7 +2467,7 @@ async function sendInviteToContact(name, address, link) {
 // ─── Misc ─────────────────────────────────────────────────────────────────────
 
 function confirmGoHome() {
-  if (game?.status === 'playing' && game.moveHistory.length > 0) {
+  if (isGameActiveStatus(game?.status) && game.moveHistory.length > 0) {
     if (!confirm('Leave this game? The current game will be lost.')) return;
   }
   destroyPeer();
@@ -2452,14 +2475,14 @@ function confirmGoHome() {
 }
 
 function confirmNewGame() {
-  if (game && game.status !== 'checkmate' && game.status !== 'stalemate' && game.moveHistory.length > 0) {
+  if (game && !isGameOverStatus(game.status) && game.moveHistory.length > 0) {
     if (!confirm('Start a new game? The current game will be lost.')) return;
   }
   startGame();
 }
 
 function resignGame() {
-  if (!game || game.status === 'checkmate' || game.status === 'stalemate') return;
+  if (!game || isGameOverStatus(game.status)) return;
   if (gameMode !== 'computer') return;
   if (!confirm('Resign this game? It will count as a loss.')) return;
   game.status = 'checkmate';
@@ -2551,7 +2574,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && gameMode === 'online' && peerConn) {
     lastPongTime = Date.now();
-    if (!peerConn.open && game?.status === 'playing') {
+    if (!peerConn.open && isGameActiveStatus(game?.status)) {
       handleConnectionLost();
     }
   }
@@ -2564,7 +2587,7 @@ window.getSpectatorMatchData = function() {
   const myName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'Player'
   const myUserId = window.agsCurrentUserId || ''
   return {
-    active: game.status === 'playing' || game.status === 'check',
+    active: isGameActiveStatus(game.status),
     moves: game.moveHistory.map(m => ({ fr: m.fr, fc: m.fc, toR: m.toR, toC: m.toC, promType: m.promType })),
     whiteName: playerColor === 'white' ? myName : (currentOpponent?.name || 'Opponent'),
     blackName: playerColor === 'black' ? myName : (currentOpponent?.name || 'Opponent'),
