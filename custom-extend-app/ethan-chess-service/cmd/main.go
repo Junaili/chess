@@ -150,6 +150,15 @@ func main() {
 	mux.Handle(basePath+"/account/deletion",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(accountDeletion.deleteAccount))))
 
+	// Reporting does not expose browser CORS headers. Keep the player token so
+	// AGS records the authenticated player as the reporter, while this service
+	// provides the browser-facing CORS boundary.
+	safety := newSafetyProxyFromEnv()
+	mux.Handle(basePath+"/safety/reasons",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(safety.reasons))))
+	mux.Handle(basePath+"/safety/reports",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(safety.reports))))
+
 	// Bot self-learning: game intake from the AMS bot DS (shared-secret auth)
 	mux.HandleFunc(basePath+"/bot/games", handler.BotGamesHandler(os.Getenv("BOT_TRIGGER_SECRET"), botID))
 
