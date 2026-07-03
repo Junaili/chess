@@ -43,6 +43,7 @@
     "@accelbyte/sdk-leaderboard": "^5.3.4",
     "@accelbyte/sdk-lobby": "^5.2.6",
     "@accelbyte/sdk-matchmaking": "^5.3.4",
+    "@accelbyte/sdk-reporting": "^5.2.7",
     "@accelbyte/sdk-session": "^5.3.4",
     "@accelbyte/sdk-social": "^6.3.4",
     "@capacitor-community/apple-sign-in": "^7.1.0",

@@ -66,7 +66,7 @@ COPY . .
 COPY --from=proto-builder /build/pkg/pb pkg/pb
 COPY --from=proto-builder /build/gateway/apidocs gateway/apidocs
 
-RUN go build -v -o /output/service ./cmd/main.go
+RUN go build -v -o /output/service ./cmd
 
 FROM alpine:3.24.1
 
