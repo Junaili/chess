@@ -79,6 +79,8 @@ RUN mkdir -p gateway/apidocs
 COPY --from=proto-builder /build/gateway/apidocs gateway/apidocs
 COPY --from=builder /output/service service
 COPY third_party third_party
+# Bot persona/style (and the seed brain.json) for the self-learning trainer.
+COPY bots bots
 
 EXPOSE 8000
 
