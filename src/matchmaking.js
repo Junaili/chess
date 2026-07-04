@@ -53,6 +53,11 @@ export async function startMatchmaking(onFound, onTimeout, onError) {
 
   activeTicketId = res.data.matchTicketID
   const deadline = Date.now() + MATCH_TIMEOUT
+  // A ticket that 404s (or errorCode 520303) has expired/been consumed server-
+  // side. Polling a dead ticket for the full 2-min timeout just spams the
+  // console and delays the retry UI. Tolerate one lookup miss (eventual
+  // consistency right after create), then treat it as a timeout.
+  let notFoundStreak = 0
 
   pollTimer = setInterval(async () => {
     if (cancelled) return
@@ -61,9 +66,17 @@ export async function startMatchmaking(onFound, onTimeout, onError) {
     try {
       const r = await MatchTicketsApi(sdk).getMatchTicket_ByTicketid(activeTicketId)
       status = r.data
+      notFoundStreak = 0
     } catch (e) {
       console.warn('[MM] getMatchTicket:', e?.response?.data || e?.message)
-      return  // transient error — keep polling
+      const ticketGone = e?.response?.status === 404 || e?.response?.data?.errorCode === 520303
+      if (ticketGone && ++notFoundStreak >= 2) {
+        stopPolling()
+        activeTicketId = null // already gone server-side; nothing to delete
+        reportResult('timeout', { reason: 'ticket_expired' })
+        onTimeout()
+      }
+      return  // otherwise transient — keep polling
     }
 
     if (status.matchFound) {
