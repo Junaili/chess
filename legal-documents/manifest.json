@@ -1,0 +1,28 @@
+{
+  "displayVersion": "1.0",
+  "localeCode": "en-US",
+  "countryCode": "US",
+  "documents": [
+    {
+      "key": "privacy",
+      "basePolicyName": "Ethans Chess Privacy Policy",
+      "policyName": "Privacy Policy",
+      "description": "How Ethan's Chess collects, uses, protects, retains, and deletes player information.",
+      "source": "privacy-policy.md"
+    },
+    {
+      "key": "terms",
+      "basePolicyName": "Ethans Chess Terms of Use",
+      "policyName": "Terms of Use",
+      "description": "The terms governing access to and use of Ethan's Chess.",
+      "source": "terms-of-use.md"
+    },
+    {
+      "key": "community",
+      "basePolicyName": "Ethans Chess Community Standards",
+      "policyName": "Community Standards",
+      "description": "Player conduct, prohibited content, reporting, blocking, and enforcement standards.",
+      "source": "community-standards.md"
+    }
+  ]
+}
