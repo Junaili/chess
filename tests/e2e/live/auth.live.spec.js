@@ -34,4 +34,18 @@ test.describe('Live AGS auth', () => {
     await expect(page.locator('#ags-signin-btn')).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('#ags-signedin-info')).toBeHidden();
   });
+
+  test('required AGS agreements are accepted and visible in agreement history', async ({ page }) => {
+    await gotoApp(page, { offline: false });
+    await loginWithPassword(page, creds.user1.identifier, creds.user1.password);
+
+    await page.getByRole('button', { name: 'Privacy & Support' }).click();
+    await expect(page.locator('#privacy-center-modal')).toBeVisible();
+
+    const history = page.locator('#ags-accepted-legal-list');
+    await expect(history).toContainText('Privacy Policy', { timeout: 20_000 });
+    await expect(history).toContainText('Terms of Use');
+    await expect(history).toContainText('Community Standards');
+    await expect(history.getByText(/Version 1\.0/)).toHaveCount(3);
+  });
 });

@@ -8,6 +8,7 @@ const BACKEND_PATTERNS = [
   '**/iam/**', '**/basic/**', '**/cloudsave/**', '**/friends/**',
   '**/presence/**', '**/lobby/**', '**/social/**', '**/leaderboard/**',
   '**/match2/**', '**/session/**', '**/chat/**', '**/game-telemetry/**', '**/achievement/**',
+  '**/agreement/**',
   '**/peerjs/**', 'https://0.peerjs.com/**', 'https://api4.ipify.org/**',
 ];
 
@@ -18,8 +19,17 @@ async function blockBackend(page) {
 }
 
 // Navigate to the app. By default the AGS backend is blocked (offline mode).
-async function gotoApp(page, { offline = true } = {}) {
+async function gotoApp(page, { offline = true, privacyChoice = false } = {}) {
   if (offline) await blockBackend(page);
+  if (privacyChoice !== null) {
+    await page.addInitScript(analytics => {
+      localStorage.setItem('chess_privacy_preferences_v1', JSON.stringify({
+        analytics,
+        decided: true,
+        updatedAt: new Date().toISOString(),
+      }));
+    }, privacyChoice === true);
+  }
   await page.goto(APP_PATH);
   await expect(page.locator('#screen-home')).toBeVisible();
 }
@@ -100,6 +110,13 @@ async function loginWithPassword(page, identifier, password) {
   ).toBe(true);
 
   if (await legal.isVisible()) {
+    const reviewButtons = page.locator('#ags-legal-list .legal-review-button:not([disabled])');
+    for (let index = 0; index < await reviewButtons.count(); index += 1) {
+      const popup = page.waitForEvent('popup').catch(() => null);
+      await reviewButtons.nth(index).click();
+      const opened = await popup;
+      if (opened) await opened.close();
+    }
     await page.locator('#ags-legal-confirm').check();
     await page.locator('#ags-legal-accept').click();
     await expect(signedIn).toBeVisible({ timeout: 20_000 });
