@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { gotoApp, openGuestColorSelect } = require('./helpers.cjs');
+const { gotoApp, openGuestColorSelect, blockBackend, APP_PATH } = require('./helpers.cjs');
 
 // Signed-out navigation smoke — verifies the home entry points and the auth /
 // guest screens render and route without throwing. Runs on Chromium (browser)
@@ -44,6 +44,17 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#ags-register-email')).toBeVisible();
     await page.locator('#screen-register .btn-back').click();
     await expect(page.locator('#screen-home')).toBeVisible();
+  });
+
+  test('invite link shows the landing screen and prefills the register email', async ({ page }) => {
+    await blockBackend(page);
+    await page.goto(`${APP_PATH}?invitedBy=test-inviter-id&email=${encodeURIComponent('invitee@example.com')}&utm_medium=email`);
+    await expect(page.locator('#screen-invite')).toBeVisible();
+    await expect(page.locator('#invite-landing-title')).toHaveText(/challenged you to chess/i);
+
+    await page.locator('.btn-invite-cta').click();
+    await expect(page.locator('#screen-register')).toBeVisible();
+    await expect(page.locator('#ags-register-email')).toHaveValue('invitee@example.com');
   });
 
   test('registration and chat filters reject inappropriate language locally', async ({ page }) => {
