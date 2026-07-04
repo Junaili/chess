@@ -48,8 +48,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-BAaSuM1s.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-C0AaFLnd.css">
+  <script type="module" crossorigin src="/chess/assets/index-BctZF5nc.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-Cjd0naRH.css">
 </head>
 <body>
 
@@ -798,6 +798,54 @@
     <div class="vcn-buttons">
       <button class="btn btn-primary"   onclick="acceptVideoCall()">Accept</button>
       <button class="btn btn-secondary" onclick="declineVideoCall()">Decline</button>
+    </div>
+  </div>
+
+  <!-- ── Privacy, legal, and support center ─────────────────────────────────── -->
+  <button type="button" id="privacy-center-button" class="privacy-center-button"
+    onclick="window.agsOpenPrivacyChoices && window.agsOpenPrivacyChoices()">
+    Privacy &amp; Support
+  </button>
+
+  <aside id="privacy-consent-banner" class="privacy-consent-banner" aria-labelledby="privacy-consent-title" hidden>
+    <div>
+      <strong id="privacy-consent-title">Optional game analytics</strong>
+      <p>Help improve Ethan's Chess by sharing device, session, referral, and gameplay events with AccelByte. No advertising.</p>
+    </div>
+    <div class="privacy-consent-actions">
+      <button type="button" class="btn btn-primary" onclick="window.agsChooseAnalytics && window.agsChooseAnalytics(true)">Allow analytics</button>
+      <button type="button" class="btn btn-secondary" onclick="window.agsChooseAnalytics && window.agsChooseAnalytics(false)">No thanks</button>
+      <button type="button" class="privacy-text-button" onclick="window.agsOpenPolicy && window.agsOpenPolicy('privacy')">Privacy policy</button>
+    </div>
+  </aside>
+
+  <div id="privacy-center-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="privacy-center-title">
+    <div class="modal-content privacy-center-content">
+      <p class="auth-eyebrow">Privacy &amp; Support</p>
+      <h2 id="privacy-center-title">Your information, your choice</h2>
+      <p class="privacy-center-copy">Review the documents that govern Ethan's Chess or change optional analytics at any time.</p>
+      <div class="privacy-link-grid">
+        <button type="button" onclick="window.agsOpenPolicy && window.agsOpenPolicy('privacy')">Privacy Policy</button>
+        <button type="button" onclick="window.agsOpenPolicy && window.agsOpenPolicy('terms')">Terms of Use</button>
+        <button type="button" onclick="window.agsOpenPolicy && window.agsOpenPolicy('community')">Community Standards</button>
+        <button type="button" onclick="window.agsOpenPolicy && window.agsOpenPolicy('support')">Support &amp; Contact</button>
+      </div>
+      <section class="accepted-legal-card" aria-labelledby="accepted-legal-title">
+        <h3 id="accepted-legal-title">AGS agreement history</h3>
+        <div id="ags-accepted-legal-list" aria-live="polite"></div>
+      </section>
+      <label class="privacy-choice-row" for="privacy-analytics-toggle">
+        <span>
+          <strong>Optional game analytics</strong>
+          <small>Share device, session, referral, and gameplay events with AccelByte to improve the game. This is not used for advertising.</small>
+        </span>
+        <input type="checkbox" id="privacy-analytics-toggle" role="switch" />
+      </label>
+      <p id="privacy-choice-status" class="auth-message" aria-live="polite"></p>
+      <div class="modal-buttons">
+        <button type="button" class="btn btn-primary" onclick="window.agsSavePrivacyChoices && window.agsSavePrivacyChoices()">Save Choice</button>
+        <button type="button" class="btn btn-secondary" onclick="window.agsClosePrivacyChoices && window.agsClosePrivacyChoices()">Cancel</button>
+      </div>
     </div>
   </div>
 
