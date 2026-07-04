@@ -1,4 +1,5 @@
 import { LeaderboardDataV3Api } from '@accelbyte/sdk-leaderboard'
+import { UsersV4Api } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
 import { moderateIncomingDisplayName } from './content-moderation.mjs'
 
@@ -53,14 +54,40 @@ export async function fetchUserRank(userId) {
   }
 }
 
-// Leaderboard display names come from the score's additionalData (written on
-// every win — see agsIncrementWin → resolveDisplayNames) plus the local name
-// cache (populated when you play or look up a user). We intentionally do NOT
-// fetch AGS Basic public profiles: this game never creates Basic profiles (see
-// syncBasicProfile), so /basic/.../profiles/public always 404s, which spammed
-// the console with red errors on every login/refresh for zero benefit.
-// Kept as a no-op for call-site compatibility.
-export async function enrichDisplayNames(_rankings) {}
+// Leaderboard display names come from the score's additionalData (written on a
+// win — see agsIncrementWin) plus the local name cache (populated when you play
+// or look up a user). Neither is available for a player you've never interacted
+// with on a fresh browser, so their row rendered as a raw user ID. Resolve those
+// via the IAM v4 user lookup — the same reliable path friends use — and cache
+// the result so resolveDisplayNames (called right after) picks it up. We do NOT
+// hit AGS Basic public profiles (this game never creates Basic profiles, so
+// /basic/.../profiles/public always 404s and spammed the console).
+export async function enrichDisplayNames(rankings) {
+  if (!rankings?.length) return
+  try {
+    const cache = JSON.parse(localStorage.getItem(NAME_CACHE_KEY) || '{}')
+    const missing = rankings.filter(
+      entry =>
+        entry?.userId &&
+        !getCachedNameAnyAge(cache, entry.userId) &&
+        !entry.additionalData?.displayName,
+    )
+    if (!missing.length) return
+    const { coreConfig } = sdk.assembly()
+    const v4 = UsersV4Api(sdk, { coreConfig: { ...coreConfig, useSchemaValidation: false } })
+    const results = await Promise.allSettled(
+      missing.map(entry => v4.getUser_ByUserId_v4(entry.userId)),
+    )
+    for (const outcome of results) {
+      if (outcome.status !== 'fulfilled') continue
+      const user = outcome.value?.data
+      const rawName = user?.displayName || user?.uniqueDisplayName
+      if (rawName && user?.userId) cacheDisplayName(user.userId, rawName) // moderates + caches
+    }
+  } catch (e) {
+    console.warn('[AGS lb] enrichDisplayNames:', e?.response?.data || e?.message)
+  }
+}
 
 export function resolveDisplayNames(rankings) {
   if (!rankings.length) return {}
