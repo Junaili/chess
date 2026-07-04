@@ -345,6 +345,22 @@ function addUtm(url, medium, campaign = 'player-invite') {
   }
 }
 
+// Only the invite email itself should carry the recipient's address (it's
+// already been disclosed to that inbox) — the register screen reads it back
+// via ?email= to prefill the field. Links shared through other channels
+// (WhatsApp, X, copy, native share) must stay generic so a forwarded link
+// doesn't leak the original invitee's email to whoever it's shared with.
+function withEmailParam(url, email) {
+  if (!email) return url
+  try {
+    const u = new URL(url)
+    u.searchParams.set('email', email)
+    return u.toString()
+  } catch {
+    return url
+  }
+}
+
 function mountShareRow(containerEl, url, opts = {}) {
   const {
     emailTo = null,
@@ -358,7 +374,7 @@ function mountShareRow(containerEl, url, opts = {}) {
   const linkUrl      = addUtm(url, 'link', campaign)
   const whatsappUrl  = addUtm(url, 'whatsapp', campaign)
   const twitterUrl   = addUtm(url, 'twitter', campaign)
-  const emailUrl     = addUtm(url, 'email', campaign)
+  const emailUrl     = addUtm(withEmailParam(url, emailTo), 'email', campaign)
   const fire = medium => sendEvent(shareEvent, { ...sharePayload, medium })
   // opts.gameText(url) and opts.xText override the default invite wording so
   // achievement shares can say "I just unlocked …" instead.

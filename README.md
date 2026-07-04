@@ -474,6 +474,18 @@ VITE_ACCELBYTE_REDIRECT_URI=https://yourusername.github.io/your-repo/
 
 Only place public client configuration in `.env.production`. Server client secrets belong in the Extend deployment secret store and must never use a `VITE_` prefix.
 
+### Version and publish legal agreements in AGS
+
+Privacy Policy, Terms of Use, and Community Standards are stored in `legal-documents/` and provisioned as mandatory, versioned AGS Legal policies. The manifest display version is immutable after publication: when wording changes, update the source document and bump `displayVersion`.
+
+```bash
+ags auth login
+npm run legal:provision             # read-only plan
+npm run legal:provision -- --apply  # create/upload/commit/publish
+```
+
+The app checks AGS eligibility after login, displays each AGS-hosted localized attachment, and records acceptance with `POST /agreement/public/agreements/policies`. Do not treat the public website mirror as an acceptance record.
+
 ### 4. GitHub Actions workflow
 
 ```yaml
