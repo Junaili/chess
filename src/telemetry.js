@@ -1,6 +1,7 @@
 import { GametelemetryOperationsApi } from '@accelbyte/sdk-gametelemetry'
 import { sdk } from './ags-client.js'
 import { getDeviceId, getSessionId, getPlatform } from './anon-id.js'
+import { hasAnalyticsConsent } from './privacy-preferences.mjs'
 
 // Bump when the stamped payload shape changes, so analytics queries can filter
 // or migrate by version instead of guessing.
@@ -12,6 +13,7 @@ let preAuthQueue = []
 // Capture UTM params and referrer on first load and persist for the session
 // so they survive the Google OAuth redirect (which clears the URL).
 export function captureUtm() {
+  if (!hasAnalyticsConsent()) return
   if (sessionStorage.getItem('chess_utm')) return
   try {
     const p = new URLSearchParams(window.location.search)
@@ -34,6 +36,7 @@ function api() {
 }
 
 async function dispatch(events) {
+  if (!hasAnalyticsConsent()) return
   try {
     await api().createProtectedEvent(events)
   } catch (e) {
@@ -44,6 +47,7 @@ async function dispatch(events) {
 // Send a single event to AGS Game Telemetry. If the user is not yet
 // authenticated the event is queued; call flushPendingEvents() after login.
 export async function sendEvent(eventName, payload = {}) {
+  if (!hasAnalyticsConsent()) return
   const { coreConfig } = sdk.assembly()
   const event = {
     EventNamespace:  coreConfig.namespace,
@@ -70,8 +74,19 @@ export async function sendEvent(eventName, payload = {}) {
 // Deliver any events queued before authentication.
 // Call once immediately after the user's session is established.
 export async function flushPendingEvents() {
+  if (!hasAnalyticsConsent()) {
+    preAuthQueue = []
+    return
+  }
   if (!preAuthQueue.length || !sdk.getToken()?.accessToken) return
   const toSend = preAuthQueue.slice()
   preAuthQueue = []
   await dispatch(toSend)
+}
+
+export function clearPendingEvents() {
+  preAuthQueue = []
+  try {
+    sessionStorage.removeItem('chess_utm')
+  } catch {}
 }

@@ -1,4 +1,13 @@
 import { sdk } from './ags-client.js'
+import {
+  buildAcceptedPolicies,
+  mapAcceptedAgreement,
+  mapEligibilityToDocument,
+  normalizeDocumentLocation,
+  rowsFromLegalPayload,
+} from './legal-data.mjs'
+
+const ACCEPT_RETRY_DELAYS_MS = [0, 750, 1500]
 
 function getLegalConfig() {
   const { coreConfig } = sdk.assembly()
@@ -21,28 +30,54 @@ function getAuthHeaders() {
   }
 }
 
-function pickLocalizedVersion(version) {
-  const localizedVersions = Array.isArray(version?.localizedPolicyVersions) ? version.localizedPolicyVersions : []
-  return localizedVersions.find(item => item?.isDefaultSelection) || localizedVersions[0] || null
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-function mapEligibilityToDocument(entry) {
-  const versions = Array.isArray(entry?.policyVersions) ? entry.policyVersions : []
-  const activeVersion = versions.find(version => version?.isInEffect) || versions[0] || null
-  const localizedVersion = pickLocalizedVersion(activeVersion)
-  if (!activeVersion || !localizedVersion?.id) return null
+async function hydrateLegalDocument(document, baseURL, namespace, authorization) {
+  if (document.attachmentLocation) {
+    const attachmentLocation = normalizeDocumentLocation(
+      document.attachmentLocation,
+      document.baseUrls?.[0],
+    )
+    if (attachmentLocation) {
+      return {
+        ...document,
+        attachmentLocation,
+        loadError: '',
+      }
+    }
+  }
 
-  return {
-    countryCode: entry.countryCode || '',
-    description: entry.description || '',
-    isMandatory: !!entry.isMandatory,
-    localeCode: localizedVersion.localeCode || '',
-    localizedPolicyVersionId: localizedVersion.id,
-    policyId: entry.policyId,
-    policyName: entry.policyName || 'Legal document',
-    policyType: entry.policyType || '',
-    policyVersionDisplay: activeVersion.displayVersion || '',
-    policyVersionId: activeVersion.id,
+  try {
+    const resp = await fetch(
+      `${baseURL}/agreement/public/namespaces/${encodeURIComponent(namespace)}/localized-policy-versions/${encodeURIComponent(document.localizedPolicyVersionId)}`,
+      {
+        method: 'GET',
+        headers: authorization ? { Authorization: authorization } : {},
+        credentials: 'include',
+      },
+    )
+    const payload = await resp.json().catch(() => ({}))
+    if (!resp.ok) throw new Error(payload?.errorMessage || payload?.message || 'Document unavailable.')
+    const localized = payload?.localizedPolicyVersion || payload
+    const attachmentLocation = normalizeDocumentLocation(
+      localized?.attachmentLocation,
+      localized?.baseUrls?.[0] || document.baseUrls?.[0] || baseURL,
+    )
+    return {
+      ...document,
+      description: localized?.description || document.description,
+      localeCode: localized?.localeCode || document.localeCode,
+      contentType: localized?.contentType || document.contentType,
+      attachmentLocation,
+      loadError: attachmentLocation ? '' : 'This document has no published attachment.',
+    }
+  } catch (error) {
+    return {
+      ...document,
+      loadError: error?.message || 'This document could not be loaded.',
+    }
   }
 }
 
@@ -66,16 +101,59 @@ export async function fetchPendingLegalDocuments() {
       return { ok: false, error: payload?.errorMessage || payload?.message || 'Could not load legal documents.', documents: [] }
     }
 
-    const documents = Array.isArray(payload)
-      ? payload
-          .filter(entry => entry && entry.isAccepted === false && entry.isMandatory === true)
-          .map(mapEligibilityToDocument)
-          .filter(Boolean)
-      : []
+    const documents = rowsFromLegalPayload(payload)
+      .filter(entry => entry && entry.isAccepted === false && entry.isMandatory === true)
+      .map(mapEligibilityToDocument)
+      .filter(Boolean)
 
-    return { ok: true, documents }
+    const hydrated = await Promise.all(
+      documents.map(document =>
+        hydrateLegalDocument(document, baseURL, namespace, headers.Authorization),
+      ),
+    )
+    return { ok: true, documents: hydrated }
   } catch (e) {
     return { ok: false, error: e?.message || 'Could not load legal documents.', documents: [] }
+  }
+}
+
+export async function fetchAcceptedLegalDocuments() {
+  const headers = getAuthHeaders()
+  if (!headers) return { ok: true, documents: [] }
+
+  const { baseURL, namespace } = getLegalConfig()
+  try {
+    const resp = await fetch(`${baseURL}/agreement/public/agreements/policies`, {
+      method: 'GET',
+      headers: {
+        Authorization: headers.Authorization,
+      },
+      credentials: 'include',
+    })
+    const payload = await resp.json().catch(() => [])
+    if (!resp.ok) {
+      return {
+        ok: false,
+        error: payload?.errorMessage || payload?.message || 'Could not load accepted legal documents.',
+        documents: [],
+      }
+    }
+
+    const documents = rowsFromLegalPayload(payload)
+      .map(mapAcceptedAgreement)
+      .filter(Boolean)
+    const hydrated = await Promise.all(
+      documents.map(document =>
+        hydrateLegalDocument(document, baseURL, namespace, headers.Authorization),
+      ),
+    )
+    return { ok: true, documents: hydrated }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error?.message || 'Could not load accepted legal documents.',
+      documents: [],
+    }
   }
 }
 
@@ -85,14 +163,7 @@ export async function acceptLegalDocuments(documents) {
     return { ok: false, error: 'Your session expired before the legal documents could be accepted.' }
   }
 
-  const acceptedPolicies = Array.isArray(documents)
-    ? documents.map(doc => ({
-        isAccepted: true,
-        localizedPolicyVersionId: doc.localizedPolicyVersionId,
-        policyId: doc.policyId,
-        policyVersionId: doc.policyVersionId,
-      }))
-    : []
+  const acceptedPolicies = buildAcceptedPolicies(documents)
 
   if (acceptedPolicies.length === 0) {
     return { ok: true, comply: true }
@@ -100,21 +171,30 @@ export async function acceptLegalDocuments(documents) {
 
   const { baseURL } = getLegalConfig()
 
-  try {
-    const resp = await fetch(`${baseURL}/agreement/public/agreements/policies`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(acceptedPolicies),
-      credentials: 'include',
-    })
-
-    const payload = await resp.json().catch(() => ({}))
-    if (!resp.ok) {
-      return { ok: false, error: payload?.errorMessage || payload?.message || 'Could not accept the legal documents.' }
+  let lastError = 'Could not accept the legal documents.'
+  for (let attempt = 0; attempt < ACCEPT_RETRY_DELAYS_MS.length; attempt += 1) {
+    if (ACCEPT_RETRY_DELAYS_MS[attempt]) {
+      await wait(ACCEPT_RETRY_DELAYS_MS[attempt])
     }
-
-    return { ok: true, comply: payload?.comply !== false }
-  } catch (e) {
-    return { ok: false, error: e?.message || 'Could not accept the legal documents.' }
+    try {
+      const resp = await fetch(`${baseURL}/agreement/public/agreements/policies`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(acceptedPolicies),
+        credentials: 'include',
+      })
+      const payload = await resp.json().catch(() => ({}))
+      if (resp.ok) {
+        return { ok: true, comply: payload?.comply !== false }
+      }
+      lastError =
+        payload?.errorMessage ||
+        payload?.message ||
+        'Could not accept the legal documents.'
+      if (resp.status !== 429 && resp.status < 500) break
+    } catch (error) {
+      lastError = error?.message || lastError
+    }
   }
+  return { ok: false, error: lastError }
 }
