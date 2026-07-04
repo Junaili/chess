@@ -5,10 +5,11 @@ import { setQueueUIHandler, cancelLoginQueue } from './login-queue.js'
 import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
 import { installSessionKeepAlive, scheduleProactiveRefresh, subscribeAccessTokenRefresh } from './session.js'
-import { fetchPendingLegalDocuments, acceptLegalDocuments } from './legal.js'
+import { fetchPendingLegalDocuments, fetchAcceptedLegalDocuments, acceptLegalDocuments } from './legal.js'
 import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave } from './stats.js'
 import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache, fetchMergedAchievements } from './achievements.js'
-import { sendEvent, flushPendingEvents, captureUtm } from './telemetry.js'
+import { sendEvent, flushPendingEvents, captureUtm, clearPendingEvents } from './telemetry.js'
+import { readPrivacyPreferences, writePrivacyPreferences } from './privacy-preferences.mjs'
 import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from './spectator.js'
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName } from './leaderboard.js'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
@@ -103,6 +104,8 @@ let currentStreak = 0
 let seenIncomingRequestIds = null  // null until first friends load — avoids notifying for pre-existing requests
 let pendingLegalDocuments = []
 let pendingLegalProfile = null
+let reviewedLegalDocumentIds = new Set()
+let acceptedLegalDocuments = []
 let friendsState = { friends: [], incoming: [], outgoing: [] }
 let friendsRefreshTimer = null
 let unsubscribePresenceUpdates = null
@@ -115,6 +118,178 @@ let profileMatchHistoryRows = []
 let blockedPlayers = []
 let deletionRequirements = null
 
+async function openExternalURL(url) {
+  if (!url) return false
+  if (window.Capacitor?.isNativePlatform?.()) {
+    try {
+      const { Browser } = await import('@capacitor/browser')
+      await Browser.open({ url })
+      return true
+    } catch (error) {
+      console.warn('[External link] could not open:', error?.message || error)
+      return false
+    }
+  }
+  return !!window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+function policyURL(section) {
+  const allowed = new Set(['privacy', 'terms', 'community', 'support'])
+  const target = allowed.has(section) ? section : 'privacy'
+  return new URL(`legal/#${target}`, window.agsPublicAppURL).href
+}
+
+function acceptedDocumentFor(section) {
+  const names = {
+    privacy: 'privacy policy',
+    terms: 'terms of use',
+    community: 'community standards',
+  }
+  return acceptedLegalDocuments.find(document =>
+    document.tags?.includes(section) ||
+    document.policyName?.toLowerCase() === names[section],
+  ) || null
+}
+
+function renderAcceptedLegalDocuments(message = '') {
+  const list = document.getElementById('ags-accepted-legal-list')
+  if (!list) return
+  list.textContent = ''
+
+  if (message) {
+    const status = document.createElement('p')
+    status.className = 'auth-message error'
+    status.textContent = message
+    list.appendChild(status)
+    return
+  }
+  if (!currentUserId) {
+    const status = document.createElement('p')
+    status.className = 'auth-message'
+    status.textContent = 'Sign in to view your AGS agreement history.'
+    list.appendChild(status)
+    return
+  }
+  if (!acceptedLegalDocuments.length) {
+    const status = document.createElement('p')
+    status.className = 'auth-message'
+    status.textContent = 'No accepted AGS legal documents were returned for this account.'
+    list.appendChild(status)
+    return
+  }
+
+  for (const legalDocument of acceptedLegalDocuments) {
+    const row = document.createElement('div')
+    row.className = 'accepted-legal-row'
+    const copy = document.createElement('div')
+    const title = document.createElement('strong')
+    title.textContent = legalDocument.policyName
+    const meta = document.createElement('span')
+    const acceptedDate = legalDocument.acceptedAt
+      ? new Date(legalDocument.acceptedAt).toLocaleDateString()
+      : ''
+    meta.textContent = [
+      legalDocument.policyVersionDisplay ? `Version ${legalDocument.policyVersionDisplay}` : '',
+      acceptedDate ? `Accepted ${acceptedDate}` : 'Accepted in AGS',
+    ].filter(Boolean).join(' · ')
+    copy.append(title, meta)
+    row.appendChild(copy)
+    if (legalDocument.attachmentLocation) {
+      const review = document.createElement('button')
+      review.type = 'button'
+      review.className = 'btn-mini'
+      review.textContent = 'View'
+      review.addEventListener('click', () => openExternalURL(legalDocument.attachmentLocation))
+      row.appendChild(review)
+    }
+    list.appendChild(row)
+  }
+}
+
+async function refreshAcceptedLegalDocuments() {
+  if (!currentUserId) {
+    acceptedLegalDocuments = []
+    renderAcceptedLegalDocuments()
+    return
+  }
+  const accepted = await fetchAcceptedLegalDocuments()
+  if (!accepted.ok) {
+    acceptedLegalDocuments = []
+    renderAcceptedLegalDocuments(accepted.error)
+    return
+  }
+  acceptedLegalDocuments = accepted.documents.filter(document =>
+    document.tags?.includes('ethans-chess') ||
+    ['privacy policy', 'terms of use', 'community standards']
+      .includes(document.policyName?.toLowerCase()),
+  )
+  renderAcceptedLegalDocuments()
+}
+
+async function openPolicyDocument(section) {
+  if (section === 'support' || !currentUserId) {
+    return openExternalURL(policyURL(section))
+  }
+  if (!acceptedLegalDocuments.length) await refreshAcceptedLegalDocuments()
+  const document = acceptedDocumentFor(section)
+  if (!document?.attachmentLocation) {
+    renderAcceptedLegalDocuments(
+      `Your accepted ${section} document is unavailable from AGS. Try again later.`,
+    )
+    return false
+  }
+  return openExternalURL(document.attachmentLocation)
+}
+
+function renderPrivacyChoices() {
+  const preferences = readPrivacyPreferences()
+  const toggle = document.getElementById('privacy-analytics-toggle')
+  const status = document.getElementById('privacy-choice-status')
+  const banner = document.getElementById('privacy-consent-banner')
+  if (toggle) toggle.checked = preferences.analytics
+  if (status) {
+    status.textContent = preferences.decided
+      ? `Optional analytics are ${preferences.analytics ? 'enabled' : 'disabled'}.`
+      : 'You have not made a privacy choice yet.'
+  }
+  if (banner) banner.hidden = preferences.decided
+}
+
+async function saveAnalyticsPreference(analytics) {
+  writePrivacyPreferences({ analytics })
+  if (analytics) {
+    captureUtm()
+    await flushPendingEvents()
+  } else {
+    clearPendingEvents()
+  }
+  renderPrivacyChoices()
+}
+
+function initPrivacyCenter() {
+  window.agsOpenPolicy = section => openPolicyDocument(section)
+  window.agsOpenPrivacyChoices = async () => {
+    renderPrivacyChoices()
+    renderAcceptedLegalDocuments()
+    const modal = document.getElementById('privacy-center-modal')
+    if (modal) modal.style.display = 'flex'
+    await refreshAcceptedLegalDocuments()
+  }
+  window.agsClosePrivacyChoices = () => {
+    const modal = document.getElementById('privacy-center-modal')
+    if (modal) modal.style.display = 'none'
+  }
+  window.agsSavePrivacyChoices = async () => {
+    const enabled = document.getElementById('privacy-analytics-toggle')?.checked === true
+    await saveAnalyticsPreference(enabled)
+    window.agsClosePrivacyChoices()
+  }
+  window.agsChooseAnalytics = async enabled => {
+    await saveAnalyticsPreference(enabled === true)
+  }
+  renderPrivacyChoices()
+}
+
 function setAuthMessage(kind, text, tone = '') {
   const el = document.getElementById(`ags-${kind}-message`)
   if (!el) return
@@ -126,35 +301,6 @@ function clearAuthMessages() {
   setAuthMessage('login', '')
   setAuthMessage('forgot', '')
   setAuthMessage('register', '')
-}
-
-function showInviteConfirmation(invitedBy, onAccept) {
-  const el = document.getElementById('ags-friends-message')
-  if (!el) return
-  el.className = 'auth-message'
-  el.textContent = ''
-
-  const msg = document.createElement('span')
-  msg.textContent = 'You were invited by a friend. Add them?'
-
-  const acceptBtn = document.createElement('button')
-  acceptBtn.className = 'btn-mini success'
-  acceptBtn.textContent = 'Yes, add friend'
-  acceptBtn.style.marginLeft = '8px'
-
-  const declineBtn = document.createElement('button')
-  declineBtn.className = 'btn-mini'
-  declineBtn.textContent = 'No thanks'
-  declineBtn.style.marginLeft = '4px'
-
-  const dismiss = () => { el.textContent = '' }
-
-  acceptBtn.addEventListener('click', () => { dismiss(); onAccept() })
-  declineBtn.addEventListener('click', dismiss)
-
-  el.appendChild(msg)
-  el.appendChild(acceptBtn)
-  el.appendChild(declineBtn)
 }
 
 // Tell the Extend service who referred this newly-registered user, so the
@@ -316,6 +462,7 @@ function showInviteScreen(inviterName) {
 async function hydrateAuthenticatedUser(profile) {
   currentUserId = profile.userId
   window.agsCurrentUserId = currentUserId
+  void refreshAcceptedLegalDocuments()
   connectAuthenticatedChat().catch(error => {
     console.warn('[Chat] connection unavailable:', error?.message || error)
   })
@@ -344,27 +491,45 @@ async function hydrateAuthenticatedUser(profile) {
   }
 
   const urlParams = new URLSearchParams(window.location.search)
-  const invitedBy = urlParams.get('invitedBy')
+  // The invitedBy param is stripped from the URL by the Google OAuth redirect
+  // during account creation; it survives only in sessionStorage (captured at
+  // landing for the referral achievement). Fall back to it, or the invite→friend
+  // link never fires for players who sign up via Google.
+  const invitedBy = urlParams.get('invitedBy') || sessionStorage.getItem('chess_invite_by')
   if (invitedBy && invitedBy !== currentUserId) {
-    // Notify the inviter in real-time (once per session per inviter)
+    window.history.replaceState({}, '', window.location.pathname + window.location.hash)
+    // Once per session per inviter.
     const notifKey = `chess_join_notif_${invitedBy}`
     if (!sessionStorage.getItem(notifKey)) {
       sessionStorage.setItem(notifKey, '1')
-      sendInviteJoinNotification({ to: invitedBy, fromUserId: currentUserId, fromName: name }).catch(() => {})
+      // Fire-and-forget so hydration isn't blocked on the friend network calls.
+      void (async () => {
+        // Real-time nudge so the inviter's client auto-accepts (link invites).
+        sendInviteJoinNotification({ to: invitedBy, fromUserId: currentUserId, fromName: name }).catch(() => {})
+        // Auto-connect as friends — accepting the invite is the consent. Accept
+        // an existing request from the inviter, otherwise send one (the inviter
+        // side auto-accepts via processIncomingInviteAcceptances / the join toast).
+        try {
+          const state = await fetchFriendState()
+          const alreadyFriends = state.ok && state.friends?.some(f => f.userId === invitedBy)
+          const incomingFromInviter = state.ok && state.incoming?.some(r => r.userId === invitedBy)
+          if (!alreadyFriends) {
+            const result = incomingFromInviter ? await acceptFriend(invitedBy) : await requestFriend(invitedBy)
+            if (result.ok) {
+              setFriendsMessage(
+                incomingFromInviter
+                  ? 'You are now friends with your inviter!'
+                  : 'Friend request sent to your inviter — you\'ll be connected automatically.',
+                'success',
+              )
+            }
+            await refreshFriendsUI(false)
+          }
+        } catch (error) {
+          console.warn('[invite] auto-friend failed:', error?.message || error)
+        }
+      })()
     }
-    window.history.replaceState({}, '', window.location.pathname + window.location.hash)
-    showInviteConfirmation(invitedBy, async () => {
-      const state = await fetchFriendState()
-      const hasIncomingFromInviter = state.ok && state.incoming?.some(r => r.userId === invitedBy)
-      if (hasIncomingFromInviter) {
-        const result = await acceptFriend(invitedBy)
-        if (result.ok) setFriendsMessage('Invite accepted! You are now friends.', 'success')
-      } else {
-        const result = await requestFriend(invitedBy)
-        if (result.ok) setFriendsMessage('Almost there — you\'ll be friends automatically once your inviter is online.', 'success')
-      }
-      await refreshFriendsUI(false)
-    })
   }
 
   await initStats(currentUserId)
@@ -384,36 +549,98 @@ function renderLegalDocuments(documents) {
   const listEl = document.getElementById('ags-legal-list')
   if (!listEl) return
 
-  const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'))
+  listEl.textContent = ''
   if (!documents.length) {
     listEl.innerHTML = '<article class="legal-doc-card"><h3>Legal documents unavailable</h3><p>We could not load the required agreements for this account. Sign out and try again.</p></article>'
     return
   }
 
-  listEl.innerHTML = documents.map(doc => {
+  for (const doc of documents) {
     const meta = [
       doc.policyType || 'Legal document',
       doc.policyVersionDisplay ? `Version ${doc.policyVersionDisplay}` : '',
       doc.localeCode ? doc.localeCode.toUpperCase() : '',
     ].filter(Boolean).join(' · ')
 
-    return `<article class="legal-doc-card">
-      <div class="legal-doc-meta">${esc(meta)}</div>
-      <h3>${esc(doc.policyName || 'Legal document')}</h3>
-      <p>${esc(doc.description || 'Review and accept this document to continue.')}</p>
-    </article>`
-  }).join('')
+    const card = document.createElement('article')
+    card.className = 'legal-doc-card'
+
+    const metaEl = document.createElement('div')
+    metaEl.className = 'legal-doc-meta'
+    metaEl.textContent = meta
+    card.appendChild(metaEl)
+
+    const title = document.createElement('h3')
+    title.textContent = doc.policyName || 'Legal document'
+    card.appendChild(title)
+
+    const description = document.createElement('p')
+    description.textContent = doc.description || 'Review and accept this document to continue.'
+    card.appendChild(description)
+
+    const action = document.createElement('button')
+    action.type = 'button'
+    action.className = 'btn btn-secondary legal-review-button'
+    action.textContent = doc.attachmentLocation ? 'Review document' : 'Document unavailable'
+    action.disabled = !doc.attachmentLocation
+    if (doc.attachmentLocation) {
+      action.addEventListener('click', async () => {
+        action.disabled = true
+        const opened = await openExternalURL(doc.attachmentLocation)
+        action.disabled = false
+        if (!opened) {
+          setLegalMessage('The document could not be opened. Check your connection and try again.', 'error')
+          return
+        }
+        reviewedLegalDocumentIds.add(doc.localizedPolicyVersionId)
+        action.textContent = 'Reviewed ✓'
+        action.classList.add('reviewed')
+        setLegalMessage('')
+        updateLegalAcceptanceState()
+      })
+    }
+    card.appendChild(action)
+
+    if (doc.loadError) {
+      const error = document.createElement('p')
+      error.className = 'legal-doc-error'
+      error.textContent = doc.loadError
+      card.appendChild(error)
+    }
+
+    listEl.appendChild(card)
+  }
+}
+
+function updateLegalAcceptanceState() {
+  const checkbox = document.getElementById('ags-legal-confirm')
+  const acceptBtn = document.getElementById('ags-legal-accept')
+  const documentsAvailable = pendingLegalDocuments.length > 0 &&
+    pendingLegalDocuments.every(doc => !!doc.attachmentLocation)
+  const allReviewed = documentsAvailable &&
+    pendingLegalDocuments.every(doc => reviewedLegalDocumentIds.has(doc.localizedPolicyVersionId))
+  if (checkbox) {
+    checkbox.disabled = !allReviewed
+    if (!allReviewed) checkbox.checked = false
+  }
+  if (acceptBtn) acceptBtn.disabled = !allReviewed || checkbox?.checked !== true
 }
 
 function showLegalGate(documents, profile = null, message = '') {
   pendingLegalDocuments = documents
   pendingLegalProfile = profile
+  reviewedLegalDocumentIds = new Set()
   renderLegalDocuments(documents)
-  setLegalMessage(message || '')
   const checkbox = document.getElementById('ags-legal-confirm')
-  if (checkbox) checkbox.checked = false
-  const acceptBtn = document.getElementById('ags-legal-accept')
-  if (acceptBtn) acceptBtn.disabled = documents.length === 0
+  if (checkbox) {
+    checkbox.checked = false
+    checkbox.onchange = updateLegalAcceptanceState
+  }
+  const unavailable = documents.some(doc => !doc.attachmentLocation)
+  setLegalMessage(message || (unavailable
+    ? 'A required document is unavailable. Try again later or contact support.'
+    : 'Open every document before accepting.'))
+  updateLegalAcceptanceState()
   if (typeof window.showScreen === 'function') window.showScreen('legal')
 }
 
@@ -425,8 +652,6 @@ function setLegalMessage(text, tone = '') {
 }
 
 async function maybeRequireLegalAcceptance(profile = null, tokenData = null) {
-  if (tokenData && tokenData.is_comply === true) return true
-
   const pending = await fetchPendingLegalDocuments()
   if (!pending.ok) {
     showLegalGate([], profile, pending.error || 'Could not load the required legal documents.')
@@ -487,6 +712,7 @@ async function initAuth() {
   window.cacheDisplayName = cacheDisplayName
   setQueueUIHandler(renderLoginQueue)
   window.agsCancelLoginQueue = cancelLoginQueue
+  initPrivacyCenter()
 
   const params = new URLSearchParams(window.location.search)
   // Google direct login (web) returns the id_token in the URL fragment.
@@ -774,6 +1000,15 @@ async function initAuth() {
   window.agsAcceptLegal = async () => {
     const checkbox = document.getElementById('ags-legal-confirm')
     const acceptBtn = document.getElementById('ags-legal-accept')
+    const allReviewed = pendingLegalDocuments.length > 0 &&
+      pendingLegalDocuments.every(doc =>
+        !!doc.attachmentLocation && reviewedLegalDocumentIds.has(doc.localizedPolicyVersionId),
+      )
+    if (!allReviewed) {
+      setLegalMessage('Open and review every required document before continuing.', 'error')
+      updateLegalAcceptanceState()
+      return
+    }
     if (!checkbox?.checked) {
       setLegalMessage('Confirm that you accept the required documents before continuing.', 'error')
       return
@@ -795,6 +1030,24 @@ async function initAuth() {
       return
     }
 
+    const verification = await fetchPendingLegalDocuments()
+    if (!verification.ok) {
+      if (acceptBtn) acceptBtn.disabled = false
+      setLegalMessage(
+        `${verification.error || 'Could not verify acceptance.'} Your account remains at the legal gate.`,
+        'error',
+      )
+      return
+    }
+    if (verification.documents.length > 0) {
+      showLegalGate(
+        verification.documents,
+        pendingLegalProfile,
+        'AGS still shows required agreements. Review the current versions and try again.',
+      )
+      return
+    }
+
     const refreshed = await refreshSession()
     if (!refreshed.ok) {
       console.warn('[AGS] refreshSession after legal accept:', refreshed.error)
@@ -809,6 +1062,7 @@ async function initAuth() {
 
     pendingLegalDocuments = []
     pendingLegalProfile = null
+    await refreshAcceptedLegalDocuments()
     setLegalMessage('')
     await hydrateAuthenticatedUser(profile)
     if (typeof window.showScreen === 'function') window.showScreen('home')
@@ -1700,6 +1954,8 @@ function updateAuthUI(loggedIn, name, userId) {
     signedInInfo.style.display = 'flex'
     if (signedInName) signedInName.textContent = name || 'Player'
   } else {
+    acceptedLegalDocuments = []
+    renderAcceptedLegalDocuments()
     nameInput.style.display = ''
     signInBtn.style.display = ''
     if (accountEntry) accountEntry.style.display = ''
@@ -1984,17 +2240,39 @@ function stopInviteJoinUpdates() {
 
 function showInviteJoinToast({ fromUserId, fromName }) {
   const toast = document.getElementById('invite-join-toast')
-  if (!toast) return
-  const nameEl = document.getElementById('invite-join-name')
-  if (nameEl) {
-    nameEl.textContent = fromName
-      ? `${fromName} just signed up via your invite!`
-      : 'Someone just signed up via your invite!'
+  if (toast) {
+    const nameEl = document.getElementById('invite-join-name')
+    if (nameEl) {
+      nameEl.textContent = fromName
+        ? `${fromName} just signed up via your invite!`
+        : 'Someone just signed up via your invite!'
+    }
+    toast.classList.add('show')
+    clearTimeout(toast._timer)
+    toast._timer = setTimeout(() => toast.classList.remove('show'), 10000)
   }
-  toast.classList.add('show')
-  clearTimeout(toast._timer)
-  toast._timer = setTimeout(() => toast.classList.remove('show'), 10000)
   sendEvent('invite_join_notif_shown', { hasName: !!fromName })
+
+  // Complete the invite→friend link from the inviter's side: auto-accept the new
+  // player's incoming friend request. Covers link invites (no stored pending-invite
+  // email). Retry a few times for the race where this notification arrives before
+  // their friend request has landed.
+  if (fromUserId && fromUserId !== currentUserId) {
+    void (async () => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          const state = await fetchFriendState()
+          if (!state.ok) break
+          if (state.friends?.some(f => f.userId === fromUserId)) break
+          if (state.incoming?.some(r => r.userId === fromUserId)) {
+            const result = await acceptFriend(fromUserId)
+            if (result.ok) { await refreshFriendsUI(false); break }
+          }
+        } catch { /* transient — retry */ }
+        await new Promise(resolve => setTimeout(resolve, 2500))
+      }
+    })()
+  }
 }
 
 function friendRow(item, actions = '') {
