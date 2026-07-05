@@ -64,24 +64,40 @@ func LookupEmailInIAM(email string) (*LookupResult, error) {
 		return nil, fmt.Errorf("IAM lookup returned status %d", resp.StatusCode)
 	}
 
-	// Admin IAM returns a paginated list: {"data": [...], "paging": {...}}
+	// The admin email lookup has returned two shapes over time: a paginated
+	// list {"data":[...]} (observed at launch) and, currently, a single bare
+	// user object {"userId":...}. Unmarshal of the object shape into the list
+	// struct SUCCEEDS with an empty Data slice, which made every existing user
+	// come back found:false and silently broke invite auto-friending — so try
+	// the list shape first, then fall back to the object shape.
 	var page struct {
 		Data []struct {
 			UserID      string `json:"userId"`
 			DisplayName string `json:"displayName"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(body, &page); err != nil {
-		return nil, err
-	}
-	if len(page.Data) == 0 || page.Data[0].UserID == "" {
-		return &LookupResult{Found: false}, nil
+	if err := json.Unmarshal(body, &page); err == nil && len(page.Data) > 0 && page.Data[0].UserID != "" {
+		return &LookupResult{
+			Found:       true,
+			UserID:      page.Data[0].UserID,
+			DisplayName: page.Data[0].DisplayName,
+		}, nil
 	}
 
+	var single struct {
+		UserID      string `json:"userId"`
+		DisplayName string `json:"displayName"`
+	}
+	if err := json.Unmarshal(body, &single); err != nil {
+		return nil, fmt.Errorf("parse IAM lookup response: %w", err)
+	}
+	if single.UserID == "" {
+		return &LookupResult{Found: false}, nil
+	}
 	return &LookupResult{
 		Found:       true,
-		UserID:      page.Data[0].UserID,
-		DisplayName: page.Data[0].DisplayName,
+		UserID:      single.UserID,
+		DisplayName: single.DisplayName,
 	}, nil
 }
 
