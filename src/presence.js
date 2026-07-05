@@ -30,7 +30,15 @@ let inviteJoinListeners = new Set()
 const knownPresence = new Map()  // userId (normalised) → last confirmed presence
 
 const HEARTBEAT_MS    = 45000    // re-send presence every 45 s to prevent server idle timeout
-const RECONNECT_DELAY_MS = 1500  // initial backoff; doubles on each consecutive failure, capped at 60s
+// A brand-new account's just-issued token commonly fails its first Lobby
+// connection because the token hasn't yet propagated to the Lobby service —
+// a one-shot blip that clears in well under a second (this is what a manual
+// hard-refresh was papering over). Retry the first few attempts fast instead
+// of making the player wait through a slow backoff; sustained failures fall
+// through to the normal capped exponential backoff below.
+const FAST_RECONNECT_DELAYS_MS = [300, 800, 1500]
+const FAST_RECONNECT_ATTEMPTS = FAST_RECONNECT_DELAYS_MS.length
+const RECONNECT_DELAY_MS = 1500  // base for the slow phase; doubles each attempt, capped at 60s
 const RECONNECT_MAX_MS = 60000
 const RECONNECT_MAX_ATTEMPTS = 8 // give up after this many consecutive failures
 const OFFLINE_FLUSH_MS = 1000
@@ -55,11 +63,49 @@ function lobbyId() {
   return 'presence-' + Math.random().toString(36).slice(2)
 }
 
+// Tear down a dead socket and schedule a reconnect. Shared by onClose and (for
+// connections that never opened) onError, guarded so the two can't double-fire
+// for the same failed attempt — whichever runs first nulls out lobbyWs, so the
+// other's `lobbyWs !== socket` check makes it a no-op.
+function handleSocketDown(socket) {
+  if (lobbyWs !== socket) return
+  debugPresence('down')
+  lobbyConnected = false
+  lobbyWs = null
+  pendingStatusRequests.forEach(pending => pending.resolve(null))
+  pendingStatusRequests.clear()
+  pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
+  pendingPersonalChatRequests.clear()
+  scheduleReconnect()
+}
+
+function scheduleReconnect() {
+  if (currentStatus === 'offline' || reconnectTimer) return
+  if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+    console.warn('[AGS presence] giving up reconnect after', reconnectAttempts, 'attempts')
+    reconnectAttempts = 0
+    return
+  }
+  const delay = reconnectAttempts < FAST_RECONNECT_ATTEMPTS
+    ? FAST_RECONNECT_DELAYS_MS[reconnectAttempts]
+    : Math.min(RECONNECT_DELAY_MS * (2 ** (reconnectAttempts - FAST_RECONNECT_ATTEMPTS)), RECONNECT_MAX_MS)
+  reconnectAttempts++
+  debugPresence('schedule-reconnect', { attempt: reconnectAttempts, delay })
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    if (currentStatus !== 'offline' && !lobbyWs && sdk.getToken()?.accessToken) {
+      debugPresence('auto-reconnect')
+      sendPresence(currentStatus)
+    }
+  }, delay)
+}
+
 function ensureLobbyConnected() {
   if (lobbyWs) return lobbyWs
 
   const socket = Lobby.WebSocket(sdk)
   lobbyWs = socket
+  let opened = false
   socket.connect()
   socket.onMessage(raw => {
     if (lobbyWs !== socket) return
@@ -95,6 +141,7 @@ function ensureLobbyConnected() {
   }, true)
   socket.onOpen(() => {
     if (lobbyWs !== socket) return
+    opened = true
     lobbyConnected = true
     reconnectAttempts = 0
     debugPresence('open')
@@ -105,34 +152,7 @@ function ensureLobbyConnected() {
     }
     lobbyOpenListeners.forEach(cb => { try { cb() } catch {} })
   })
-  socket.onClose(() => {
-    if (lobbyWs !== socket) return
-    debugPresence('close')
-    lobbyConnected = false
-    lobbyWs = null
-    pendingStatusRequests.forEach(pending => pending.resolve(null))
-    pendingStatusRequests.clear()
-    pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
-    pendingPersonalChatRequests.clear()
-    // Reconnect with exponential backoff if we're supposed to be online.
-    if (currentStatus !== 'offline' && !reconnectTimer) {
-      if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
-        console.warn('[AGS presence] giving up reconnect after', reconnectAttempts, 'attempts')
-        reconnectAttempts = 0
-      } else {
-        const delay = Math.min(RECONNECT_DELAY_MS * (2 ** reconnectAttempts), RECONNECT_MAX_MS)
-        reconnectAttempts++
-        debugPresence('schedule-reconnect', { attempt: reconnectAttempts, delay })
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null
-          if (currentStatus !== 'offline' && !lobbyWs && sdk.getToken()?.accessToken) {
-            debugPresence('auto-reconnect')
-            sendPresence(currentStatus)
-          }
-        }, delay)
-      }
-    }
-  })
+  socket.onClose(() => handleSocketDown(socket))
   socket.onError(err => {
     if (lobbyWs !== socket) return
     const detail = err instanceof ErrorEvent
@@ -140,13 +160,24 @@ function ensureLobbyConnected() {
       : err instanceof Event
         ? `WebSocket ${err.type} — readyState=${err.target?.readyState}, url=${err.target?.url}`
         : (err?.message || String(err))
-    console.warn('[AGS presence] lobby websocket error:', detail)
-    debugPresence('error', err)
+    // Quiet for the first few fast-retry attempts (see FAST_RECONNECT_*): a
+    // brand-new account's just-issued token failing its very first Lobby
+    // connection is expected and self-heals almost immediately, not worth a
+    // console.warn. Once we're into sustained-failure territory, surface it.
+    if (reconnectAttempts >= FAST_RECONNECT_ATTEMPTS) {
+      console.warn('[AGS presence] lobby websocket error:', detail)
+    } else {
+      debugPresence('error (retrying)', detail)
+    }
     openWaiters.splice(0).forEach(resolve => resolve(false))
     pendingStatusRequests.forEach(pending => pending.resolve(null))
     pendingStatusRequests.clear()
     pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
     pendingPersonalChatRequests.clear()
+    // Defensive: a connection that never opened should always be followed by a
+    // 'close' event, but don't stake reconnection on it — tear down and retry
+    // now rather than risk waiting on a 'close' that's delayed or never comes.
+    if (!opened) handleSocketDown(socket)
   })
   return socket
 }
