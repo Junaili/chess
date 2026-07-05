@@ -3,6 +3,7 @@ import { sdk } from './ags-client.js'
 import { isQueueTicket, runLoginQueue } from './login-queue.js'
 import { getDeviceId } from './anon-id.js'
 import { moderateIncomingDisplayName, validateDisplayNameLocally } from './content-moderation.mjs'
+import { buildUsername } from './auth-data.mjs'
 
 // True when running inside the Capacitor native shell (iOS app), where the
 // app is served from capacitor://localhost and in-WebView OAuth redirects are
@@ -101,16 +102,6 @@ function inferCountryCode() {
   const locale = navigator.language || 'en-US'
   const region = locale.split('-')[1]
   return /^[A-Za-z]{2}$/.test(region || '') ? region.toUpperCase() : 'US'
-}
-
-function buildUsername(displayName, emailAddress) {
-  const source = (displayName || emailAddress.split('@')[0] || 'player').toLowerCase()
-  let base = source.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-  if (!base) base = 'player'
-  if (!/^[a-z]/.test(base)) base = 'player_' + base
-  const randomBytes = crypto.getRandomValues(new Uint8Array(4))
-  const suffix = Array.from(randomBytes, byte => byte.toString(36).padStart(2, '0')).join('').slice(0, 6)
-  return (base.slice(0, 20) + '_' + suffix).slice(0, 32)
 }
 
 // "Sign in with Google" goes straight to Google (id_token implicit flow) on both

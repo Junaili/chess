@@ -20,6 +20,7 @@ export default defineConfig(({ mode, command }) => {
     strictPort: true,
     proxy: {
       '/iam':          { target: agsTarget, changeOrigin: true },
+      '/agreement':    { target: agsTarget, changeOrigin: true },
       '/basic':        { target: agsTarget, changeOrigin: true },
       '/cloudsave':    { target: agsTarget, changeOrigin: true },
       '/friends':      { target: agsTarget, changeOrigin: true },

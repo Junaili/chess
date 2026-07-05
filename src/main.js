@@ -14,7 +14,7 @@ import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from '.
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName } from './leaderboard.js'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
-import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification } from './presence.js'
+import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
 import {
   moderateIncomingChat,
@@ -1283,7 +1283,8 @@ async function initAuth() {
       await unblockPlayer(userId)
       blockedPlayers = blockedPlayers.filter(item => item.userId !== userId)
       renderBlockedPlayers()
-      return { ok: true }
+      const lobbyRefreshed = await refreshPresenceConnection()
+      return { ok: true, lobbyRefreshed }
     } catch (error) {
       return { ok: false, error: getSafetyError(error, 'Could not unblock this player.') }
     }

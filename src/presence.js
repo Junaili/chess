@@ -58,9 +58,11 @@ function lobbyId() {
 function ensureLobbyConnected() {
   if (lobbyWs) return lobbyWs
 
-  lobbyWs = Lobby.WebSocket(sdk)
-  lobbyWs.connect()
-  lobbyWs.onMessage(raw => {
+  const socket = Lobby.WebSocket(sdk)
+  lobbyWs = socket
+  socket.connect()
+  socket.onMessage(raw => {
+    if (lobbyWs !== socket) return
     const message = parseLobbyMessage(raw)
     debugPresence('message', { raw, message })
     if (message?.type === 'friendsStatusResponse') {
@@ -91,7 +93,8 @@ function ensureLobbyConnected() {
       notifyPresenceUpdate(message)
     }
   }, true)
-  lobbyWs.onOpen(() => {
+  socket.onOpen(() => {
+    if (lobbyWs !== socket) return
     lobbyConnected = true
     reconnectAttempts = 0
     debugPresence('open')
@@ -102,7 +105,8 @@ function ensureLobbyConnected() {
     }
     lobbyOpenListeners.forEach(cb => { try { cb() } catch {} })
   })
-  lobbyWs.onClose(() => {
+  socket.onClose(() => {
+    if (lobbyWs !== socket) return
     debugPresence('close')
     lobbyConnected = false
     lobbyWs = null
@@ -129,7 +133,8 @@ function ensureLobbyConnected() {
       }
     }
   })
-  lobbyWs.onError(err => {
+  socket.onError(err => {
+    if (lobbyWs !== socket) return
     const detail = err instanceof ErrorEvent
       ? err.message
       : err instanceof Event
@@ -143,7 +148,7 @@ function ensureLobbyConnected() {
     pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
     pendingPersonalChatRequests.clear()
   })
-  return lobbyWs
+  return socket
 }
 
 function waitForLobbyOpen(timeoutMs = CONNECT_TIMEOUT_MS) {
@@ -240,6 +245,40 @@ export function disconnectPresence() {
     lobbyWs = null
     lobbyConnected = false
   }
+}
+
+// AGS Lobby can retain the previous block relationship for an established
+// websocket after the REST unblock call succeeds. Replace that connection so
+// personal-chat match invites use the updated safety relationship immediately.
+export async function refreshPresenceConnection() {
+  const desiredStatus = currentStatus
+  const previousSocket = lobbyWs
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  lobbyWs = null
+  lobbyConnected = false
+  queuedStatus = null
+  openWaiters.splice(0).forEach(resolve => resolve(false))
+  pendingStatusRequests.forEach(pending => pending.resolve(null))
+  pendingStatusRequests.clear()
+  pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
+  pendingPersonalChatRequests.clear()
+
+  try {
+    previousSocket?.disconnect()
+  } catch (error) {
+    debugPresence('refresh-disconnect-error', error?.message || error)
+  }
+
+  if (desiredStatus === 'offline' || !sdk.getToken()?.accessToken) return true
+
+  currentStatus = desiredStatus
+  sendPresence(desiredStatus)
+  startHeartbeat()
+  return waitForLobbyOpen(5000)
 }
 
 export async function signOutPresence() {
