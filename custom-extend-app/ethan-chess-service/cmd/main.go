@@ -94,17 +94,25 @@ func main() {
 	)
 	pb.RegisterChessServiceServer(grpcServer, service.NewChessServiceServer())
 	taskscheduler.RegisterScheduledTaskHandlerServer(grpcServer, handler.NewScheduledTaskHandler(trainJob))
-	if strings.EqualFold(os.Getenv("ENABLE_GRPC_REFLECTION"), "true") {
-		reflection.Register(grpcServer)
-	}
+	// Reflection must stay on: the Admin Portal's Task Scheduler tab discovers
+	// the ScheduledTaskHandler service via gRPC reflection, and without it task
+	// creation is blocked ("This app doesn't have a task scheduler gRPC
+	// function yet"). Reflection only exposes service descriptors; ChessService
+	// methods are still gated by the internal-gateway token interceptor.
+	reflection.Register(grpcServer)
 	grpc_health_v1.RegisterHealthServer(grpcServer, health.NewServer())
 
-	lis, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", grpcPort))
+	// Bind all interfaces: the platform reaches this server through the app's
+	// cluster service (ext-…-service…:6565) — Task Scheduler detection and
+	// dispatch arrive on the pod interface, not loopback. A loopback-only bind
+	// (an earlier hardening change) made the portal report the scheduler
+	// handler as missing.
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
 	if err != nil {
 		log.Fatalf("failed to listen on :%d: %v", grpcPort, err)
 	}
 	go func() {
-		log.Printf("gRPC server listening on 127.0.0.1:%d", grpcPort)
+		log.Printf("gRPC server listening on :%d", grpcPort)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Printf("gRPC server error: %v", err)
 		}
