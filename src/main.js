@@ -137,7 +137,22 @@ async function openExternalURL(url) {
       return false
     }
   }
-  return !!window.open(url, '_blank', 'noopener,noreferrer')
+  // A real anchor click, not window.open(): browsers treat anchor-driven
+  // navigation as trusted and essentially never block it, whereas
+  // window.open() can be silently blocked by popup blockers (and, in some
+  // browsers, by merely being reached through a nested async function even
+  // with no await before the call) — exactly what surfaced as "the document
+  // could not be opened" on the legal-acceptance screen. .click() gives no
+  // success/failure signal, so treat firing the navigation as success.
+  const link = document.createElement('a')
+  link.href = url
+  link.target = '_blank'
+  link.rel = 'noopener noreferrer'
+  link.style.display = 'none'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  return true
 }
 
 function policyURL(section) {
