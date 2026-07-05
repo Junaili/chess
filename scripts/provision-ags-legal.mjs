@@ -223,10 +223,39 @@ async function ensureDocument({
       }),
     ], { mutate: true })
     if (!apply) return
-    policy = { id: idOf(created, 'created country policy') }
+    policy = {
+      id: idOf(created, 'created country policy'),
+      isMandatory: true,
+      policyName: document.policyName,
+      shouldNotifyOnUpdate: true,
+    }
     console.log(`  created policy ${policy.id}`)
   } else {
     console.log(`  policy ${policy.id}`)
+    const policyNeedsUpdate =
+      policy.isMandatory !== true ||
+      policy.policyName !== document.policyName ||
+      policy.shouldNotifyOnUpdate !== true
+    if (policyNeedsUpdate) {
+      runAgs([
+        'legal', 'policies', 'update',
+        '--namespace', namespace,
+        '--policy-id', policy.id,
+        ...jsonBody({
+          isDefaultOpted: false,
+          isMandatory: true,
+          policyName: document.policyName,
+          shouldNotifyOnUpdate: true,
+        }),
+      ], { mutate: true })
+      console.log('  updated policy name + mandatory acceptance')
+      policy = {
+        ...policy,
+        isMandatory: true,
+        policyName: document.policyName,
+        shouldNotifyOnUpdate: true,
+      }
+    }
   }
 
   const versions = runAgs([

@@ -3,6 +3,7 @@ const ENVELOPE_START = 'CaSr'
 const ENVELOPE_END = 'CaEd'
 const REQUEST_TIMEOUT_MS = 10_000
 const SESSION_TOPIC_TIMEOUT_MS = 15_000
+const SESSION_TOPIC_RETRY_INTERVAL_MS = 500
 const MAX_RECONNECT_ATTEMPTS = 5
 
 export class AgsChatError extends Error {
@@ -81,6 +82,7 @@ export class AgsChatClient {
     WebSocketImpl = globalThis.WebSocket,
     requestTimeoutMs = REQUEST_TIMEOUT_MS,
     sessionTopicTimeoutMs = SESSION_TOPIC_TIMEOUT_MS,
+    sessionTopicRetryIntervalMs = SESSION_TOPIC_RETRY_INTERVAL_MS,
   }) {
     this.baseURL = baseURL
     this.namespace = namespace
@@ -90,6 +92,7 @@ export class AgsChatClient {
     this.WebSocketImpl = WebSocketImpl
     this.requestTimeoutMs = requestTimeoutMs
     this.sessionTopicTimeoutMs = sessionTopicTimeoutMs
+    this.sessionTopicRetryIntervalMs = sessionTopicRetryIntervalMs
 
     this.socket = null
     this.chatSessionId = ''
@@ -177,7 +180,7 @@ export class AgsChatClient {
       this._assertActiveGeneration(generation)
       topicId = await this._waitForSessionTopic(sessionId)
       this._assertActiveGeneration(generation)
-      await this._activateTopic(topicId, generation)
+      await this._activateSessionTopicWithRetry(topicId, generation)
       return this.snapshot()
     }
   }
@@ -465,6 +468,22 @@ export class AgsChatClient {
       this._emitMessage(item, 'history')
     }
     this._setState('ready', 'Connected')
+  }
+
+  async _activateSessionTopicWithRetry(topicId, generation) {
+    const deadline = Date.now() + this.sessionTopicTimeoutMs
+    while (true) {
+      try {
+        await this._activateTopic(topicId, generation)
+        return
+      } catch (error) {
+        this._assertActiveGeneration(generation)
+        const classified = error instanceof AgsChatError ? error : classifyError(error)
+        if (classified.kind !== 'topic' || Date.now() >= deadline) throw classified
+        await new Promise(resolve => setTimeout(resolve, this.sessionTopicRetryIntervalMs))
+        this._assertActiveGeneration(generation)
+      }
+    }
   }
 
   async _loadTopicHistory(topicId) {

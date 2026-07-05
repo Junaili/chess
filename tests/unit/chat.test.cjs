@@ -203,6 +203,43 @@ test('uses the added-to-topic event when a session topic ID is opaque', async ()
   client.disconnect();
 });
 
+test('retries session history while AGS topic membership is still propagating', async () => {
+  const { client, socket } = await connectedClient({
+    sessionTopicTimeoutMs: 100,
+    sessionTopicRetryIntervalMs: 1,
+  });
+  client.prepareSessionChat();
+  const activating = client.activateSessionChat('game-session-1');
+  await tick();
+
+  const firstQuery = socket.sent.at(-1);
+  socket.reject(firstQuery, 11234, 'unable to get chat: user not member of the topic');
+  await tick();
+
+  socket.emit('message', JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'eventAddedToTopic',
+    params: { topicId: 's.game-session-1' },
+  }));
+  await tick();
+
+  const secondQuery = socket.sent.at(-1);
+  socket.reject(secondQuery, 11234, 'unable to get chat: user not member of the topic');
+  await new Promise(resolve => setTimeout(resolve, 5));
+  await tick();
+
+  const successfulQuery = socket.sent.at(-1);
+  assert.notEqual(successfulQuery.id, secondQuery.id);
+  assert.equal(successfulQuery.method, 'queryChat');
+  assert.equal(successfulQuery.params.topicId, 's.game-session-1');
+  socket.respond(successfulQuery, { data: [] });
+  await activating;
+
+  assert.equal(client.snapshot().state, 'ready');
+  assert.equal(client.snapshot().topicId, 's.game-session-1');
+  client.disconnect();
+});
+
 test('skips REST history for session topics and queries history over WebSocket', async () => {
   let restHistoryCalls = 0;
   const { client, socket } = await connectedClient({
