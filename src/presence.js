@@ -27,6 +27,7 @@ let presenceListeners = new Set()
 let gameInviteListeners = new Set()
 let lobbyOpenListeners = new Set()
 let inviteJoinListeners = new Set()
+let friendsChangeListeners = new Set()
 const knownPresence = new Map()  // userId (normalised) → last confirmed presence
 
 const HEARTBEAT_MS    = 45000    // re-send presence every 45 s to prevent server idle timeout
@@ -137,6 +138,14 @@ function ensureLobbyConnected() {
       notifyGameInvite(message)
     } else if (message?.type === 'userStatusNotif') {
       notifyPresenceUpdate(message)
+    } else if (FRIENDS_NOTIF_TYPES.has(message?.type)) {
+      // requestFriendsNotif/acceptFriendsNotif/rejectFriendsNotif/
+      // cancelFriendsNotif/unfriendNotif — pushed in real time by Lobby to
+      // whichever side didn't initiate the action. Without this, friend-list
+      // changes only surfaced via the 15s polling refresh (startFriendsRefresh),
+      // which is why an invitee saw their inviter sitting at "pending" for
+      // several seconds after being accepted.
+      notifyFriendsChange(message)
     }
   }, true)
   socket.onOpen(() => {
@@ -341,6 +350,37 @@ export function subscribePresenceUpdates(listener) {
 export function subscribeGameInvites(listener) {
   gameInviteListeners.add(listener)
   return () => gameInviteListeners.delete(listener)
+}
+
+// Lobby push notifications for the friend-relationship lifecycle. Each is only
+// delivered to the side that DIDN'T initiate the action (e.g. the accepter's
+// client never sees acceptFriendsNotif — it already knows). Fields per the
+// Lobby WS protocol: requestFriendsNotif/acceptFriendsNotif/unfriendNotif carry
+// `friendId` (the other user); rejectFriendsNotif/cancelFriendsNotif carry
+// `userId` instead.
+const FRIENDS_NOTIF_TYPES = new Set([
+  'requestFriendsNotif',
+  'acceptFriendsNotif',
+  'rejectFriendsNotif',
+  'cancelFriendsNotif',
+  'unfriendNotif',
+])
+
+function notifyFriendsChange(message) {
+  const otherUserId = message.friendId || message.userId || null
+  debugPresence('friends-change', message)
+  friendsChangeListeners.forEach(listener => {
+    try {
+      listener({ type: message.type, otherUserId })
+    } catch (e) {
+      console.warn('[AGS presence] friends-change listener:', e?.message || e)
+    }
+  })
+}
+
+export function subscribeFriendsChanges(listener) {
+  friendsChangeListeners.add(listener)
+  return () => friendsChangeListeners.delete(listener)
 }
 
 export function subscribeLobbyOpen(listener) {

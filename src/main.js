@@ -14,7 +14,7 @@ import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from '.
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName } from './leaderboard.js'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
-import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification } from './presence.js'
+import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
 import {
   moderateIncomingChat,
@@ -112,6 +112,13 @@ let unsubscribePresenceUpdates = null
 let unsubscribeGameInvites = null
 let unsubscribeInviteJoins = null
 let unsubscribeLobbyOpen = null
+let unsubscribeFriendsChanges = null
+// Users we know just used our invite link (via the real-time invite-join
+// notification) — their forthcoming friend request auto-accepts the instant
+// its requestFriendsNotif arrives, instead of waiting on a poll. TTL-bounded
+// so a request that never arrives doesn't leave a stale auto-accept armed.
+const expectedInviteFriendIds = new Set()
+const EXPECTED_INVITE_TTL_MS = 2 * 60 * 1000
 let activeProfileUser = null
 let spectatorPrevScreen = null
 let profileMatchHistoryRows = []
@@ -497,6 +504,7 @@ async function hydrateAuthenticatedUser(profile) {
   startPresenceUpdates()
   startGameInviteUpdates()
   startInviteJoinUpdates()
+  startFriendsChangeUpdates()
   startFriendsRefresh()
   await refreshFriendsUI()
   try {
@@ -776,6 +784,7 @@ async function initAuth() {
       stopPresenceUpdates()
       stopGameInviteUpdates()
       stopInviteJoinUpdates()
+    stopFriendsChangeUpdates()
       currentUserId = null
       window.agsCurrentUserId = null
       chatClient.disconnect()
@@ -788,6 +797,7 @@ async function initAuth() {
     stopPresenceUpdates()
     stopGameInviteUpdates()
     stopInviteJoinUpdates()
+    stopFriendsChangeUpdates()
     currentUserId = null
     window.agsCurrentUserId = null
     chatClient.disconnect()
@@ -851,6 +861,7 @@ async function initAuth() {
     stopPresenceUpdates()
     stopGameInviteUpdates()
     stopInviteJoinUpdates()
+    stopFriendsChangeUpdates()
     seenIncomingRequestIds = null
     currentStreak = 0
     clearUnlockedCache()
@@ -1088,6 +1099,7 @@ async function initAuth() {
     stopPresenceUpdates()
     stopGameInviteUpdates()
     stopInviteJoinUpdates()
+    stopFriendsChangeUpdates()
     chatClient.disconnect()
     await signOutPresence()
     await logout()
@@ -1832,6 +1844,7 @@ async function confirmAccountDeletion() {
     stopPresenceUpdates()
     stopGameInviteUpdates()
     stopInviteJoinUpdates()
+    stopFriendsChangeUpdates()
     clearUnlockedCache()
     chatClient.disconnect()
     clearLiveMatch()
@@ -2255,6 +2268,36 @@ function stopInviteJoinUpdates() {
   }
 }
 
+// React the instant Lobby pushes a friend-relationship change, instead of
+// waiting on the 15s periodic refresh (startFriendsRefresh) — that gap is what
+// made an invitee see their inviter stuck at "pending" for several seconds
+// after being accepted, while the accepting side (already refreshing itself
+// locally) saw the change immediately.
+function startFriendsChangeUpdates() {
+  stopFriendsChangeUpdates()
+  unsubscribeFriendsChanges = subscribeFriendsChanges(({ type, otherUserId }) => {
+    const normalizedOtherId = otherUserId ? normalizeFriendUserId(otherUserId) : null
+    if (type === 'requestFriendsNotif' && normalizedOtherId && expectedInviteFriendIds.has(normalizedOtherId)) {
+      expectedInviteFriendIds.delete(normalizedOtherId)
+      acceptFriend(otherUserId).then(result => {
+        if (result.ok) {
+          setFriendsMessage('You are now friends with your inviter!', 'success')
+          refreshFriendsUI(false)
+        }
+      }).catch(() => {})
+      return
+    }
+    refreshFriendsUI(false)
+  })
+}
+
+function stopFriendsChangeUpdates() {
+  if (unsubscribeFriendsChanges) {
+    unsubscribeFriendsChanges()
+    unsubscribeFriendsChanges = null
+  }
+}
+
 function showInviteJoinToast({ fromUserId, fromName }) {
   const toast = document.getElementById('invite-join-toast')
   if (toast) {
@@ -2272,11 +2315,17 @@ function showInviteJoinToast({ fromUserId, fromName }) {
 
   // Complete the invite→friend link from the inviter's side: auto-accept the new
   // player's incoming friend request. Covers link invites (no stored pending-invite
-  // email). Retry a few times for the race where this notification arrives before
-  // their friend request has landed.
+  // email). The real-time requestFriendsNotif (handled in
+  // startFriendsChangeUpdates) does the actual accepting the instant their
+  // request lands — mark them as expected here so that listener recognizes it.
+  // The one-off checks below are just a fallback for the (rare) case where the
+  // push notification itself is missed, e.g. a lobby reconnect gap.
   if (fromUserId && fromUserId !== currentUserId) {
+    expectedInviteFriendIds.add(normalizeFriendUserId(fromUserId))
+    setTimeout(() => expectedInviteFriendIds.delete(normalizeFriendUserId(fromUserId)), EXPECTED_INVITE_TTL_MS)
+
     void (async () => {
-      for (let attempt = 0; attempt < 4; attempt++) {
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const state = await fetchFriendState()
           if (!state.ok) break
@@ -2286,7 +2335,7 @@ function showInviteJoinToast({ fromUserId, fromName }) {
             if (result.ok) { await refreshFriendsUI(false); break }
           }
         } catch { /* transient — retry */ }
-        await new Promise(resolve => setTimeout(resolve, 2500))
+        await new Promise(resolve => setTimeout(resolve, 5000))
       }
     })()
   }
