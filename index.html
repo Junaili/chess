@@ -48,8 +48,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-DBfNhmvI.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-Cjd0naRH.css">
+  <script type="module" crossorigin src="/chess/assets/index-ByFNQAO0.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-xuOhZSIr.css">
 </head>
 <body>
 
@@ -316,10 +316,13 @@
           <span>Username or email</span>
           <input type="text" id="ags-login-identifier" class="name-input" placeholder="you@example.com" autocomplete="username" />
         </label>
-        <label class="auth-field" for="ags-login-password">
-          <span>Password</span>
-          <input type="password" id="ags-login-password" class="name-input" placeholder="Your password" autocomplete="current-password" />
-        </label>
+        <div class="auth-field">
+          <label for="ags-login-password">Password</label>
+          <div class="password-input-wrap">
+            <input type="password" id="ags-login-password" class="name-input" placeholder="Your password" autocomplete="current-password" />
+            <button type="button" class="password-visibility-toggle" data-password-toggle aria-controls="ags-login-password" aria-pressed="false" aria-label="Show password">Show</button>
+          </div>
+        </div>
         <p id="ags-login-message" class="auth-message"></p>
         <div class="auth-form-actions">
           <button class="btn btn-primary" id="ags-login-submit" onclick="window.agsPasswordLogin && window.agsPasswordLogin()">Sign In</button>
@@ -351,10 +354,13 @@
             <span>Verification code</span>
             <input type="text" id="ags-reset-code" class="name-input" placeholder="Enter the code" autocomplete="one-time-code" />
           </label>
-          <label class="auth-field" for="ags-reset-password">
-            <span>New password</span>
-            <input type="password" id="ags-reset-password" class="name-input" placeholder="Choose a new password" autocomplete="new-password" minlength="8" />
-          </label>
+          <div class="auth-field">
+            <label for="ags-reset-password">New password</label>
+            <div class="password-input-wrap">
+              <input type="password" id="ags-reset-password" class="name-input" placeholder="Choose a new password" autocomplete="new-password" minlength="8" />
+              <button type="button" class="password-visibility-toggle" data-password-toggle aria-controls="ags-reset-password" aria-pressed="false" aria-label="Show password">Show</button>
+            </div>
+          </div>
           <div class="auth-form-actions">
             <button class="btn btn-primary" id="ags-reset-submit" onclick="window.agsCompletePasswordReset && window.agsCompletePasswordReset()">Set New Password</button>
           </div>
@@ -381,11 +387,14 @@
           <span>Display name</span>
           <input type="text" id="ags-register-display-name" class="name-input" placeholder="What friends will see" maxlength="48" autocomplete="nickname" />
         </label>
-        <label class="auth-field" for="ags-register-password">
-          <span>Password</span>
-          <input type="password" id="ags-register-password" class="name-input" placeholder="Choose a secure password" autocomplete="new-password" />
+        <div class="auth-field">
+          <label for="ags-register-password">Password</label>
+          <div class="password-input-wrap">
+            <input type="password" id="ags-register-password" class="name-input" placeholder="Choose a secure password" autocomplete="new-password" />
+            <button type="button" class="password-visibility-toggle" data-password-toggle aria-controls="ags-register-password" aria-pressed="false" aria-label="Show password">Show</button>
+          </div>
           <small>Use a password you don't use elsewhere.</small>
-        </label>
+        </div>
         <label class="legal-confirm-row">
           <input type="checkbox" id="ags-register-minimum-age" />
           <span>I meet the minimum age requirement for my country.</span>
@@ -403,18 +412,49 @@
   <!-- ── Legal Acceptance Screen ─────────────────────────────────────────── -->
   <div id="screen-legal" class="screen">
     <div class="auth-panel legal-panel">
-      <p class="auth-eyebrow">Legal Documents</p>
-      <h2>Review and Accept</h2>
-      <p class="auth-subtitle">Your account has required legal documents that must be accepted before you can continue into the game.</p>
-      <div id="ags-legal-list" class="legal-doc-list"></div>
-      <label class="legal-confirm-row">
-        <input type="checkbox" id="ags-legal-confirm" />
-        <span>I have reviewed and accept these required legal documents.</span>
-      </label>
-      <p id="ags-legal-message" class="auth-message"></p>
-      <div class="auth-form-actions">
-        <button class="btn btn-primary" id="ags-legal-accept" onclick="window.agsAcceptLegal && window.agsAcceptLegal()">Accept and Continue</button>
-        <button class="btn btn-secondary" onclick="window.agsDeclineLegal && window.agsDeclineLegal()">Sign Out</button>
+      <header class="legal-hero">
+        <div class="legal-hero-mark" aria-hidden="true">✓</div>
+        <div>
+          <p class="auth-eyebrow">Before your first match</p>
+          <h2>Review required documents</h2>
+          <p class="auth-subtitle">Open each document, confirm your acceptance, and continue to Ethan's Chess.</p>
+        </div>
+      </header>
+
+      <section class="legal-progress" aria-labelledby="ags-legal-progress-label">
+        <div class="legal-progress-copy">
+          <strong id="ags-legal-progress-label">Review your documents</strong>
+          <span id="ags-legal-progress-count" aria-live="polite">0 of 0 reviewed</span>
+        </div>
+        <div class="legal-progress-track" id="ags-legal-progress-track" role="progressbar" aria-label="Documents reviewed" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+          <span id="ags-legal-progress-bar"></span>
+        </div>
+        <div class="legal-steps" aria-hidden="true">
+          <span class="active"><b>1</b> Review</span>
+          <span><b>2</b> Confirm</span>
+          <span><b>3</b> Continue</span>
+        </div>
+      </section>
+
+      <div id="ags-legal-list" class="legal-doc-list" aria-live="polite"></div>
+
+      <section class="legal-decision">
+        <label class="legal-confirm-row" for="ags-legal-confirm">
+          <input type="checkbox" id="ags-legal-confirm" />
+          <span>
+            <strong>Accept the documents above</strong>
+            <small>I confirm that I reviewed and agree to the current versions of all required documents.</small>
+          </span>
+        </label>
+        <p class="legal-account-note">Your acceptance is recorded securely with your AGS account. You can review it later from Privacy &amp; Legal.</p>
+      </section>
+
+      <div class="legal-action-bar">
+        <p id="ags-legal-message" class="auth-message" role="status" aria-live="polite"></p>
+        <div class="auth-form-actions">
+          <button class="btn btn-primary" id="ags-legal-accept" onclick="window.agsAcceptLegal && window.agsAcceptLegal()">Review documents to continue</button>
+          <button class="btn btn-secondary legal-signout" onclick="window.agsDeclineLegal && window.agsDeclineLegal()">Sign Out</button>
+        </div>
       </div>
     </div>
   </div>
