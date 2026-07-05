@@ -325,6 +325,26 @@ function clearAuthMessages() {
   setAuthMessage('register', '')
 }
 
+function setupPasswordVisibilityToggles() {
+  document.querySelectorAll('[data-password-toggle]').forEach(button => {
+    if (button.dataset.passwordToggleReady === 'true') return
+    const input = document.getElementById(button.getAttribute('aria-controls'))
+    if (!input) return
+
+    button.dataset.passwordToggleReady = 'true'
+    button.addEventListener('click', () => {
+      const showPassword = input.type === 'password'
+      input.type = showPassword ? 'text' : 'password'
+      button.textContent = showPassword ? 'Hide' : 'Show'
+      button.setAttribute('aria-pressed', String(showPassword))
+      button.setAttribute('aria-label', showPassword ? 'Hide password' : 'Show password')
+      input.focus({ preventScroll: true })
+      const cursor = input.value.length
+      input.setSelectionRange?.(cursor, cursor)
+    })
+  })
+}
+
 // Tell the Extend service who referred this newly-registered user, so the
 // inviter's chess-recruiter achievement unlocks server-side. Best-effort.
 async function reportReferral() {
@@ -590,7 +610,14 @@ function renderLegalDocuments(documents) {
 
   listEl.textContent = ''
   if (!documents.length) {
-    listEl.innerHTML = '<article class="legal-doc-card"><h3>Legal documents unavailable</h3><p>We could not load the required agreements for this account. Sign out and try again.</p></article>'
+    listEl.innerHTML = `
+      <article class="legal-doc-card">
+        <div class="legal-doc-content">
+          <div class="legal-doc-heading"><h3>Legal documents unavailable</h3></div>
+          <p>We could not load the required agreements for this account. Sign out and try again.</p>
+          <span class="legal-doc-status">Unavailable</span>
+        </div>
+      </article>`
     return
   }
 
@@ -603,24 +630,37 @@ function renderLegalDocuments(documents) {
 
     const card = document.createElement('article')
     card.className = 'legal-doc-card'
+    card.dataset.legalDocumentId = doc.localizedPolicyVersionId || ''
+
+    const content = document.createElement('div')
+    content.className = 'legal-doc-content'
 
     const metaEl = document.createElement('div')
     metaEl.className = 'legal-doc-meta'
     metaEl.textContent = meta
-    card.appendChild(metaEl)
+    content.appendChild(metaEl)
 
+    const heading = document.createElement('div')
+    heading.className = 'legal-doc-heading'
     const title = document.createElement('h3')
     title.textContent = doc.policyName || 'Legal document'
-    card.appendChild(title)
+    heading.appendChild(title)
+    content.appendChild(heading)
 
     const description = document.createElement('p')
     description.textContent = doc.description || 'Review and accept this document to continue.'
-    card.appendChild(description)
+    content.appendChild(description)
+
+    const status = document.createElement('span')
+    status.className = 'legal-doc-status'
+    status.textContent = doc.attachmentLocation ? 'Ready to review' : 'Unavailable'
+    content.appendChild(status)
+    card.appendChild(content)
 
     const action = document.createElement('button')
     action.type = 'button'
     action.className = 'btn btn-secondary legal-review-button'
-    action.textContent = doc.attachmentLocation ? 'Review document' : 'Document unavailable'
+    action.textContent = doc.attachmentLocation ? 'Open document ↗' : 'Document unavailable'
     action.disabled = !doc.attachmentLocation
     if (doc.attachmentLocation) {
       action.addEventListener('click', async () => {
@@ -634,6 +674,8 @@ function renderLegalDocuments(documents) {
         reviewedLegalDocumentIds.add(doc.localizedPolicyVersionId)
         action.textContent = 'Reviewed ✓'
         action.classList.add('reviewed')
+        card.classList.add('reviewed')
+        status.textContent = 'Reviewed'
         setLegalMessage('')
         updateLegalAcceptanceState()
       })
@@ -654,15 +696,45 @@ function renderLegalDocuments(documents) {
 function updateLegalAcceptanceState() {
   const checkbox = document.getElementById('ags-legal-confirm')
   const acceptBtn = document.getElementById('ags-legal-accept')
+  const progressCount = document.getElementById('ags-legal-progress-count')
+  const progressBar = document.getElementById('ags-legal-progress-bar')
+  const progressTrack = document.getElementById('ags-legal-progress-track')
+  const progressLabel = document.getElementById('ags-legal-progress-label')
+  const legalSteps = document.querySelectorAll('.legal-steps span')
+  const total = pendingLegalDocuments.length
+  const reviewed = pendingLegalDocuments.filter(doc =>
+    reviewedLegalDocumentIds.has(doc.localizedPolicyVersionId),
+  ).length
   const documentsAvailable = pendingLegalDocuments.length > 0 &&
     pendingLegalDocuments.every(doc => !!doc.attachmentLocation)
   const allReviewed = documentsAvailable &&
     pendingLegalDocuments.every(doc => reviewedLegalDocumentIds.has(doc.localizedPolicyVersionId))
+  const confirmed = allReviewed && checkbox?.checked === true
+
+  if (progressCount) progressCount.textContent = `${reviewed} of ${total} reviewed`
+  if (progressBar) progressBar.style.width = `${total ? (reviewed / total) * 100 : 0}%`
+  if (progressTrack) {
+    progressTrack.setAttribute('aria-valuemax', String(total))
+    progressTrack.setAttribute('aria-valuenow', String(reviewed))
+  }
+  if (progressLabel) {
+    progressLabel.textContent = allReviewed ? 'Documents reviewed' : 'Review your documents'
+  }
+  legalSteps.forEach((step, index) => {
+    step.classList.toggle('active', index === 0 || (index === 1 && allReviewed) || (index === 2 && confirmed))
+  })
   if (checkbox) {
     checkbox.disabled = !allReviewed
     if (!allReviewed) checkbox.checked = false
   }
-  if (acceptBtn) acceptBtn.disabled = !allReviewed || checkbox?.checked !== true
+  if (acceptBtn) {
+    acceptBtn.disabled = !confirmed
+    acceptBtn.textContent = total === 0
+      ? 'Documents unavailable'
+      : (!allReviewed
+      ? `Review ${Math.max(total - reviewed, 0)} document${total - reviewed === 1 ? '' : 's'} to continue`
+      : (confirmed ? `Accept ${total} document${total === 1 ? '' : 's'} and continue` : 'Confirm acceptance to continue'))
+  }
 }
 
 function showLegalGate(documents, profile = null, message = '') {
@@ -752,6 +824,7 @@ async function initAuth() {
   setQueueUIHandler(renderLoginQueue)
   window.agsCancelLoginQueue = cancelLoginQueue
   initPrivacyCenter()
+  setupPasswordVisibilityToggles()
 
   const params = new URLSearchParams(window.location.search)
   // Google direct login (web) returns the id_token in the URL fragment.
@@ -1056,25 +1129,32 @@ async function initAuth() {
       return
     }
 
-    if (acceptBtn) acceptBtn.disabled = true
+    if (acceptBtn) {
+      acceptBtn.disabled = true
+      acceptBtn.setAttribute('aria-busy', 'true')
+      acceptBtn.textContent = 'Accepting securely…'
+    }
     setLegalMessage('Accepting documents…')
 
     const accepted = await acceptLegalDocuments(pendingLegalDocuments)
     if (!accepted.ok) {
-      if (acceptBtn) acceptBtn.disabled = false
+      if (acceptBtn) acceptBtn.removeAttribute('aria-busy')
+      updateLegalAcceptanceState()
       setLegalMessage(accepted.error, 'error')
       return
     }
 
     if (!accepted.comply) {
-      if (acceptBtn) acceptBtn.disabled = false
+      if (acceptBtn) acceptBtn.removeAttribute('aria-busy')
+      updateLegalAcceptanceState()
       setLegalMessage('Your account is still missing required agreements. Please try again.', 'error')
       return
     }
 
     const verification = await fetchPendingLegalDocuments()
     if (!verification.ok) {
-      if (acceptBtn) acceptBtn.disabled = false
+      if (acceptBtn) acceptBtn.removeAttribute('aria-busy')
+      updateLegalAcceptanceState()
       setLegalMessage(
         `${verification.error || 'Could not verify acceptance.'} Your account remains at the legal gate.`,
         'error',
@@ -1097,7 +1177,8 @@ async function initAuth() {
 
     const profile = pendingLegalProfile || await getProfile()
     if (!profile) {
-      if (acceptBtn) acceptBtn.disabled = false
+      if (acceptBtn) acceptBtn.removeAttribute('aria-busy')
+      updateLegalAcceptanceState()
       setLegalMessage('Accepted, but failed to restore your session. Please sign in again.', 'error')
       return
     }

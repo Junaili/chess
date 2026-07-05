@@ -46,6 +46,41 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#screen-home')).toBeVisible();
   });
 
+  test('every password field can be revealed and hidden without changing its value', async ({ page }) => {
+    await gotoApp(page);
+
+    const cases = [
+      { screen: 'login', input: '#ags-login-password' },
+      { screen: 'register', input: '#ags-register-password' },
+      { screen: 'forgot-password', input: '#ags-reset-password', revealReset: true },
+    ];
+
+    for (const item of cases) {
+      await page.evaluate(({ screen, revealReset }) => {
+        window.showScreen(screen);
+        if (revealReset) document.getElementById('ags-reset-fields').hidden = false;
+      }, item);
+
+      const input = page.locator(item.input);
+      const toggle = input.locator('xpath=following-sibling::button[@data-password-toggle]');
+      await input.fill('correct-horse-battery-staple');
+
+      await expect(input).toHaveAttribute('type', 'password');
+      await expect(toggle).toHaveAttribute('aria-label', 'Show password');
+      await toggle.click();
+      await expect(input).toHaveAttribute('type', 'text');
+      await expect(input).toHaveValue('correct-horse-battery-staple');
+      await expect(toggle).toHaveText('Hide');
+      await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
+      await toggle.click();
+      await expect(input).toHaveAttribute('type', 'password');
+      await expect(input).toHaveValue('correct-horse-battery-staple');
+      await expect(toggle).toHaveText('Show');
+      await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    }
+  });
+
   test('invite link shows the landing screen and prefills the register email', async ({ page }) => {
     await blockBackend(page);
     await page.goto(`${APP_PATH}?invitedBy=test-inviter-id&email=${encodeURIComponent('invitee@example.com')}&utm_medium=email`);
