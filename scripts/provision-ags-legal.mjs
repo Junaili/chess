@@ -258,6 +258,21 @@ async function ensureDocument({
     }
   }
 
+  await ensurePublishedVersion({ policy, document, manifest, namespace, source, contentType, expectedMD5 })
+
+  // A COUNTRY-type policy only covers the one country it names — everyone else
+  // never sees the gate at all (no fallback without this). Ensure a sibling
+  // COUNTRY_GROUP child covering every other storefront country exists under
+  // the same base policy, so acceptance is enforced globally, not just in
+  // manifest.countryCode. The country-specific child above is left untouched
+  // (matched independently by real country code, taking precedence for users
+  // it actually covers) so any acceptances already recorded against it stay valid.
+  await ensureGlobalChild({ basePolicy, document, manifest, namespace })
+}
+
+// Version → localized version → attachment → commit → publish, shared by both
+// the country-specific child and the worldwide COUNTRY_GROUP child.
+async function ensurePublishedVersion({ policy, document, manifest, namespace, source, contentType, expectedMD5 }) {
   const versions = runAgs([
     'legal', 'versions', 'list',
     '--namespace', namespace,
@@ -376,6 +391,76 @@ async function ensureDocument({
   } else {
     console.log('  version already published')
   }
+}
+
+async function ensureGlobalChild({ basePolicy, document, manifest, namespace }) {
+  const groupName = manifest.worldwide.countryGroupName
+  const children = runAgs([
+    'legal', 'base-policies', 'list-children',
+    '--base-policy-id', basePolicy.id,
+    '--namespace', namespace,
+  ])
+  let policy = optionalObject(children, item => item.countryGroupName === groupName)
+
+  if (!policy) {
+    // Converting the base policy to COUNTRY_GROUP auto-creates a sibling child
+    // policy scoped to affectedCountries — it does NOT touch or replace the
+    // existing country-specific child.
+    runAgs([
+      'legal', 'base-policies', 'update',
+      '--namespace', namespace,
+      '--base-policy-id', basePolicy.id,
+      ...jsonBody({
+        affectedClientIds: basePolicy.affectedClientIds,
+        affectedCountries: manifest.worldwide.countries,
+        basePolicyName: document.basePolicyName,
+        countryGroupName: groupName,
+        countryType: 'COUNTRY_GROUP',
+        description: document.description,
+        isHidden: false,
+        isHiddenPublic: false,
+        tags: basePolicy.tags,
+      }),
+    ], { mutate: true })
+    if (!apply) return
+    const refreshedChildren = runAgs([
+      'legal', 'base-policies', 'list-children',
+      '--base-policy-id', basePolicy.id,
+      '--namespace', namespace,
+    ])
+    policy = findObject(refreshedChildren, item => item.countryGroupName === groupName, 'worldwide child policy')
+    console.log(`  created worldwide policy ${policy.id} (${policy.countries?.length ?? 0} countries)`)
+  } else {
+    console.log(`  worldwide policy ${policy.id}`)
+  }
+
+  const policyNeedsUpdate =
+    policy.isMandatory !== true ||
+    policy.policyName !== document.policyName ||
+    policy.shouldNotifyOnUpdate !== true
+  if (policyNeedsUpdate) {
+    runAgs([
+      'legal', 'policies', 'update',
+      '--namespace', namespace,
+      '--policy-id', policy.id,
+      ...jsonBody({
+        isDefaultOpted: true,
+        isMandatory: true,
+        policyName: document.policyName,
+        shouldNotifyOnUpdate: true,
+      }),
+    ], { mutate: true })
+    console.log('  updated worldwide policy name + mandatory acceptance')
+    policy = { ...policy, isMandatory: true, policyName: document.policyName, shouldNotifyOnUpdate: true }
+  }
+
+  const source = resolve(root, 'legal-documents', document.source)
+  const sourceBytes = await readFile(source)
+  const expectedMD5 = createHash('md5').update(sourceBytes).digest('base64')
+  await ensurePublishedVersion({
+    policy, document, manifest, namespace,
+    source, contentType: 'text/markdown', expectedMD5,
+  })
 }
 
 const env = readEnv(await readFile(resolve(root, '.env.production'), 'utf8'))
