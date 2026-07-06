@@ -225,6 +225,8 @@ test.describe('QA two-account online flow', () => {
       await expect(pageB.locator('#online-chat-status')).toHaveText('Connected', { timeout: 30_000 });
 
       const chatText = `QA friend chat ${Date.now()}`;
+      await pageA.getByRole('tab', { name: 'Chat' }).click();
+      await pageB.getByRole('tab', { name: 'Chat' }).click();
       await pageA.locator('#online-chat-input').fill(chatText);
       await pageA.locator('#btn-chat-send').click();
       await expect(pageA.locator('.chat-message-body', { hasText: chatText })).toHaveCount(1);
@@ -244,6 +246,7 @@ test.describe('QA two-account online flow', () => {
       await expect(squareLocator(pageB, 'e4').locator('.piece')).toHaveCount(1, { timeout: 30_000 });
       await expect(squareLocator(pageB, 'e2').locator('.piece')).toHaveCount(0);
 
+      await pageB.getByRole('tab', { name: 'More' }).click();
       await pageB.locator('#btn-match-safety').click();
       await expect(pageB.locator('#match-safety-modal')).toBeVisible();
       await pageB.locator('#btn-block-current-opponent').click();

@@ -2491,10 +2491,8 @@ input[type="checkbox"] {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--rail);
-  grid-template-rows: min-content minmax(0, 1fr);
-  grid-template-areas:
-    "gboard gleft"
-    "gboard gright";
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "gboard gright";
   gap: 14px;
   align-items: stretch;
   overflow: hidden;
@@ -2517,10 +2515,136 @@ input[type="checkbox"] {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 8px;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.match-player-strip {
+  width: min(100%, calc(var(--board-size) + 40px));
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px 4px 4px;
+  border-radius: 18px;
+  background: rgba(24, 20, 25, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.match-player-strip .player-info {
+  padding: 9px 12px;
+}
+
+.match-player-strip .player-score {
+  padding: 5px 8px;
+  font-size: 0.74rem;
+}
+
+.player-clock {
+  min-width: 88px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-soft);
+  font-size: 1.12rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.player-clock.active {
+  background: var(--accent);
+  color: #20150d;
+  box-shadow: 0 0 0 3px rgba(240, 195, 122, 0.15);
+}
+
+.game-sidebar.right {
+  padding: 12px;
+  border-radius: 22px;
+  background: rgba(20, 17, 21, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.match-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.match-tab,
+.match-icon-button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.match-tab.active {
+  background: rgba(240, 195, 122, 0.18);
+  color: var(--accent-2);
+}
+
+.match-panel {
+  display: none;
+  min-height: 0;
+  flex: 1;
+}
+
+.match-panel.active {
+  display: flex;
+  flex-direction: column;
+}
+
+.match-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.match-panel-heading h3 {
+  margin: 0;
+}
+
+.match-icon-button {
+  min-height: 34px;
+  padding: 4px 8px;
+  font-size: 0.76rem;
+}
+
+.match-icon-button:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+}
+
+.match-panel .move-history,
+.match-panel .online-chat {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
+
+.match-more-panel {
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.match-panel-empty {
+  margin: auto;
+  max-width: 210px;
+  color: var(--text-soft);
+  text-align: center;
+  line-height: 1.5;
 }
 
 /* Outer ruler labels duplicate the in-cell coordinates — hide them everywhere. */
@@ -2546,9 +2670,9 @@ input[type="checkbox"] {
 .board-container {
   position: relative;
   flex: 0 0 auto;
-  width: calc(var(--board-size) + 40px);
+  width: calc(var(--board-size) + 20px);
   max-width: 100%;
-  padding: 20px;
+  padding: 10px;
   border-radius: 30px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
@@ -2627,7 +2751,7 @@ input[type="checkbox"] {
   grid-template-rows: repeat(8, minmax(0, 1fr));
   border-radius: 18px;
   overflow: hidden;
-  border: 10px solid #2f221c;
+  border: 6px solid #2f221c;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.12),
     0 18px 32px rgba(0, 0, 0, 0.36);
@@ -3864,12 +3988,24 @@ input[type="checkbox"] {
 
   .game-layout {
     grid-template-columns: 1fr;
-    grid-template-rows: min-content min-content min-content;
+    grid-template-rows: min-content min-content;
     grid-template-areas:
-      "gleft"
       "gboard"
       "gright";
     overflow: visible;
+  }
+
+  .game-sidebar.right {
+    min-height: 320px;
+  }
+
+  .match-player-strip {
+    width: min(100%, calc(var(--board-size) + 20px));
+  }
+
+  .player-clock {
+    min-width: 76px;
+    font-size: 1rem;
   }
 
   .game-sidebar,

@@ -37,6 +37,8 @@ test.describe('Live online match (two players)', () => {
       await expect(pageB.locator('#online-chat-status')).toHaveText('Connected', { timeout: 30_000 });
 
       const chatText = `AGS chat ${Date.now()}`;
+      await pageA.getByRole('tab', { name: 'Chat' }).click();
+      await pageB.getByRole('tab', { name: 'Chat' }).click();
       await pageA.locator('#online-chat-input').fill(chatText);
       await pageA.locator('#btn-chat-send').click();
       await expect(pageA.locator('.chat-message-body', { hasText: chatText })).toHaveCount(1);

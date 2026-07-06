@@ -49,6 +49,7 @@ test.describe('Play vs Computer', () => {
   test('Get Hint surfaces a suggested move', async ({ page }) => {
     await startVsComputer(page, { color: 'white', difficulty: 'easy' });
 
+    await page.getByRole('tab', { name: 'More' }).click();
     await page.locator('#btn-hint').click();
     await expect(page.locator('#hint-box')).toBeVisible();
     await expect(page.locator('#hint-text')).toHaveText(/.+/);
@@ -59,6 +60,7 @@ test.describe('Play vs Computer', () => {
     await playMove(page, 'd2', 'd4');
     await expect(page.locator('#move-list .move-row')).not.toHaveCount(0);
 
+    await page.getByRole('tab', { name: 'More' }).click();
     await page.locator('#btn-new-game').click(); // confirm() auto-accepted in helper
     await expect(page.locator('#move-list .move-row')).toHaveCount(0);
     await expect(squareLocator(page, 'd2').locator('.piece')).toHaveCount(1);
@@ -68,6 +70,7 @@ test.describe('Play vs Computer', () => {
     await startVsComputer(page, { color: 'white', difficulty: 'easy' });
     await playMove(page, 'e2', 'e4');
 
+    await page.getByRole('tab', { name: 'More' }).click();
     await page.locator('#btn-resign').click(); // confirm() auto-accepted in helper
     await expect(page.locator('#game-over-modal')).toBeVisible();
     await expect(page.locator('#game-over-message')).toHaveText(/.+/);

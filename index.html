@@ -577,38 +577,30 @@
   <!-- ── Game Screen ─────────────────────────────────────────────────────── -->
   <div id="screen-game" class="screen">
     <div class="game-layout">
-
-      <div class="game-sidebar left">
-        <div class="player-info" id="black-player-card">
-          <span class="player-name" id="black-player-name">Black</span>
-          <span class="player-id" id="black-player-id"></span>
-          <span class="player-score" id="black-score">0</span>
-        </div>
-        <div class="captured-pieces" id="captured-by-white"></div>
-      </div>
-
       <div class="game-center">
+        <div class="match-player-strip opponent-strip" id="opponent-player-strip">
+          <div class="player-info" id="black-player-card">
+            <span class="player-name" id="black-player-name">Black</span>
+            <span class="player-id" id="black-player-id"></span>
+            <span class="player-score" id="black-score" aria-label="Material balance">Even</span>
+          </div>
+          <span class="player-clock" id="black-clock" aria-label="Black time used">00:00</span>
+        </div>
+        <div class="captured-pieces" id="captured-by-white" hidden></div>
         <div class="board-container">
-          <div class="board-labels-top">
-            <span>a</span><span>b</span><span>c</span><span>d</span>
-            <span>e</span><span>f</span><span>g</span><span>h</span>
-          </div>
           <div class="board-wrapper">
-            <div class="board-labels-left">
-              <span>8</span><span>7</span><span>6</span><span>5</span>
-              <span>4</span><span>3</span><span>2</span><span>1</span>
-            </div>
             <div id="chess-board" class="chess-board"></div>
-            <div class="board-labels-right">
-              <span>8</span><span>7</span><span>6</span><span>5</span>
-              <span>4</span><span>3</span><span>2</span><span>1</span>
-            </div>
-          </div>
-          <div class="board-labels-bottom">
-            <span>a</span><span>b</span><span>c</span><span>d</span>
-            <span>e</span><span>f</span><span>g</span><span>h</span>
           </div>
         </div>
+        <div class="match-player-strip you-strip" id="you-player-strip">
+          <div class="player-info" id="white-player-card">
+            <span class="player-name" id="white-player-name">White</span>
+            <span class="player-id" id="white-player-id"></span>
+            <span class="player-score" id="white-score" aria-label="Material balance">Even</span>
+          </div>
+          <span class="player-clock" id="white-clock" aria-label="White time used">00:00</span>
+        </div>
+        <div class="captured-pieces" id="captured-by-black" hidden></div>
         <div class="game-status">
           <span id="turn-indicator" aria-live="polite" aria-atomic="true">White's turn</span>
         </div>
@@ -618,38 +610,45 @@
         </div>
       </div>
 
-      <div class="game-sidebar right">
-        <div class="player-info" id="white-player-card">
-          <span class="player-name" id="white-player-name">White</span>
-          <span class="player-id" id="white-player-id"></span>
-          <span class="player-score" id="white-score">0</span>
+      <aside class="game-sidebar right" aria-label="Match information and controls">
+        <div class="match-tabs" role="tablist" aria-label="Match panel">
+          <button type="button" class="match-tab active" data-match-tab="moves" onclick="showMatchTab('moves')" role="tab">Moves</button>
+          <button type="button" class="match-tab" data-match-tab="chat" onclick="showMatchTab('chat')" role="tab" id="match-chat-tab">Chat</button>
+          <button type="button" class="match-tab" data-match-tab="more" onclick="showMatchTab('more')" role="tab">More</button>
         </div>
-        <div class="captured-pieces" id="captured-by-black"></div>
-        <div class="move-history">
-          <h3>Move History</h3>
-          <div id="move-list"></div>
-        </div>
-        <div class="online-chat" id="online-chat" style="display:none">
-          <div class="online-chat-header">
-            <h3>Match Chat</h3>
-            <div class="online-chat-header-actions">
-              <span class="online-chat-status" id="online-chat-status" data-state="connecting">Connecting…</span>
-              <button type="button" class="btn-chat-safety" id="btn-match-safety" onclick="openMatchSafety()" aria-label="Open match safety options" title="Report or block opponent">Safety</button>
+        <div class="match-panel active" data-match-panel="moves">
+          <div class="move-history">
+            <div class="match-panel-heading">
+              <h3>Moves</h3>
+              <button type="button" class="match-icon-button" onclick="flipBoard()" aria-label="Flip board">↻ Flip</button>
             </div>
+            <div id="move-list"></div>
           </div>
-          <div class="online-chat-messages" id="online-chat-messages"></div>
-          <div class="online-chat-compose">
-            <input type="text" id="online-chat-input" class="online-chat-input" placeholder="Message your opponent" maxlength="280" onkeydown="handleChatInputKeydown(event)" disabled />
-            <button class="btn btn-primary btn-chat-send" id="btn-chat-send" onclick="sendChatMessage()" disabled>Send</button>
-          </div>
-          <p id="online-chat-message" class="online-chat-notice" aria-live="polite"></p>
         </div>
-        <button class="btn btn-hint" id="btn-hint" onclick="showHint()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5.76.76 1.23 1.52 1.41 2.5"/></svg>Get Hint</button>
-        <button class="btn btn-video-chat" id="btn-video-chat" onclick="startVideoChat()" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg>Video Chat</button>
-        <button class="btn btn-secondary" id="btn-new-game" onclick="confirmNewGame()" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>New Game</button>
-        <button class="btn btn-danger" id="btn-resign" onclick="resignGame()" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>Resign</button>
-        <button class="btn btn-home" onclick="confirmGoHome()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Leave game</button>
-      </div>
+        <div class="match-panel" data-match-panel="chat">
+          <div class="online-chat" id="online-chat" style="display:none">
+            <div class="online-chat-header">
+              <h3>Match Chat</h3>
+              <span class="online-chat-status" id="online-chat-status" data-state="connecting">Connecting…</span>
+            </div>
+            <div class="online-chat-messages" id="online-chat-messages"></div>
+            <div class="online-chat-compose">
+              <input type="text" id="online-chat-input" class="online-chat-input" placeholder="Message your opponent" maxlength="280" onkeydown="handleChatInputKeydown(event)" disabled />
+              <button class="btn btn-primary btn-chat-send" id="btn-chat-send" onclick="sendChatMessage()" disabled>Send</button>
+            </div>
+            <p id="online-chat-message" class="online-chat-notice" aria-live="polite"></p>
+          </div>
+          <p class="match-panel-empty" id="match-chat-unavailable">Chat is available in online games.</p>
+        </div>
+        <div class="match-panel match-more-panel" data-match-panel="more">
+          <button class="btn btn-hint" id="btn-hint" onclick="showHint()">Get Hint</button>
+          <button class="btn btn-video-chat" id="btn-video-chat" onclick="startVideoChat()" style="display:none">Video Chat</button>
+          <button type="button" class="btn btn-secondary" id="btn-match-safety" onclick="openMatchSafety()" style="display:none">Safety</button>
+          <button class="btn btn-secondary" id="btn-new-game" onclick="confirmNewGame()" style="display:none">New Game</button>
+          <button class="btn btn-danger" id="btn-resign" onclick="resignGame()" style="display:none">Resign</button>
+          <button class="btn btn-home" onclick="confirmGoHome()">Leave game</button>
+        </div>
+      </aside>
 
     </div>
   </div>

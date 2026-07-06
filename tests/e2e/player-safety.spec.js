@@ -67,6 +67,7 @@ test.describe('player safety', () => {
       })
     })
 
+    await page.getByRole('tab', { name: 'Chat' }).click()
     await page.locator('.chat-message.opponent .chat-report-button').click()
     await expect(page.locator('#report-player-title')).toHaveText('Report Message')
     await page.locator('#report-player-reason').selectOption('Spam')
