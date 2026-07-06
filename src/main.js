@@ -2251,6 +2251,9 @@ function updateStatsUI(stats, streak) {
     el.textContent = s > 0
       ? `W ${stats.wins}  ·  L ${stats.losses}  ·  🔥 ${s}${rating}`
       : `W ${stats.wins}  ·  L ${stats.losses}${rating}`
+    el.title = stats.rating
+      ? 'Elo Style Rating: starts at 1200. Beating a higher-rated opponent gains more, losing to a lower-rated opponent costs more — up to about ±32 points per online match, scaled by the rating gap.'
+      : ''
   } else {
     el.style.display = 'none'
   }

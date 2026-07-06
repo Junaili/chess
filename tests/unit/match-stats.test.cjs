@@ -90,6 +90,28 @@ test('computeMatchStats: vs bot vs vs human split by mode', async () => {
   assert.equal(stats.winRateByOpponentType.vsHuman.losses, 1)
 })
 
+test('computeMatchStats: the matchmaking bot (Gambit Gus) counts as vs-bot despite mode "online"', async () => {
+  const { computeMatchStats } = await modulePromise
+  const stats = computeMatchStats([
+    baseMatch({ id: 'm1', mode: 'online', opponentName: 'Gambit Gus', opponentUserId: 'bot-account-id', result: 'win' }),
+    baseMatch({ id: 'm2', mode: 'online', opponentName: 'Alice', opponentUserId: 'opp-1', result: 'loss' }),
+  ])
+  assert.equal(stats.winRateByOpponentType.vsBot.wins, 1)
+  assert.equal(stats.winRateByOpponentType.vsHuman.games, 1)
+  assert.equal(stats.winRateByOpponentType.vsHuman.losses, 1)
+})
+
+test('computeMatchStats: the matchmaking bot is excluded from head-to-head and nemesis', async () => {
+  const { computeMatchStats } = await modulePromise
+  const stats = computeMatchStats([
+    baseMatch({ id: 'm1', mode: 'online', opponentName: 'Gambit Gus', opponentUserId: 'bot-account-id', result: 'loss' }),
+    baseMatch({ id: 'm2', mode: 'online', opponentName: 'Gambit Gus', opponentUserId: 'bot-account-id', result: 'loss' }),
+    baseMatch({ id: 'm3', mode: 'online', opponentName: 'Gambit Gus', opponentUserId: 'bot-account-id', result: 'loss' }),
+  ])
+  assert.equal(stats.headToHead.length, 0)
+  assert.equal(stats.nemesis, null)
+})
+
 test('computeMatchStats: head-to-head aggregates per opponent and nemesis needs >= 3 games', async () => {
   const { computeMatchStats } = await modulePromise
   const stats = computeMatchStats([
