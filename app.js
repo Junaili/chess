@@ -156,6 +156,11 @@ let activeSafetyReport = null;
 let pendingFriendMatchInvite = null;
 let matchStartedAt = null;
 let matchHistoryRecorded = false;
+// Resignation reuses game.status = 'checkmate' (so all the existing win/loss
+// UI, sounds, and status-bar logic keep working unmodified) — this flag is the
+// only place resignation is distinguished, read once when the match-history
+// record is built.
+let gameEndedByResignation = false;
 let gameOverCountdownTimer = null;
 let gameOverCountdownRemaining = 0;
 let homeIdleTimer = null;
@@ -362,6 +367,7 @@ function startGame() {
   }
   matchStartedAt = new Date();
   matchHistoryRecorded = false;
+  gameEndedByResignation = false;
   game = new ChessGame();
   selectedSquare = null;
   validMoves = [];
@@ -923,16 +929,27 @@ function showGameOver() {
   recordMatchHistoryOnce();
   window.agsClearLiveMatch?.()
 
-  if (game.status === 'checkmate' && game.winner === playerColor) {
+  const won = game.status === 'checkmate' && game.winner === playerColor;
+  const lost = game.status === 'checkmate' && game.winner && game.winner !== playerColor;
+  const drew = isDrawStatus(game.status);
+
+  if (won) {
     recordWin();
     if (typeof window.agsIncrementWin === 'function') window.agsIncrementWin();
-  } else if (game.status === 'checkmate' && game.winner && game.winner !== playerColor) {
+  } else if (lost) {
     if (typeof window.agsIncrementLoss === 'function') window.agsIncrementLoss();
-  } else if (isDrawStatus(game.status)) {
+  } else if (drew) {
     if (typeof window.agsIncrementDraw === 'function') window.agsIncrementDraw();
   }
   if (typeof window.agsIncrementGamePlayed === 'function') window.agsIncrementGamePlayed(gameMode);
   window.agsUpdateStreak?.();
+  // Elo rating only applies to online matches against a real opponent whose
+  // pre-game rating we actually received over the peer connection —
+  // agsRecordEloResult no-ops itself if that never arrived.
+  if (gameMode === 'online' && (won || lost || drew)) {
+    const score = won ? 1 : lost ? 0 : 0.5;
+    window.agsRecordEloResult?.(score);
+  }
 
   const title = document.getElementById('game-over-title');
   const msg   = document.getElementById('game-over-message');
@@ -1004,6 +1021,10 @@ function recordMatchHistoryOnce() {
     : game.winner === playerColor
       ? 'win'
       : 'loss';
+  // Resignation reuses the 'checkmate' status (see gameEndedByResignation) so
+  // existing win/loss UI stays untouched; this is the one place it's split
+  // back out, purely for the stats record.
+  const endReason = gameEndedByResignation ? 'resignation' : game.status;
 
   const opponentName = gameMode === 'computer'
     ? 'Computer AI'
@@ -1028,12 +1049,18 @@ function recordMatchHistoryOnce() {
     opponentName,
     opponentUserId,
     result,
+    endReason,
+    myColor: playerColor,
     startedAt: startedAt.toISOString(),
     endedAt: endedAt.toISOString(),
     durationMs: endedAt.getTime() - startedAt.getTime(),
     moves: game.moveHistory.map(m => ({ fr: m.fr, fc: m.fc, toR: m.toR, toC: m.toC, promType: m.promType || 'queen' })),
     whiteName: document.getElementById('white-player-name')?.textContent || 'White',
     blackName: document.getElementById('black-player-name')?.textContent || 'Black',
+    // Piece types only (color is implied by which side captured them) — kept
+    // compact since match history caps at 50 entries per player.
+    capturedByWhite: game.capturedByWhite.map(p => p.type),
+    capturedByBlack: game.capturedByBlack.map(p => p.type),
   });
 }
 
@@ -1889,7 +1916,8 @@ function setupPeerConnection(conn, role) {
         const joinerColor = playerColor === 'white' ? 'black' : 'white';
         const myName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'Opponent';
         const myId   = window.agsCurrentUserId || '';
-        conn.send({ type: 'game_start', yourColor: joinerColor, opponentName: myName, opponentId: myId });
+        const myRating = window.agsGetRating?.() ?? null;
+        conn.send({ type: 'game_start', yourColor: joinerColor, opponentName: myName, opponentId: myId, rating: myRating });
         startGame();
       }
     } else {
@@ -1932,6 +1960,7 @@ function setupPeerConnection(conn, role) {
       if (opponentId && opponentName) {
         if (typeof window.cacheDisplayName === 'function') window.cacheDisplayName(opponentId, opponentName);
       }
+      window.agsSetOpponentRating?.(data.rating);
       startGame();
       // Show host's identity as our opponent
       const oppColor = data.yourColor === 'white' ? 'black' : 'white';
@@ -1939,7 +1968,8 @@ function setupPeerConnection(conn, role) {
       // Send back our own identity
       const myName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'Opponent';
       const myId   = window.agsCurrentUserId || '';
-      try { conn.send({ type: 'player_info', name: myName, userId: myId }); } catch {}
+      const myRating = window.agsGetRating?.() ?? null;
+      try { conn.send({ type: 'player_info', name: myName, userId: myId, rating: myRating }); } catch {}
     } else if (data.type === 'player_info') {
       const opponentName = moderateIncomingDisplayName(
         sanitizePeerText(data.name, PEER_NAME_MAX_CHARS),
@@ -1950,6 +1980,7 @@ function setupPeerConnection(conn, role) {
       if (opponentId && opponentName) {
         if (typeof window.cacheDisplayName === 'function') window.cacheDisplayName(opponentId, opponentName);
       }
+      window.agsSetOpponentRating?.(data.rating);
       const oppColor = playerColor === 'white' ? 'black' : 'white';
       setPlayerInfo(oppColor, opponentName, opponentId);
       activateChatForCurrentMatch();
@@ -2485,6 +2516,7 @@ function resignGame() {
   if (!game || isGameOverStatus(game.status)) return;
   if (gameMode !== 'computer') return;
   if (!confirm('Resign this game? It will count as a loss.')) return;
+  gameEndedByResignation = true;
   game.status = 'checkmate';
   game.winner = playerColor === 'white' ? 'black' : 'white';
   aiThinking = false;

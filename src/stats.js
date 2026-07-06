@@ -2,13 +2,16 @@ import { UserStatisticApi } from '@accelbyte/sdk-social'
 import { PublicPlayerRecordApi } from '@accelbyte/sdk-cloudsave'
 import { sdk } from './ags-client.js'
 import { moderateIncomingDisplayName } from './content-moderation.mjs'
+import { computeEloUpdate } from './match-stats.mjs'
 
 const STREAK_CURRENT = 'chess-current-streak'
 const STREAK_LONGEST = 'chess-longest-streak'
 const STREAK_LAST_DAY = 'chess-last-play-day'
+const RATING = 'chess-rating'
+const RATING_DEFAULT = 1200
 const STAT_CODES = [
   'chess-wins', 'chess-losses', 'chess-games-played', 'chess-draws', 'chess-online-games',
-  STREAK_CURRENT, STREAK_LONGEST, STREAK_LAST_DAY,
+  STREAK_CURRENT, STREAK_LONGEST, STREAK_LAST_DAY, RATING,
 ]
 const MATCH_HISTORY_KEY = 'chess-match-history'
 const MAX_MATCH_HISTORY = 50
@@ -43,6 +46,7 @@ export async function fetchStats(userId) {
       gamesPlayed:  get('chess-games-played'),
       draws:        get('chess-draws'),
       onlineGames:  get('chess-online-games'),
+      rating:       get(RATING) || RATING_DEFAULT,
     }
   } catch (e) {
     console.warn('[AGS stats] fetchStats:', e?.response?.data || e?.message)
@@ -137,6 +141,8 @@ export async function recordMatchHistory(match) {
       opponentUserId: match.opponentUserId || '',
       opponentName: moderateIncomingDisplayName(match.opponentName, 'Opponent'),
       result: match.result || 'completed',
+      endReason: typeof match.endReason === 'string' ? match.endReason : '',
+      myColor: match.myColor === 'black' ? 'black' : match.myColor === 'white' ? 'white' : '',
       startedAt: match.startedAt,
       endedAt: match.endedAt,
       durationMs: Math.max(0, Number(match.durationMs) || 0),
@@ -151,6 +157,8 @@ export async function recordMatchHistory(match) {
         : [],
       whiteName: moderateIncomingDisplayName(match.whiteName, 'White'),
       blackName: moderateIncomingDisplayName(match.blackName, 'Black'),
+      capturedByWhite: Array.isArray(match.capturedByWhite) ? match.capturedByWhite.filter(t => typeof t === 'string') : [],
+      capturedByBlack: Array.isArray(match.capturedByBlack) ? match.capturedByBlack.filter(t => typeof t === 'string') : [],
     }
     const history = [entry, ...current.filter(item => item.id !== entry.id)].slice(0, MAX_MATCH_HISTORY)
     const record = {
@@ -177,6 +185,21 @@ async function readStreakStats(userId, codes) {
   const res = await UserStatisticApi(sdk).getStatitems_ByUserId(userId, { statCodes: codes.join(',') })
   const items = res.data?.data || []
   return code => items.find(i => i.statCode === code)?.value
+}
+
+// Applies one match's Elo result and persists the new rating. Only called for
+// online matches where the opponent's pre-game rating was actually received
+// over the peer connection — skip (don't guess) otherwise.
+export async function recordEloResult(userId, myRatingBefore, opponentRating, score) {
+  if (!userId || typeof opponentRating !== 'number') return null
+  const newRating = computeEloUpdate(myRatingBefore, opponentRating, score)
+  try {
+    await setStat(userId, RATING, newRating, 'OVERRIDE')
+    return newRating
+  } catch (e) {
+    console.warn('[AGS rating] record:', e?.response?.data || e?.message)
+    return null
+  }
 }
 
 export async function fetchStreak(userId) {

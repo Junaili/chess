@@ -241,7 +241,70 @@
           <span>Leaderboard</span>
           <strong id="profile-rank">—</strong>
         </div>
+        <div class="profile-stat">
+          <span>Rating</span>
+          <strong id="profile-rating">—</strong>
+        </div>
       </div>
+      <section id="profile-chess-stats" class="profile-history-card" style="display:none">
+        <div class="profile-history-head">
+          <h3>Chess Stats</h3>
+        </div>
+        <div id="profile-head-to-head" class="profile-stat" style="display:none">
+          <span>Head-to-head</span>
+          <strong id="profile-head-to-head-value">—</strong>
+        </div>
+        <div class="profile-stats-grid">
+          <div class="profile-stat">
+            <span>As White</span>
+            <strong id="profile-rate-white">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>As Black</span>
+            <strong id="profile-rate-black">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Vs. Bot</span>
+            <strong id="profile-rate-vs-bot">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Vs. Human</span>
+            <strong id="profile-rate-vs-human">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Favorite opening</span>
+            <strong id="profile-favorite-opening">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Time played</span>
+            <strong id="profile-time-played">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Castling</span>
+            <strong id="profile-castling">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Longest / shortest</span>
+            <strong id="profile-game-length">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Fastest checkmate</span>
+            <strong id="profile-fastest-checkmate">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Comeback wins</span>
+            <strong id="profile-comeback-wins">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Game endings</span>
+            <strong id="profile-end-reasons">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Toughest opponent</span>
+            <strong id="profile-nemesis">—</strong>
+          </div>
+        </div>
+      </section>
       <div id="profile-friend-card" class="profile-friend-card">
         <p id="profile-friend-status" class="auth-message"></p>
         <button class="btn btn-primary" id="profile-add-friend-btn" onclick="window.agsProfileAddFriend && window.agsProfileAddFriend()">Add Friend</button>

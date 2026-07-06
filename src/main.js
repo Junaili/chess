@@ -6,12 +6,13 @@ import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
 import { installSessionKeepAlive, scheduleProactiveRefresh, subscribeAccessTokenRefresh } from './session.js'
 import { fetchPendingLegalDocuments, fetchAcceptedLegalDocuments, acceptLegalDocuments } from './legal.js'
-import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave } from './stats.js'
+import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave, recordEloResult } from './stats.js'
 import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache, fetchMergedAchievements } from './achievements.js'
 import { sendEvent, flushPendingEvents, captureUtm, clearPendingEvents } from './telemetry.js'
 import { readPrivacyPreferences, writePrivacyPreferences } from './privacy-preferences.mjs'
 import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from './spectator.js'
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName } from './leaderboard.js'
+import { computeMatchStats } from './match-stats.mjs'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
@@ -101,6 +102,8 @@ function getShareableAppURL(params = {}) {
 let currentUserId = null
 let currentUserWins = 0
 let currentStreak = 0
+let currentUserRating = 1200
+let pendingOpponentRating = null  // received from the opponent over the peer connection for the in-progress online match
 let seenIncomingRequestIds = null  // null until first friends load — avoids notifying for pre-existing requests
 let pendingLegalDocuments = []
 let pendingLegalProfile = null
@@ -596,6 +599,7 @@ async function hydrateAuthenticatedUser(profile) {
   const [stats, streakData] = await Promise.all([fetchStats(currentUserId), fetchStreak(currentUserId)])
   currentUserWins = stats?.wins ?? 0
   currentStreak = streakData?.streak ?? 0
+  currentUserRating = stats?.rating ?? 1200
   updateStatsUI(stats, currentStreak)
   primeUnlockedCache(currentUserId)  // silent: seed unlocked-achievement cache so later diffs only surface new ones
   await refreshLeaderboard()
@@ -1442,6 +1446,24 @@ async function initAuth() {
   }
   window.agsGetStats = (userId) => fetchStats(userId)
   window.agsGetToken = () => sdk.getToken()?.accessToken ?? null
+  // Elo-style rating exchange: app.js reads this to embed in the game_start /
+  // player_info peer messages, and calls agsSetOpponentRating with whatever
+  // the other side sent back — that's the only way each client learns the
+  // other's current rating (a plain player-to-player client can't read
+  // another user's stats directly).
+  window.agsGetRating = () => currentUserRating
+  window.agsSetOpponentRating = (rating) => {
+    pendingOpponentRating = typeof rating === 'number' && Number.isFinite(rating) ? rating : null
+  }
+  window.agsRecordEloResult = async (score) => {
+    if (!currentUserId || pendingOpponentRating == null) return
+    const newRating = await recordEloResult(currentUserId, currentUserRating, pendingOpponentRating, score)
+    if (newRating != null) {
+      currentUserRating = newRating
+      updateStatsUI(await fetchStats(currentUserId), currentStreak)
+    }
+    pendingOpponentRating = null
+  }
   window.agsIncrementWin = async () => {
     if (!currentUserId) return
     const displayName = document.getElementById('ags-signedin-name')?.textContent || ''
@@ -1760,6 +1782,8 @@ async function openPublicProfile(userId, displayName = '') {
   const matchHistoryEl = document.getElementById('profile-match-history')
   const matchHistoryCountEl = document.getElementById('profile-match-history-count')
   const accountSafetyCard = document.getElementById('profile-account-safety')
+  const ratingEl = document.getElementById('profile-rating')
+  const chessStatsSection = document.getElementById('profile-chess-stats')
 
   const editBtn = document.getElementById('profile-btn-edit-name')
   const editForm = document.getElementById('profile-name-edit-form')
@@ -1778,6 +1802,8 @@ async function openPublicProfile(userId, displayName = '') {
     if (winsEl) winsEl.textContent = '—'
     if (lossesEl) lossesEl.textContent = '—'
     if (rankEl) rankEl.textContent = '—'
+    if (ratingEl) ratingEl.textContent = '—'
+    if (chessStatsSection) chessStatsSection.style.display = 'none'
     if (statusEl) statusEl.textContent = ''
     if (addBtn) addBtn.style.display = 'none'
     if (matchHistoryCountEl) matchHistoryCountEl.textContent = 'Sign in required'
@@ -1801,16 +1827,25 @@ async function openPublicProfile(userId, displayName = '') {
   if (matchHistoryCountEl) matchHistoryCountEl.textContent = 'Loading'
   if (matchHistoryEl) matchHistoryEl.innerHTML = '<div class="profile-history-loading"><span></span><span></span><span></span></div>'
 
-  const [stats, rank, matchHistory] = await Promise.all([
+  const [stats, rank, matchHistory, myMatchHistory] = await Promise.all([
     fetchStats(userId),
     fetchUserRank(userId),
     fetchMatchHistory(userId),
+    userId === currentUserId ? Promise.resolve(null) : fetchMatchHistory(currentUserId),
   ])
 
   if (winsEl) winsEl.textContent = stats?.wins ?? 0
   if (lossesEl) lossesEl.textContent = stats?.losses ?? 0
   if (rankEl) rankEl.textContent = rank?.rank ? `#${rank.rank}` : 'Unranked'
+  if (ratingEl) ratingEl.textContent = stats?.rating ?? '—'
   renderProfileMatchHistory(matchHistory)
+  // Head-to-head is "my record vs this person" — on my own profile that's
+  // just my own computed stats; on a friend's profile it needs my own match
+  // history too (already fetched above), looked up by their userId.
+  const headToHeadEntry = userId === currentUserId
+    ? null
+    : computeMatchStats(myMatchHistory).headToHead.find(h => h.opponentUserId === userId)
+  renderChessStats(computeMatchStats(matchHistory), headToHeadEntry)
 
   const friend = friendsState.friends.find(item => item.userId === userId)
   const incoming = friendsState.incoming.find(item => item.userId === userId)
@@ -2073,6 +2108,72 @@ function formatDuration(durationMs) {
   return `${seconds}s`
 }
 
+function formatPct(rate) {
+  return rate == null ? '—' : `${Math.round(rate * 100)}%`
+}
+
+function formatRecord(rec) {
+  return rec ? `${rec.wins}-${rec.losses}-${rec.draws} (${formatPct(rec.rate)})` : '—'
+}
+
+const OPENING_NAMES = {
+  e2e4: '1. e4', d2d4: '1. d4', g1f3: '1. Nf3', c2c4: '1. c4',
+  b2b3: '1. b3', g2g3: '1. g3', f2f4: '1. f4', b1c3: '1. Nc3',
+}
+
+function renderChessStats(derived, headToHeadEntry) {
+  const section = document.getElementById('profile-chess-stats')
+  if (!section) return
+  if (!derived.totalGames) {
+    section.style.display = 'none'
+    return
+  }
+  section.style.display = ''
+
+  const set = (id, text) => {
+    const el = document.getElementById(id)
+    if (el) el.textContent = text
+  }
+
+  const h2h = document.getElementById('profile-head-to-head')
+  if (headToHeadEntry) {
+    if (h2h) h2h.style.display = ''
+    set('profile-head-to-head-value', `${headToHeadEntry.wins}W-${headToHeadEntry.losses}L-${headToHeadEntry.draws}D`)
+  } else if (h2h) {
+    h2h.style.display = 'none'
+  }
+
+  set('profile-rate-white', formatRecord(derived.winRateByColor.white))
+  set('profile-rate-black', formatRecord(derived.winRateByColor.black))
+  set('profile-rate-vs-bot', formatRecord(derived.winRateByOpponentType.vsBot))
+  set('profile-rate-vs-human', formatRecord(derived.winRateByOpponentType.vsHuman))
+
+  set('profile-favorite-opening', derived.favoriteOpening
+    ? `${OPENING_NAMES[derived.favoriteOpening.key] || derived.favoriteOpening.key} (${formatPct(derived.favoriteOpening.rate)} win)`
+    : '—')
+
+  set('profile-time-played', derived.timePlayed.totalMs ? formatDuration(derived.timePlayed.totalMs) : '—')
+  set('profile-game-length', derived.timePlayed.longest && derived.timePlayed.shortest
+    ? `${formatDuration(derived.timePlayed.longest.durationMs)} / ${formatDuration(derived.timePlayed.shortest.durationMs)}`
+    : '—')
+  set('profile-fastest-checkmate', derived.fastestCheckmateMoves != null ? `${derived.fastestCheckmateMoves} moves` : '—')
+
+  const c = derived.castlingRate
+  set('profile-castling', c.total
+    ? `${formatPct(c.kingsidePct)} kingside · ${formatPct(c.queensidePct)} queenside`
+    : '—')
+
+  set('profile-comeback-wins', derived.comebackWins > 0 ? String(derived.comebackWins) : '—')
+
+  const e = derived.endReasonCounts
+  const decisive = e.checkmate + e.resignation
+  set('profile-end-reasons', decisive || (e['draw-insufficient'] + e['draw-fifty-move'] + e['draw-repetition'] + e.stalemate)
+    ? `${e.checkmate} checkmate · ${e.resignation} resign · ${e.stalemate + e['draw-insufficient'] + e['draw-fifty-move'] + e['draw-repetition']} draw`
+    : '—')
+
+  set('profile-nemesis', derived.nemesis ? `${derived.nemesis.name} (${formatRecord(derived.nemesis)})` : '—')
+}
+
 function updateAuthUI(loggedIn, name, userId) {
   const nameInput = document.getElementById('player-name-input')
   const signInBtn = document.getElementById('ags-signin-btn')
@@ -2146,9 +2247,10 @@ function updateStatsUI(stats, streak) {
   if (stats) {
     el.style.display = ''
     const s = streak ?? currentStreak
+    const rating = stats.rating ? `  ·  ⭐ ${stats.rating}` : ''
     el.textContent = s > 0
-      ? `W ${stats.wins}  ·  L ${stats.losses}  ·  🔥 ${s}`
-      : `W ${stats.wins}  ·  L ${stats.losses}`
+      ? `W ${stats.wins}  ·  L ${stats.losses}  ·  🔥 ${s}${rating}`
+      : `W ${stats.wins}  ·  L ${stats.losses}${rating}`
   } else {
     el.style.display = 'none'
   }
