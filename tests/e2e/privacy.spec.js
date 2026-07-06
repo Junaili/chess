@@ -30,17 +30,8 @@ test('published legal page contains privacy, terms, community, and support', asy
   await expect(page.getByRole('link', { name: 'Open a support request' })).toHaveAttribute('href', /github\.com\/junaili\/chess\/issues\/new/)
 })
 
-test('legal documents open and complete inside the app without a popup', async ({ page, context }) => {
-  await page.route('**/test-privacy.md', route => route.fulfill({
-    status: 200,
-    contentType: 'text/markdown',
-    headers: { 'access-control-allow-origin': '*' },
-    body: `# Privacy Policy\n\n${'This is an important policy paragraph.\n\n'.repeat(80)}`,
-  }))
-  await gotoApp(page)
-
-  const trigger = page.getByRole('button', { name: 'Open test legal reader' })
-  await page.evaluate(() => {
+function injectLegalReaderTrigger(page) {
+  return page.evaluate(() => {
     const button = document.createElement('button')
     button.textContent = 'Open test legal reader'
     document.getElementById('screen-home').appendChild(button)
@@ -52,6 +43,26 @@ test('legal documents open and complete inside the app without a popup', async (
       attachmentLocation: 'https://localhost:8808/chess/test-privacy.md',
     }, button))
   })
+}
+
+// The in-app reader fetches from AGS's CloudFront CDN via CapacitorHttp,
+// which is a native HTTP client (not subject to browser CORS) — on native
+// only. This test forces isNativePlatform() so it can still exercise the
+// reader's own rendering/scroll/focus mechanics in a plain browser; the web
+// (non-native) case is covered separately below, since real web users never
+// reach a working fetch here (see src/legal.js fetchLegalAttachment).
+test('legal documents open and complete inside the app without a popup (native)', async ({ page, context }) => {
+  await page.route('**/test-privacy.md', route => route.fulfill({
+    status: 200,
+    contentType: 'text/markdown',
+    headers: { 'access-control-allow-origin': '*' },
+    body: `# Privacy Policy\n\n${'This is an important policy paragraph.\n\n'.repeat(80)}`,
+  }))
+  await gotoApp(page)
+  await page.evaluate(() => { window.Capacitor = { isNativePlatform: () => true } })
+
+  const trigger = page.getByRole('button', { name: 'Open test legal reader' })
+  await injectLegalReaderTrigger(page)
 
   const pageCount = context.pages().length
   await trigger.click()
@@ -72,4 +83,31 @@ test('legal documents open and complete inside the app without a popup', async (
   await expect(overlay).toBeHidden()
   await expect(trigger).toBeFocused()
   expect(context.pages()).toHaveLength(pageCount)
+})
+
+// Regression test for the reported bug: on web, fetching a legal attachment
+// straight from CloudFront always fails with a CORS error the browser logs
+// itself, regardless of how gracefully the resulting rejection is handled —
+// so the fix is to never attempt that fetch on web at all (see
+// fetchLegalAttachment's early return) rather than merely catching the error.
+test('the in-app reader never fetches the CloudFront attachment on web (no CORS error)', async ({ page }) => {
+  const consoleErrors = []
+  page.on('console', message => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+  let attachmentFetched = false
+  await page.route('**/test-privacy.md', route => {
+    attachmentFetched = true
+    route.fulfill({ status: 200, contentType: 'text/markdown', body: '# Privacy Policy' })
+  })
+  await gotoApp(page)
+  // No window.Capacitor mock here — this is the real default for a web build.
+
+  const trigger = page.getByRole('button', { name: 'Open test legal reader' })
+  await injectLegalReaderTrigger(page)
+  await trigger.click()
+
+  await expect(page.locator('#legal-reader-error')).toBeVisible()
+  expect(attachmentFetched).toBe(false)
+  expect(consoleErrors.some(text => /CORS|Access-Control/i.test(text))).toBe(false)
 })

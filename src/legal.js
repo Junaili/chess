@@ -157,43 +157,34 @@ export async function fetchAcceptedLegalDocuments() {
   }
 }
 
+// The attachment is served from AGS's CloudFront CDN, which sends no
+// Access-Control-Allow-Origin header (confirmed directly against the CDN,
+// not a config gap on our end) — a browser fetch() always fails here with a
+// CORS error, and the browser logs that violation to the console itself
+// regardless of how gracefully the resulting rejection is handled. So on
+// web, don't attempt the fetch at all (main.js opens the document externally
+// instead of using this reader there); CapacitorHttp is a native HTTP
+// client, not subject to browser CORS, so this only actually succeeds native.
 export async function fetchLegalAttachment(document) {
   const location = normalizeDocumentLocation(document?.attachmentLocation)
   if (!location) {
     return { ok: false, error: 'This document does not have a valid published attachment.' }
   }
+  if (!window.Capacitor?.isNativePlatform?.()) {
+    return { ok: false, reason: 'unsupported', error: 'Open this document in a new tab to read it.' }
+  }
 
   try {
-    if (window.Capacitor?.isNativePlatform?.()) {
-      const { CapacitorHttp } = await import('@capacitor/core')
-      const response = await CapacitorHttp.get({
-        url: location,
-        headers: { Accept: 'text/markdown, text/plain;q=0.9, */*;q=0.5' },
-        responseType: 'text',
-      })
-      if (response.status < 200 || response.status >= 300) {
-        return { ok: false, error: 'The document could not be loaded. Check your connection and try again.' }
-      }
-      const text = typeof response.data === 'string' ? response.data : String(response.data || '')
-      if (!text.trim()) return { ok: false, error: 'The published document is empty.' }
-      return { ok: true, text }
-    }
-
-    const response = await fetch(location, {
-      method: 'GET',
-      credentials: 'omit',
+    const { CapacitorHttp } = await import('@capacitor/core')
+    const response = await CapacitorHttp.get({
+      url: location,
       headers: { Accept: 'text/markdown, text/plain;q=0.9, */*;q=0.5' },
+      responseType: 'text',
     })
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       return { ok: false, error: 'The document could not be loaded. Check your connection and try again.' }
     }
-
-    const contentType = response.headers.get('content-type')?.toLowerCase() || ''
-    if (contentType.includes('application/pdf')) {
-      return { ok: false, reason: 'unsupported', error: 'This document format cannot be displayed in the in-app reader.' }
-    }
-
-    const text = await response.text()
+    const text = typeof response.data === 'string' ? response.data : String(response.data || '')
     if (!text.trim()) return { ok: false, error: 'The published document is empty.' }
     return { ok: true, text }
   } catch {

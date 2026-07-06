@@ -667,13 +667,38 @@ function renderLegalDocuments(documents) {
     content.appendChild(status)
     card.appendChild(content)
 
+    // The in-app reader fetches the attachment from AGS's CloudFront CDN,
+    // which doesn't send CORS headers — fine on native (CapacitorHttp is a
+    // native HTTP client, not subject to browser CORS) but always fails as a
+    // browser fetch() on web. Open externally there instead, same as before
+    // the in-app reader existed.
+    const isNative = !!window.Capacitor?.isNativePlatform?.()
     const action = document.createElement('button')
     action.type = 'button'
     action.className = 'btn btn-secondary legal-review-button'
-    action.textContent = doc.attachmentLocation ? 'Read in app' : 'Document unavailable'
+    action.textContent = doc.attachmentLocation ? (isNative ? 'Read in app' : 'Open document') : 'Document unavailable'
     action.disabled = !doc.attachmentLocation
     if (doc.attachmentLocation) {
-      action.addEventListener('click', () => openLegalReader(doc, action))
+      if (isNative) {
+        action.addEventListener('click', () => openLegalReader(doc, action))
+      } else {
+        action.addEventListener('click', async () => {
+          action.disabled = true
+          const opened = await openExternalURL(doc.attachmentLocation)
+          action.disabled = false
+          if (!opened) {
+            setLegalMessage('The document could not be opened. Check your connection and try again.', 'error')
+            return
+          }
+          reviewedLegalDocumentIds.add(doc.localizedPolicyVersionId)
+          action.textContent = 'Reviewed'
+          action.classList.add('reviewed')
+          status.textContent = 'Reviewed'
+          card.classList.add('reviewed')
+          setLegalMessage('')
+          updateLegalAcceptanceState()
+        })
+      }
     }
     card.appendChild(action)
 
