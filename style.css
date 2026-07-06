@@ -4108,7 +4108,11 @@ input[type="checkbox"] {
   display: none;
   flex-direction: column;
   gap: 10px;
-  z-index: 60;
+  /* Must render above .modal (z-index: 100) — the game-over modal stays open
+     while a rematch decision is pending, and at z-index: 60 this notification
+     (with the only Decline button) was fully hidden behind the modal's
+     full-screen overlay, leaving players with no visible way to say no. */
+  z-index: 110;
   animation: fadeIn 0.25s ease;
 }
 

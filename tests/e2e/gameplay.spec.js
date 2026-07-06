@@ -75,4 +75,39 @@ test.describe('Play vs Computer', () => {
     await expect(page.locator('#game-over-modal')).toBeVisible();
     await expect(page.locator('#game-over-message')).toHaveText(/.+/);
   });
+
+  // Regression test: an incoming rematch request keeps the game-over modal
+  // open (with its Decline button on a separate, absolutely-positioned
+  // notification) while a decision is pending. That notification previously
+  // had a lower z-index than the modal's full-screen overlay, so it was
+  // completely covered — the only path to "no" was invisible and unclickable,
+  // leaving players stuck. Playwright's own click-actionability check (which
+  // fails if a click target is obscured by another element) is exactly what
+  // would have caught this.
+  test('an incoming rematch request leaves Decline visible and clickable, and resets the countdown', async ({ page }) => {
+    await startVsComputer(page, { color: 'white', difficulty: 'easy' });
+    await playMove(page, 'e2', 'e4');
+    await page.getByRole('tab', { name: 'More' }).click();
+    await page.locator('#btn-resign').click();
+    await expect(page.locator('#game-over-modal')).toBeVisible();
+
+    // Simulate an incoming rematch request the same way the peer-message
+    // handler does: pause the countdown and surface the notification while
+    // the modal stays open underneath it. app.js is a classic (non-module)
+    // script, so its top-level functions are already reachable on window.
+    await page.evaluate(() => {
+      window.stopGameOverCountdown();
+      const notification = document.getElementById('rematch-notification');
+      notification.style.display = 'flex';
+    });
+    await expect(page.locator('#game-over-countdown')).toHaveText('');
+
+    const decline = page.locator('#rematch-notification').getByRole('button', { name: 'Decline' });
+    await expect(decline).toBeVisible();
+    await decline.click(); // fails if obscured by the modal's overlay (the actual bug)
+
+    await expect(page.locator('#rematch-notification')).toBeHidden();
+    await expect(page.locator('#rematch-message')).toHaveText(/declined/i);
+    await expect(page.locator('#game-over-countdown')).toHaveText(/Returning to Main Menu in \d+s/);
+  });
 });
