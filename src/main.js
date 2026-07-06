@@ -2939,11 +2939,7 @@ function renderFriendsListOnlineFirst(friends) {
   if (countEl) countEl.textContent = friends.length || ''
 
   if (!friends.length) {
-    el.innerHTML = `<div class="friends-availability">
-      <strong>0 online</strong>
-      <span>0 total</span>
-    </div>
-    <div class="friends-online-empty">
+    el.innerHTML = `<div class="friends-online-empty">
       <strong>No friends yet</strong>
       <span>Add a friend or share an invite to start playing together.</span>
     </div>`
@@ -2954,12 +2950,13 @@ function renderFriendsListOnlineFirst(friends) {
   const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
   const online = friends.filter(f => ['online', 'in-match'].includes(f.presence?.status))
   const offline = friends.filter(f => !['online', 'in-match'].includes(f.presence?.status))
-  let html = `<div class="friends-availability">
-    <strong>${online.length} online</strong>
-    <span>${friends.length} total</span>
-  </div>`
-  html += `<div class="friends-group-divider"><span>Online · ${online.length}</span></div>`
+  // Total is already shown in the section header (#ags-count-friends); an
+  // "N online / M total" bar here just repeated both numbers a second time,
+  // directly above the "Online · N" divider repeating the online count a
+  // third time — reviewed and removed as pure redundancy.
+  let html = ''
   if (online.length) {
+    html += `<div class="friends-group-divider"><span>Online · ${online.length}</span></div>`
     html += online.map(item => {
       const inMatch = item.presence?.status === 'in-match'
       // Use data attributes — never put user-controlled strings into inline event handlers.

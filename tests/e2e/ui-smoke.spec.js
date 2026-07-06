@@ -259,7 +259,8 @@ test.describe('UI smoke (signed out)', () => {
       ]);
     });
 
-    await expect(page.locator('.friends-availability')).toContainText('1 online');
+    await expect(page.locator('.friends-group-divider')).toContainText('Online · 1');
+    await expect(page.locator('#ags-count-friends')).toHaveText('13'); // total shown once, in the section header
     await expect(page.locator('#ags-friends-list .friend-row')).toHaveCount(1);
     await expect(page.locator('.offline-friends-trigger')).toContainText('12');
 
@@ -288,7 +289,7 @@ test.describe('UI smoke (signed out)', () => {
         },
       ]);
     });
-    await expect(page.locator('.friends-availability')).toContainText('0 online');
+    await expect(page.locator('.friends-group-divider')).toHaveCount(0); // no point labeling a section with nothing in it
     await expect(page.locator('.friends-online-empty')).toContainText('No friends online right now');
   });
 
