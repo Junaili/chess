@@ -5227,6 +5227,16 @@ input[type="checkbox"] {
   margin-bottom: 4px;
 }
 
+/* The live-match gate (Google/Apple/guest/password) stacks four buttons in
+   this container, unlike the referral gate's single Create-Account button —
+   without an explicit gap, adjacent pill buttons render edge-to-edge with no
+   breathing room between them. */
+#invite-landing-actions-live {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .btn-invite-cta {
   width: 100%;
   font-size: 1.04rem;
