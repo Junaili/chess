@@ -48,8 +48,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-BtdhG2bm.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-CI06EeqB.css">
+  <script type="module" crossorigin src="/chess/assets/index-Bf6nU8jq.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-LPqtxG7p.css">
 </head>
 <body>
 
@@ -354,6 +354,22 @@
       </div>
       </div>
     </div>
+  </div>
+
+  <div id="offline-friends-overlay" class="offline-friends-overlay" hidden>
+    <section class="offline-friends-dialog" role="dialog" aria-modal="true"
+      aria-labelledby="offline-friends-title" aria-describedby="offline-friends-description">
+      <header class="offline-friends-header">
+        <div>
+          <p class="auth-eyebrow">Friends</p>
+          <h2 id="offline-friends-title">Offline friends</h2>
+          <p id="offline-friends-description">Open a friend’s profile to view their stats and match history.</p>
+        </div>
+        <button type="button" id="offline-friends-close" class="offline-friends-close"
+          onclick="window.agsCloseOfflineFriends && window.agsCloseOfflineFriends()">Close</button>
+      </header>
+      <div id="offline-friends-list" class="offline-friends-list"></div>
+    </section>
   </div>
 
   <!-- ── Invite Landing Screen ───────────────────────────────────────────── -->
