@@ -900,6 +900,106 @@ input[type="checkbox"] {
   flex-wrap: wrap;
 }
 
+.add-friend-form {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(240, 195, 122, 0.2);
+  border-radius: 14px;
+  background: rgba(240, 195, 122, 0.06);
+}
+
+.add-friend-form > label {
+  display: block;
+  margin-bottom: 7px;
+  color: #fff8f1;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.add-friend-controls {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.add-friend-controls .name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+
+.add-friend-controls .btn-mini {
+  flex-shrink: 0;
+}
+
+.add-friend-controls :disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.add-friend-hint {
+  margin-top: 7px;
+  color: var(--text-soft);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.add-friend-result {
+  margin-top: 8px;
+}
+
+.add-friend-feedback {
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.045);
+  animation: fadeIn 0.18s ease;
+}
+
+.add-friend-feedback.success {
+  border-color: rgba(63, 147, 104, 0.46);
+  background: rgba(63, 147, 104, 0.16);
+}
+
+.add-friend-feedback.warning {
+  border-color: rgba(240, 195, 122, 0.4);
+  background: rgba(240, 195, 122, 0.12);
+}
+
+.add-friend-feedback.error {
+  border-color: rgba(221, 95, 87, 0.45);
+  background: rgba(221, 95, 87, 0.12);
+}
+
+.add-friend-feedback-title {
+  color: #fff8f1;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.add-friend-feedback-message {
+  margin-top: 3px;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.add-friend-feedback .btn-mini {
+  margin-top: 9px;
+}
+
+@media (max-width: 430px) {
+  .add-friend-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .add-friend-controls .btn-mini {
+    width: 100%;
+  }
+}
+
 .signedin-greeting,
 .lb-heading {
   color: var(--text-soft);

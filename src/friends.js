@@ -5,6 +5,9 @@ import { extendFetch } from './extend-client.js'
 import { resolveDisplayNames } from './leaderboard.js'
 import { fetchPresenceMap } from './presence.js'
 import { moderateIncomingDisplayName } from './content-moderation.mjs'
+import { classifyFriendRelationship, normalizeFriendsError } from './friend-feedback.mjs'
+
+export { normalizeFriendsError } from './friend-feedback.mjs'
 
 const PAGE = { limit: 50, offset: 0 }
 
@@ -46,14 +49,6 @@ function normalizeList(data) {
   return source
     .map(item => ({ raw: item, userId: normalizeFriendId(item) }))
     .filter(item => item.userId)
-}
-
-function getErrorMessage(e, fallback) {
-  return e?.response?.data?.message
-    || e?.response?.data?.errorMessage
-    || e?.response?.data?.error
-    || e?.message
-    || fallback
 }
 
 async function withNames(items) {
@@ -115,7 +110,7 @@ export async function fetchFriendState() {
     }
   } catch (e) {
     console.warn('[AGS friends] fetchFriendState:', e?.response?.data || e?.message)
-    return { ok: false, error: getErrorMessage(e, 'Could not load friends.') }
+    return { ok: false, ...normalizeFriendsError(e, 'Could not load friends. Please try again.') }
   }
 }
 
@@ -125,7 +120,7 @@ export async function requestFriend(friendId) {
     return { ok: true }
   } catch (e) {
     console.warn('[AGS friends] requestFriend:', e?.response?.data || e?.message)
-    return { ok: false, error: getErrorMessage(e, 'Could not send friend request.') }
+    return { ok: false, ...normalizeFriendsError(e, 'Could not send the friend request. Please try again.') }
   }
 }
 
@@ -135,7 +130,7 @@ export async function acceptFriend(friendId) {
     return { ok: true }
   } catch (e) {
     console.warn('[AGS friends] acceptFriend:', e?.response?.data || e?.message)
-    return { ok: false, error: getErrorMessage(e, 'Could not accept friend request.') }
+    return { ok: false, ...normalizeFriendsError(e, 'Could not accept the friend request. Please try again.') }
   }
 }
 
@@ -145,7 +140,7 @@ export async function rejectFriend(friendId) {
     return { ok: true }
   } catch (e) {
     console.warn('[AGS friends] rejectFriend:', e?.response?.data || e?.message)
-    return { ok: false, error: getErrorMessage(e, 'Could not reject friend request.') }
+    return { ok: false, ...normalizeFriendsError(e, 'Could not reject the friend request. Please try again.') }
   }
 }
 
@@ -155,7 +150,7 @@ export async function cancelFriendRequest(friendId) {
     return { ok: true }
   } catch (e) {
     console.warn('[AGS friends] cancelFriendRequest:', e?.response?.data || e?.message)
-    return { ok: false, error: getErrorMessage(e, 'Could not cancel friend request.') }
+    return { ok: false, ...normalizeFriendsError(e, 'Could not cancel the friend request. Please try again.') }
   }
 }
 
@@ -165,7 +160,7 @@ export async function getFriendshipStatus(friendId) {
     return { ok: true, status: String(res.data?.code ?? res.data?.friendshipStatus ?? '') }
   } catch (e) {
     console.warn('[AGS friends] getFriendshipStatus:', e?.response?.data || e?.message)
-    return { ok: false, error: getErrorMessage(e, 'Could not check friendship status.') }
+    return { ok: false, ...normalizeFriendsError(e, 'Could not check friendship status. Please try again.') }
   }
 }
 
@@ -173,10 +168,17 @@ const PENDING_INVITES_KEY = 'ags-pending-invites'
 
 
 export async function lookupUserByEmail(email) {
-  if (!email?.includes('@')) return { ok: false, error: 'Invalid email address.' }
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    return { ok: false, reason: 'invalid_email', error: 'Enter a complete email address, such as friend@example.com.' }
+  }
   try {
-    const res = await extendFetch(`/lookup/email?email=${encodeURIComponent(email)}`)
-    if (!res.ok) throw new Error('status ' + res.status)
+    const res = await extendFetch(`/lookup/email?email=${encodeURIComponent(normalizedEmail)}`)
+    if (!res.ok) {
+      const error = new Error(`Email lookup failed with status ${res.status}`)
+      error.status = res.status
+      throw error
+    }
     const data = await res.json()
     if (!data.found) return { ok: true, found: false }
     return {
@@ -190,17 +192,36 @@ export async function lookupUserByEmail(email) {
     }
   } catch (e) {
     console.warn('[AGS friends] lookupUserByEmail:', e?.message)
-    return { ok: false, error: 'Could not search for user.' }
+    return { ok: false, ...normalizeFriendsError(e, 'Could not search for that player. Please try again.') }
   }
 }
 
-export async function addFriendByEmail(email, myUserId) {
+export async function addFriendByEmail(email, myUserId, relationshipState = {}) {
   const lookup = await lookupUserByEmail(email)
   if (!lookup.ok) return lookup
   if (!lookup.found) return { ok: true, found: false }
-  if (lookup.userId === myUserId) return { ok: false, error: "That's your own email address." }
+  if (lookup.userId === myUserId) {
+    return { ok: false, reason: 'self', error: 'That email belongs to your account. Try your friend’s email instead.' }
+  }
+  const relationship = classifyFriendRelationship(lookup.userId, relationshipState)
+  if (relationship) {
+    return {
+      ok: true,
+      found: true,
+      relationship,
+      existingRelationship: true,
+      userId: lookup.userId,
+      displayName: lookup.displayName,
+    }
+  }
   const sent = await requestFriend(lookup.userId)
-  return { ...sent, found: true, userId: lookup.userId, displayName: lookup.displayName }
+  return {
+    ...sent,
+    found: true,
+    relationship: sent.ok ? 'outgoing' : '',
+    userId: lookup.userId,
+    displayName: lookup.displayName,
+  }
 }
 
 export function storePendingInvite(email, myUserId) {

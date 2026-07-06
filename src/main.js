@@ -1268,23 +1268,49 @@ async function initAuth() {
     await requestProfileFriend(activeProfileUser)
   }
   window.agsAddFriendByEmail = async () => {
-    const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'))
     const emailInput = document.getElementById('ags-add-friend-email')
-    const resultEl = document.getElementById('ags-add-friend-result')
     const email = emailInput?.value.trim() || ''
-    if (!email) return
-    if (resultEl) resultEl.innerHTML = '<span class="auth-message">Looking up…</span>'
+    if (!emailInput?.reportValidity()) return
+    setAddFriendBusy(true)
+    renderAddFriendFeedback('loading', 'Searching for player', 'Checking for an account with this email...')
 
-    const result = await addFriendByEmail(email, currentUserId)
+    const result = await addFriendByEmail(email, currentUserId, friendsState)
+    setAddFriendBusy(false)
 
     if (!result.ok) {
-      if (resultEl) resultEl.innerHTML = `<span class="auth-message error">${esc(result.error)}</span>`
+      renderAddFriendFeedback('error', addFriendErrorTitle(result.reason), result.error)
       return
     }
 
     if (result.found) {
-      if (resultEl) resultEl.innerHTML = `<span class="auth-message success">Friend request sent to ${esc(result.displayName)}!</span>`
+      const name = result.displayName || 'This player'
+      if (result.relationship === 'friends') {
+        renderAddFriendFeedback('success', 'Already friends', `${name} is already in your Friends list.`)
+        return
+      }
+      if (result.relationship === 'incoming') {
+        renderAddFriendFeedback(
+          'warning',
+          'They already invited you',
+          `${name} sent you a friend request. Accept it to become friends.`,
+          { label: `Accept ${name}`, onClick: () => acceptAddFriendResult(result.userId, name) }
+        )
+        return
+      }
+      if (result.relationship === 'outgoing' && result.existingRelationship) {
+        renderAddFriendFeedback(
+          'warning',
+          'Request already pending',
+          `${name} has not accepted your friend request yet.`
+        )
+        return
+      }
       if (emailInput) emailInput.value = ''
+      renderAddFriendFeedback(
+        'success',
+        'Friend request sent',
+        `${name} will appear in your Friends list after they accept.`
+      )
       sendEvent('friend_request_sent', { source: 'email_lookup' })
       await refreshFriendsUI(false)
       return
@@ -1293,15 +1319,21 @@ async function initAuth() {
     // User not found — store pending invite and show share options
     storePendingInvite(email, currentUserId)
     const inviteUrl = addUtm(getShareableAppURL({ invitedBy: currentUserId }), 'email')
-    if (resultEl) {
-      resultEl.innerHTML = `
-        <span class="auth-message">No account found. Share this invite:</span>
-        <div class="invite-link-box" style="margin:6px 0">
-          <span class="invite-link-text">${esc(inviteUrl)}</span>
-        </div>
-      `
+    const content = renderAddFriendFeedback(
+      'warning',
+      'No player found',
+      `There is no account for ${email}. Invite them to create one instead.`
+    )
+    if (content) {
+      const linkBox = document.createElement('div')
+      linkBox.className = 'invite-link-box'
+      const linkText = document.createElement('span')
+      linkText.className = 'invite-link-text'
+      linkText.textContent = inviteUrl
+      linkBox.append(linkText)
+      content.append(linkBox)
       const fromName = document.getElementById('ags-signedin-name')?.textContent || 'A friend'
-      mountShareRow(resultEl, inviteUrl, { emailTo: email, fromName })
+      mountShareRow(content, inviteUrl, { emailTo: email, fromName })
     }
   }
   window.agsToggleAddFriend = () => {
@@ -1315,7 +1347,8 @@ async function initAuth() {
       const input = document.getElementById('ags-add-friend-email')
       const result = document.getElementById('ags-add-friend-result')
       if (input) { input.value = ''; input.focus() }
-      if (result) result.innerHTML = ''
+      if (result) result.replaceChildren()
+      setAddFriendBusy(false)
     }
   }
   window.agsShareRow = mountShareRow
@@ -2223,6 +2256,70 @@ function setFriendsMessage(text, tone = '') {
   el.textContent = text || ''
 }
 
+function setAddFriendBusy(busy) {
+  const input = document.getElementById('ags-add-friend-email')
+  const submit = document.getElementById('ags-add-friend-submit')
+  if (input) input.disabled = busy
+  if (submit) {
+    submit.disabled = busy
+    submit.textContent = busy ? 'Searching...' : 'Send request'
+  }
+}
+
+function renderAddFriendFeedback(tone, title, message, action) {
+  const result = document.getElementById('ags-add-friend-result')
+  if (!result) return null
+
+  const card = document.createElement('div')
+  card.className = `add-friend-feedback ${tone}`
+  card.setAttribute('role', tone === 'error' ? 'alert' : 'status')
+
+  const heading = document.createElement('p')
+  heading.className = 'add-friend-feedback-title'
+  heading.textContent = title
+  const detail = document.createElement('p')
+  detail.className = 'add-friend-feedback-message'
+  detail.textContent = message
+  card.append(heading, detail)
+
+  if (action) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'btn-mini success'
+    button.textContent = action.label
+    button.addEventListener('click', action.onClick)
+    card.append(button)
+  }
+
+  result.replaceChildren(card)
+  return card
+}
+
+function addFriendErrorTitle(reason) {
+  if (reason === 'invalid_email') return 'Check the email address'
+  if (reason === 'self') return 'That is your account'
+  if (reason === 'authentication') return 'Sign in again'
+  if (reason === 'rate_limited') return 'Please wait'
+  if (reason === 'not_allowed') return 'Request not available'
+  if (reason === 'already_pending') return 'Request already pending'
+  if (reason === 'unavailable') return 'Friends service unavailable'
+  return 'Request not sent'
+}
+
+async function acceptAddFriendResult(friendId, displayName) {
+  setAddFriendBusy(true)
+  renderAddFriendFeedback('loading', 'Accepting request', `Adding ${displayName} to your Friends list...`)
+  const result = await acceptFriend(friendId)
+  setAddFriendBusy(false)
+  if (!result.ok) {
+    renderAddFriendFeedback('error', addFriendErrorTitle(result.reason), result.error)
+    return
+  }
+  renderAddFriendFeedback('success', 'You are now friends', `${displayName} is now in your Friends list.`)
+  sendEvent('friend_request_accepted', { source: 'email_lookup' })
+  await refreshFriendsUI(false)
+}
+
 async function runFriendAction(action, successMessage) {
   setFriendsMessage('Updating friends...')
   const result = await action()
@@ -2231,11 +2328,11 @@ async function runFriendAction(action, successMessage) {
     return false
   }
   setFriendsMessage(successMessage, 'success')
-  await refreshFriendsUI(false)
+  await refreshFriendsUI(false, true)
   return true
 }
 
-async function refreshFriendsUI(showLoading = true) {
+async function refreshFriendsUI(showLoading = true, preserveMessage = false) {
   if (!currentUserId) {
     renderFriendsPanel(false)
     return
@@ -2248,7 +2345,7 @@ async function refreshFriendsUI(showLoading = true) {
     return
   }
   friendsState = state
-  setFriendsMessage('')
+  if (!preserveMessage) setFriendsMessage('')
   renderFriendsPanel(true)
   notifyNewFriendRequests(state.incoming)
   if ((state.friends?.length || 0) >= 5) unlockEventAchievement(currentUserId, 'chess-social-5')  // 5+ friends (409 no-op if already unlocked)

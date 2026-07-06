@@ -104,10 +104,23 @@ async function loginWithPassword(page, identifier, password) {
 
   const signedIn = page.locator('#ags-signedin-info');
   const legal = page.locator('#screen-legal');
+  let outcome = 'waiting';
   await expect.poll(
-    async () => (await signedIn.isVisible()) || (await legal.isVisible()),
-    { message: 'signed-in card or legal-acceptance gate should become visible', timeout: 30_000 },
-  ).toBe(true);
+    async () => {
+      if (await signedIn.isVisible()) outcome = 'signed-in';
+      else if (await legal.isVisible()) outcome = 'legal';
+      else {
+        const message = (await page.locator('#ags-login-message').textContent())?.trim() || '';
+        outcome = message && message !== 'Signing in…' ? `error:${message}` : 'waiting';
+      }
+      return outcome;
+    },
+    { message: 'login should complete or return an AGS error', timeout: 30_000 },
+  ).not.toBe('waiting');
+
+  if (outcome.startsWith('error:')) {
+    throw new Error(`Login failed for ${identifier}: ${outcome.slice('error:'.length)}`);
+  }
 
   if (await legal.isVisible()) {
     const reviewButtons = page.locator('#ags-legal-list .legal-review-button:not([disabled])');
