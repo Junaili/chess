@@ -92,6 +92,24 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#ags-register-email')).toHaveValue('invitee@example.com');
   });
 
+  test('live-match invite link (?peer=) gates on sign-in-or-guest before joining', async ({ page }) => {
+    await blockBackend(page);
+    await page.goto(`${APP_PATH}?peer=test-host-peer-id`);
+    await expect(page.locator('#screen-invite')).toBeVisible();
+    await expect(page.locator('#invite-landing-title')).toHaveText(/waiting for you/i);
+
+    // Live mode: account-creation CTA hidden, Google/guest options shown instead.
+    await expect(page.locator('#invite-landing-actions-default')).toBeHidden();
+    await expect(page.locator('#invite-landing-actions-live')).toBeVisible();
+    await expect(page.locator('.invite-guest-cta')).toBeVisible();
+
+    await page.locator('.invite-guest-cta').click();
+    // Guest path marks the session and immediately attempts to join the match.
+    await expect(page.locator('#screen-waiting')).toBeVisible();
+    const flag = await page.evaluate(() => sessionStorage.getItem('chess_invite_guest'));
+    expect(flag).toBe('1');
+  });
+
   test('registration and chat filters reject inappropriate language locally', async ({ page }) => {
     await gotoApp(page);
     await page.getByRole('button', { name: 'Create Free Account' }).click();

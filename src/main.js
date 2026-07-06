@@ -367,6 +367,7 @@ async function reportReferral() {
     sendEvent('referral_reported', { inviter_user_id: inviter })
   } catch {}
   sessionStorage.removeItem('chess_invite_by')
+  sessionStorage.removeItem('chess_invite_guest')
 }
 
 // Send the new player a welcome email via the Extend service. Best-effort:
@@ -515,12 +516,35 @@ function mountShareRow(containerEl, url, opts = {}) {
   return row
 }
 
-function showInviteScreen(inviterName) {
+// live=true means this landing came from a live-match link (?peer=) — the
+// gate offers Google/Apple sign-in or guest play, with account creation
+// deferred to the post-game nudge (see game-over-invite-prompt in app.js).
+// live=false is the referral-only link (?invitedBy=), unchanged: account
+// creation is the primary CTA since there's no match waiting to join.
+function showInviteScreen(inviterName, { live = false } = {}) {
   const titleEl = document.getElementById('invite-landing-title')
+  const subEl = document.getElementById('invite-landing-sub')
   if (titleEl) {
     titleEl.textContent = inviterName
-      ? `${inviterName} challenged you to chess!`
-      : 'A friend challenged you to chess!'
+      ? (live ? `${inviterName} is waiting for you!` : `${inviterName} challenged you to chess!`)
+      : (live ? 'Your friend is waiting for you!' : 'A friend challenged you to chess!')
+  }
+  if (subEl) {
+    subEl.textContent = live
+      ? 'Sign in to save your progress, or jump straight into the match as a guest.'
+      : 'Create a free account to accept the challenge and start playing.'
+  }
+  const defaultActions = document.getElementById('invite-landing-actions-default')
+  const defaultDivider = document.getElementById('invite-landing-divider-default')
+  const defaultSignin = document.getElementById('invite-landing-signin-default')
+  const liveActions = document.getElementById('invite-landing-actions-live')
+  if (defaultActions) defaultActions.style.display = live ? 'none' : ''
+  if (defaultDivider) defaultDivider.style.display = live ? 'none' : ''
+  if (defaultSignin) defaultSignin.style.display = live ? 'none' : ''
+  if (liveActions) {
+    liveActions.style.display = live ? '' : 'none'
+    const appleBtn = document.getElementById('invite-live-apple')
+    if (appleBtn) appleBtn.style.display = (live && window.Capacitor?.isNativePlatform?.()) ? '' : 'none'
   }
   if (typeof window.showScreen === 'function') window.showScreen('invite')
 }
@@ -953,6 +977,15 @@ async function completeAuthenticatedSession({ profile = null, tokenData = null }
   await hydrateAuthenticatedUser(resolvedProfile)
   scheduleProactiveRefresh()  // keep the token fresh for this session
   if (typeof window.showScreen === 'function') window.showScreen('home')
+  // A live-match invite link (?peer=) that required signing in first — now that
+  // we have an account, join the match instead of just landing on home. Covers
+  // Google's full-page redirect too, since the id survives in sessionStorage.
+  const pendingPeerId = sessionStorage.getItem('chess_pending_peer')
+  if (pendingPeerId) {
+    sessionStorage.removeItem('chess_pending_peer')
+    window.history.replaceState({}, '', window.location.pathname + window.location.hash)
+    window.agsJoinPeer?.(pendingPeerId)
+  }
   return true
 }
 
@@ -1017,6 +1050,21 @@ async function initAuth() {
       medium: params.get('utm_medium') || 'link',
     })
   }
+  // Live match invite (?peer=<hostPeerId>). Like invitedBy, the Google OAuth
+  // redirect wipes the URL, so stash it in sessionStorage and fall back to
+  // that ONLY on the callback page load — otherwise a friend who signs in
+  // with Google from this screen never actually joins the match they
+  // clicked. A fresh, non-callback visit with no ?peer= clears any stale
+  // value instead of falling back to it — otherwise an abandoned invite
+  // visit earlier in the same tab session could silently join a later,
+  // unrelated page load into the wrong (or long-gone) match.
+  const peerParam = params.get('peer')
+  if (peerParam) {
+    sessionStorage.setItem('chess_pending_peer', peerParam)
+  } else if (!hasCallback) {
+    sessionStorage.removeItem('chess_pending_peer')
+  }
+  const pendingPeerId = peerParam || (hasCallback ? sessionStorage.getItem('chess_pending_peer') : null)
 
   let profile = null
   let tokenData = null
@@ -1062,25 +1110,30 @@ async function initAuth() {
     updateAuthUI(false, null, null)
     updateStatsUI(null)
     refreshLeaderboard()
-    if (inviteByParam) {
-      showInviteScreen(null)
-      fetchInviterName(inviteByParam).then(name => {
-        if (name) {
-          const titleEl = document.getElementById('invite-landing-title')
-          if (titleEl) titleEl.textContent = `${name} challenged you to chess!`
-        }
-      })
+    if (inviteByParam || pendingPeerId) {
+      const live = !!pendingPeerId
+      showInviteScreen(null, { live })
+      if (inviteByParam) {
+        fetchInviterName(inviteByParam).then(name => {
+          if (name) {
+            const titleEl = document.getElementById('invite-landing-title')
+            if (titleEl) titleEl.textContent = live ? `${name} is waiting for you!` : `${name} challenged you to chess!`
+          }
+        })
+      }
     }
   }
 
   window.agsLogin = loginWithGoogle
 
-  // Sign in with Apple (iOS only — shown by updateAuthUI on native).
+  // Sign in with Apple (iOS only — shown by updateAuthUI on native, and on the
+  // invite screen's live-match gate). Two buttons can be visible at once (home
+  // + invite screen), so toggle every .btn-apple rather than one fixed id.
   window.agsLoginApple = async () => {
-    const appleBtn = document.getElementById('ags-signin-apple')
-    if (appleBtn) appleBtn.disabled = true
+    const appleBtns = document.querySelectorAll('.btn-apple')
+    appleBtns.forEach(btn => { btn.disabled = true })
     const result = await loginWithApple()
-    if (appleBtn) appleBtn.disabled = false
+    appleBtns.forEach(btn => { btn.disabled = false })
     if (!result?.ok) {
       if (result?.error) alert(result.error)
       return
@@ -1161,6 +1214,26 @@ async function initAuth() {
       trigger.setAttribute('aria-expanded', 'true')
     }
     window.requestAnimationFrame(() => nameInput?.focus())
+  }
+  // "Play without an account" on the live-match invite gate. Marks the
+  // session so the post-game nudge (app.js) knows to re-present account
+  // creation specifically to complete the friend connection, then joins the
+  // match — invitedBy/chess_invite_by is untouched, so registering later
+  // still auto-friends the inviter via hydrateAuthenticatedUser.
+  window.agsContinueAsGuestFromInvite = () => {
+    sessionStorage.setItem('chess_invite_guest', '1')
+    const peerId = sessionStorage.getItem('chess_pending_peer')
+    sessionStorage.removeItem('chess_pending_peer')
+    window.history.replaceState({}, '', window.location.pathname + window.location.hash)
+    if (typeof window.showScreen === 'function') window.showScreen('home')
+    if (peerId) window.agsJoinPeer?.(peerId)
+  }
+  // Post-game nudge (app.js) personalizes its copy with the inviter's name
+  // when the current guest arrived via a live-match invite link.
+  window.agsGetPendingInviteName = async () => {
+    const inviterId = sessionStorage.getItem('chess_invite_by')
+    if (!inviterId || sessionStorage.getItem('chess_invite_guest') !== '1') return null
+    return fetchInviterName(inviterId)
   }
   window.agsPasswordLogin = async () => {
     const identifier = document.getElementById('ags-login-identifier')?.value.trim() || ''
