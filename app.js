@@ -1077,7 +1077,13 @@ function showGameOver() {
     invitePrompt.innerHTML = '';
     const isWin  = game.status === 'checkmate' && game.winner === playerColor;
     const isLoss = game.status === 'checkmate' && game.winner && game.winner !== playerColor;
-    if (isWin || isLoss) {
+    // A guest who played this match via a live-match invite link (chose "Play
+    // without an account" on the gate) — re-present account creation here,
+    // regardless of the result, since that's what completes the friend
+    // connection with whoever invited them (see agsContinueAsGuestFromInvite).
+    const cameFromLiveInvite = gameMode === 'online' && !window.agsCurrentUserId &&
+      sessionStorage.getItem('chess_invite_guest') === '1';
+    if (isWin || isLoss || cameFromLiveInvite) {
       const inviteUrl = window.agsGetInviteUrl?.();
       const nudge = document.createElement('p');
       nudge.className = 'invite-nudge-text';
@@ -1085,6 +1091,14 @@ function showGameOver() {
         nudge.textContent = isWin ? '🎉 Challenge someone new →' : '💪 Challenge a different opponent →';
         invitePrompt.appendChild(nudge);
         if (typeof window.agsShareRow === 'function') window.agsShareRow(invitePrompt, inviteUrl);
+      } else if (cameFromLiveInvite) {
+        nudge.textContent = '🤝 Create an account to become friends and keep playing!';
+        nudge.className += ' invite-nudge-cta';
+        nudge.addEventListener('click', () => { window.agsOpenRegister?.(); });
+        invitePrompt.appendChild(nudge);
+        window.agsGetPendingInviteName?.().then(name => {
+          if (name) nudge.textContent = `🤝 Create an account to add ${name} as a friend!`;
+        });
       } else {
         nudge.textContent = isWin ? '🎉 Invite a friend to challenge you!' : '💪 Think you can win? Invite a friend!';
         nudge.className += ' invite-nudge-cta';
@@ -2061,6 +2075,11 @@ function createOnlineRoom(options = {}) {
       inviteUrl.search = '';
       inviteUrl.hash = '';
       inviteUrl.searchParams.set('peer', id);
+      // So the invitee's client can auto-friend the host once they sign in or
+      // register (same invitedBy pipeline the async referral link uses) —
+      // without this, a brand-new player joining via link never becomes
+      // friends with the person who invited them.
+      if (window.agsCurrentUserId) inviteUrl.searchParams.set('invitedBy', window.agsCurrentUserId);
       currentInviteLink = inviteUrl.toString();
       document.getElementById('invite-link-text').textContent = currentInviteLink;
       document.getElementById('invite-link-section').style.display = 'block';
@@ -2195,6 +2214,14 @@ window.showFriendMatchInvite = showFriendMatchInvite;
 window.acceptFriendMatchInvite = acceptFriendMatchInvite;
 window.declineFriendMatchInvite = declineFriendMatchInvite;
 window.handleMatchDeclined = handleMatchDeclined;
+
+// Bridge for src/main.js: join a live-match invite link (?peer=) once the
+// sign-in-or-guest gate on the invite screen has been resolved.
+window.agsJoinPeer = hostPeerId => {
+  if (!hostPeerId) return;
+  gameMode = 'online';
+  joinOnlineRoom(hostPeerId);
+};
 
 function joinOnlineRoom(hostPeerId) {
   destroyPeer();
@@ -2991,12 +3018,7 @@ window.addEventListener('beforeunload', () => {
 window.addEventListener('DOMContentLoaded', () => {
   hydrateStaticPieceIcons();
   renderLeaderboard();
-  const params = new URLSearchParams(window.location.search);
-  const hostPeerId = params.get('peer');
-  if (hostPeerId) {
-    // Remove query string from URL bar so reloading doesn't re-join
-    history.replaceState({}, '', window.location.pathname);
-    gameMode = 'online';
-    joinOnlineRoom(hostPeerId);
-  }
+  // ?peer= (a live-match invite link) is no longer auto-joined here — it goes
+  // through src/main.js's initAuth() first, which gates it behind the
+  // sign-in-or-guest screen (#screen-invite) before calling window.agsJoinPeer.
 });
