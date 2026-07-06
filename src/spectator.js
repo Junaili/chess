@@ -41,6 +41,21 @@ export async function clearLiveMatch(userId) {
   await publishLiveMatch(userId, { active: false, moves: [] })
 }
 
+// Records "I won matchId by forfeit, opponent never reconnected" onto the
+// caller's OWN chess-live record — publishLiveMatch overwrites the whole
+// record each call, so this reads the existing one first and merges the
+// resolution in rather than clobbering the last-known move state. The other
+// side reads this back (via fetchLiveMatch on the winner's userId, matched by
+// matchId) whenever their client next runs, however long that takes.
+export async function resolveMatchForfeit(userId, matchId, loserUserId) {
+  const existing = await fetchLiveMatch(userId)
+  await publishLiveMatch(userId, {
+    ...existing,
+    matchId,
+    resolvedForfeit: { matchId, loserUserId, at: new Date().toISOString() },
+  })
+}
+
 let _pollInterval = null
 
 export function startWatching(userId, onUpdate) {

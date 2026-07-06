@@ -51,7 +51,7 @@ export function computeMatchStats(matches) {
   const byOpponentType = { vsBot: emptyRecord(), vsHuman: emptyRecord() }
   const headToHeadMap = new Map() // opponentUserId -> { name, ...record }
   const openingCounts = new Map() // "e2e4" -> { count, record }
-  const endReasonCounts = { checkmate: 0, resignation: 0, stalemate: 0, 'draw-insufficient': 0, 'draw-fifty-move': 0, 'draw-repetition': 0, unknown: 0 }
+  const endReasonCounts = { checkmate: 0, resignation: 0, forfeit: 0, stalemate: 0, 'draw-insufficient': 0, 'draw-fifty-move': 0, 'draw-repetition': 0, unknown: 0 }
   const castling = { kingside: 0, queenside: 0, never: 0, total: 0 }
 
   let totalDurationMs = 0

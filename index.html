@@ -829,6 +829,17 @@
   </div>
 
   <!-- ── Player Safety Modals ─────────────────────────────────────────────── -->
+  <div id="resume-match-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="resume-match-title">
+    <div class="modal-content safety-modal-content">
+      <h2 id="resume-match-title">Unfinished Game</h2>
+      <p>You have a game in progress vs <strong id="resume-match-opponent">Opponent</strong>. Resume it?</p>
+      <div class="modal-buttons">
+        <button type="button" class="btn btn-primary" onclick="window.agsResumeActiveMatch && window.agsResumeActiveMatch()">Resume Game</button>
+        <button type="button" class="btn btn-secondary" onclick="window.agsDiscardActiveMatch && window.agsDiscardActiveMatch()">Discard</button>
+      </div>
+    </div>
+  </div>
+
   <div id="match-safety-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="match-safety-title">
     <div class="modal-content safety-modal-content">
       <h2 id="match-safety-title">Match Safety</h2>

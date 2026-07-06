@@ -11,9 +11,10 @@ import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHis
 import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache, fetchMergedAchievements } from './achievements.js'
 import { sendEvent, flushPendingEvents, captureUtm, clearPendingEvents } from './telemetry.js'
 import { readPrivacyPreferences, writePrivacyPreferences } from './privacy-preferences.mjs'
-import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching } from './spectator.js'
+import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching, fetchLiveMatch, resolveMatchForfeit } from './spectator.js'
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName } from './leaderboard.js'
 import { computeMatchStats } from './match-stats.mjs'
+import { deriveMatchRoles, computeDeadline, isPastDeadline, isResumable, pickAuthoritativeMoves } from './match-resume.mjs'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
@@ -610,6 +611,7 @@ async function hydrateAuthenticatedUser(profile) {
   sendEvent('leaderboard_viewed', { trigger: 'session_start' })
   const randomBtn = document.getElementById('btn-play-random')
   if (randomBtn) randomBtn.style.display = ''
+  window.agsCheckResumableMatch?.()  // any unfinished online match from before a disconnect/reload?
 }
 
 function renderLegalDocuments(documents) {
@@ -1603,6 +1605,22 @@ async function initAuth() {
     }
     pendingOpponentRating = null
   }
+  // agsGetPendingOpponentRating: read-only peek at the same value, for
+  // markMatchDisconnected() to stash before it's lost on a reload — a
+  // disconnected match never reaches agsRecordEloResult (which would
+  // otherwise consume/clear it), so it stays valid for the whole time the tab
+  // remains open after a drop.
+  window.agsGetPendingOpponentRating = () => pendingOpponentRating
+  // Match-resume bridges (app.js is a plain script, not a module, so it can't
+  // import match-resume.mjs/spectator.js directly — these mirror the existing
+  // agsGetRating-style bridge pattern). See docs/ags-plans (match resiliency).
+  window.agsDeriveMatchRoles = (myUserId, opponentUserId) => deriveMatchRoles(myUserId, opponentUserId)
+  window.agsComputeDeadline = (disconnectedAt) => computeDeadline(disconnectedAt)
+  window.agsIsPastDeadline = (deadline, now) => isPastDeadline(deadline, now)
+  window.agsIsResumable = (record, now) => isResumable(record, now)
+  window.agsPickAuthoritativeMoves = (mine, theirs) => pickAuthoritativeMoves(mine, theirs)
+  window.agsFetchLiveMatch = (userId) => fetchLiveMatch(userId)
+  window.agsResolveMatchForfeit = (userId, matchId, loserUserId) => resolveMatchForfeit(userId, matchId, loserUserId)
   window.agsIncrementWin = async () => {
     if (!currentUserId) return
     const displayName = document.getElementById('ags-signedin-name')?.textContent || ''
