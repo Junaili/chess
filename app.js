@@ -161,6 +161,11 @@ let matchHistoryRecorded = false;
 // only place resignation is distinguished, read once when the match-history
 // record is built.
 let gameEndedByResignation = false;
+// Match resiliency: chess-active-match survives a reload/crash (localStorage,
+// not sessionStorage) so a player can resume up to 10 minutes after a
+// disconnect. See docs/ags-plans (match resiliency plan) for the full design.
+const ACTIVE_MATCH_KEY = 'chess-active-match';
+let currentMatchId = null;
 let gameOverCountdownTimer = null;
 let gameOverCountdownRemaining = 0;
 let boardFlipped = false;
@@ -398,6 +403,7 @@ function startGame() {
     setPlayerInfo(playerColor, myName, myId);
     if (currentOpponent) {
       setPlayerInfo(playerColor === 'white' ? 'black' : 'white', currentOpponent.name, currentOpponent.userId);
+      saveActiveMatch(); // no-ops if already saved, or if the host doesn't know the opponent yet
     } else {
       setPlayerInfo(playerColor === 'white' ? 'black' : 'white', 'Opponent', '');
     }
@@ -1031,6 +1037,7 @@ function showGameOver() {
     const score = won ? 1 : lost ? 0 : 0.5;
     window.agsRecordEloResult?.(score);
   }
+  clearActiveMatch(); // legitimate game end — nothing left to resume
 
   const title = document.getElementById('game-over-title');
   const msg   = document.getElementById('game-over-message');
@@ -1293,6 +1300,261 @@ function showConnBanner(msg, type) {
 function hideConnBanner() {
   const el = document.getElementById('conn-banner');
   if (el) el.style.display = 'none';
+}
+
+// ─── Match resume (survives a disconnect/crash/reload) ─────────────────────
+
+function readActiveMatch() {
+  try {
+    const raw = localStorage.getItem(ACTIVE_MATCH_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function writeActiveMatch(record) {
+  try { localStorage.setItem(ACTIVE_MATCH_KEY, JSON.stringify(record)); } catch {}
+}
+
+function clearActiveMatch() {
+  try { localStorage.removeItem(ACTIVE_MATCH_KEY); } catch {}
+  currentMatchId = null;
+}
+
+// Called once both my color and the opponent's identity are known for an
+// online match (see startGame() and the player_info handler — the host
+// doesn't know the opponent until player_info arrives, after startGame()).
+function saveActiveMatch() {
+  if (currentMatchId) return; // already saved for this game
+  if (gameMode !== 'online' || !window.agsCurrentUserId || !currentOpponent?.userId) return;
+  currentMatchId = 'match-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  writeActiveMatch({
+    matchId: currentMatchId,
+    myUserId: window.agsCurrentUserId,
+    myColor: playerColor,
+    opponentUserId: currentOpponent.userId,
+    opponentName: currentOpponent.name || 'Opponent',
+    startedAt: (matchStartedAt || new Date()).toISOString(),
+    disconnectedAt: null,
+    deadline: null,
+    opponentRatingAtStart: null,
+  });
+}
+
+// Marks the persisted record as disconnected (starts the 10-minute resume
+// clock) instead of treating the match as unconditionally lost. Also stashes
+// the opponent's rating captured at connection time (agsGetPendingOpponentRating)
+// since that's only ever held in memory and won't survive a reload otherwise —
+// needed later to record an Elo result for a forfeit with no live peer to
+// re-exchange ratings with.
+function markMatchDisconnected() {
+  const record = readActiveMatch();
+  if (!record || record.matchId !== currentMatchId) return;
+  const now = new Date().toISOString();
+  record.disconnectedAt = record.disconnectedAt || now;
+  record.deadline = window.agsComputeDeadline?.(record.disconnectedAt) || record.deadline;
+  if (record.opponentRatingAtStart == null) {
+    const rating = window.agsGetPendingOpponentRating?.();
+    record.opponentRatingAtStart = typeof rating === 'number' ? rating : null;
+  }
+  writeActiveMatch(record);
+}
+
+let pendingResumeRecord = null;
+
+function showResumePrompt(record) {
+  pendingResumeRecord = record;
+  const modal = document.getElementById('resume-match-modal');
+  if (!modal) return;
+  const nameEl = document.getElementById('resume-match-opponent');
+  if (nameEl) nameEl.textContent = record.opponentName || 'Opponent';
+  modal.style.display = 'flex';
+}
+
+function hideResumePrompt() {
+  const modal = document.getElementById('resume-match-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+// Entry point, called once per login (see src/main.js hydrateAuthenticatedUser).
+window.agsCheckResumableMatch = async function() {
+  const record = readActiveMatch();
+  if (!record) return;
+  if (window.agsIsResumable?.(record) ?? true) {
+    showResumePrompt(record);
+  } else {
+    await resolveExpiredMatch(record);
+  }
+};
+
+window.agsResumeActiveMatch = function() {
+  if (!pendingResumeRecord) return;
+  const record = pendingResumeRecord;
+  pendingResumeRecord = null;
+  hideResumePrompt();
+  attemptResume(record);
+};
+
+window.agsDiscardActiveMatch = function() {
+  pendingResumeRecord = null;
+  hideResumePrompt();
+  clearActiveMatch();
+};
+
+// Reconstructs match state from the persisted record + both sides' public
+// chess-live CloudSave records (longer move list wins — see
+// src/match-resume.mjs pickAuthoritativeMoves), then reconnects using the
+// same deterministic host/joiner scheme matchmaking already uses. Rebuilding
+// `game` *before* opening the peer connection means setupPeerConnection's
+// existing on('open') logic naturally treats this as a same-session
+// reconnect (its "if (game) …" branch) — reconnect_req/resync already
+// handles the rest, no new peer message protocol needed.
+async function attemptResume(record) {
+  destroyPeer(); // clean slate — also clears any stale game/moveLog/connRole
+
+  gameMode = 'online';
+  playerColor = record.myColor;
+  matchStartedAt = new Date(record.startedAt);
+  currentMatchId = record.matchId;
+  matchHistoryRecorded = false;
+  gameEndedByResignation = false;
+  setCurrentOpponent(record.opponentName, record.opponentUserId);
+
+  showConnBanner(`Reconnecting to ${record.opponentName}…`, 'warning');
+
+  const [myLive, theirLive] = await Promise.all([
+    window.agsFetchLiveMatch?.(record.myUserId),
+    window.agsFetchLiveMatch?.(record.opponentUserId),
+  ]);
+  const myMoves = myLive?.matchId === record.matchId && Array.isArray(myLive.moves) ? myLive.moves : [];
+  const theirMoves = theirLive?.matchId === record.matchId && Array.isArray(theirLive.moves) ? theirLive.moves : [];
+  const moves = window.agsPickAuthoritativeMoves?.(myMoves, theirMoves) ?? myMoves;
+
+  const rebuiltGame = new ChessGame();
+  const normalized = [];
+  for (const raw of moves) {
+    const move = normalizePeerMove(raw);
+    if (!move || !rebuiltGame.makeMove(move.fr, move.fc, move.toR, move.toC, move.promType)) {
+      // Corrupt/unreplayable history — safer to give up on resume than show a broken board.
+      clearActiveMatch();
+      showConnBanner('Could not recover this match. Returning to menu.', 'error');
+      showScreen('home');
+      return;
+    }
+    normalized.push(move);
+  }
+
+  game = new ChessGame();
+  boardFlipped = playerColor === 'black';
+  document.getElementById('move-list').innerHTML = '';
+  document.getElementById('captured-by-white').innerHTML = '';
+  document.getElementById('captured-by-black').innerHTML = '';
+  for (const m of normalized) {
+    const notation = game.getMoveNotation(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen');
+    game.makeMove(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen');
+    addMoveToList(notation, game.currentTurn === 'white' ? 'black' : 'white');
+  }
+  updateCapturedPieces();
+  updateStatus();
+  resetMatchClocks();
+  setPlayerInfo(playerColor, getCurrentPlayerDisplayName(), record.myUserId);
+  setPlayerInfo(playerColor === 'white' ? 'black' : 'white', record.opponentName, record.opponentUserId);
+  showScreen('game');
+  renderBoard();
+  updateChatAvailability();
+
+  const { iAmHost, peerId } = window.agsDeriveMatchRoles(record.myUserId, record.opponentUserId);
+  // Host-only resync source (see the existing reconnect_req handler) — seed
+  // it from the same authoritative history in case I'm asked for it.
+  moveLog = normalized.map(m => ({ type: 'move', ...m }));
+
+  peer = new Peer(iAmHost ? peerId : undefined);
+  setupCallHandler();
+
+  if (iAmHost) {
+    peer.on('open', () => {
+      peer.on('connection', conn => {
+        if (peerConn) return;
+        peerConn = conn;
+        setupPeerConnection(conn, 'host');
+      });
+    });
+  } else {
+    peer.on('open', () => {
+      const conn = peer.connect(peerId, { reliable: true });
+      peerConn = conn;
+      setupPeerConnection(conn, 'joiner');
+    });
+  }
+
+  peer.on('error', () => {
+    // Opponent isn't back yet (or the connect attempt otherwise failed) —
+    // this re-enters the same disconnected state without resetting the
+    // original 10-minute deadline (markMatchDisconnected only sets
+    // disconnectedAt once), then retries shortly if there's still time left.
+    handleConnectionLost();
+    const current = readActiveMatch();
+    if (current && (window.agsIsResumable?.(current) ?? true)) {
+      setTimeout(() => attemptResume(current), 10_000);
+    } else if (current) {
+      resolveExpiredMatch(current);
+    }
+  });
+}
+
+// Called once the 10-minute window has passed unresumed. Since there's no
+// server to adjudicate, whichever side's client is actually running decides:
+// if the opponent already recorded a forfeit win naming me as the loser
+// (their chess-live record, public), I mirror that as my own loss; otherwise
+// I declare myself the winner and leave the same marker for them to find
+// whenever their client next runs — could be much later. See the plan's
+// "Race note" for the (rare, accepted) case where both sides reach this at
+// the same moment.
+async function resolveExpiredMatch(record) {
+  const theirLive = await window.agsFetchLiveMatch?.(record.opponentUserId);
+  const theirResolution = theirLive?.resolvedForfeit;
+  const iAmTheLoser = theirResolution?.matchId === record.matchId
+    && theirResolution.loserUserId === record.myUserId;
+
+  const endedAt = new Date().toISOString();
+  const durationMs = Math.max(0, Date.now() - new Date(record.startedAt).getTime());
+  const myName = getCurrentPlayerDisplayName();
+  const historyEntry = {
+    mode: 'online',
+    opponentName: record.opponentName,
+    opponentUserId: record.opponentUserId,
+    endReason: 'forfeit',
+    myColor: record.myColor,
+    startedAt: record.startedAt,
+    endedAt,
+    durationMs,
+    moves: [],
+    whiteName: record.myColor === 'white' ? myName : record.opponentName,
+    blackName: record.myColor === 'black' ? myName : record.opponentName,
+  };
+
+  if (iAmTheLoser) {
+    window.agsIncrementLoss?.();
+    window.agsIncrementGamePlayed?.('online');
+    window.agsUpdateStreak?.();
+    if (typeof record.opponentRatingAtStart === 'number') {
+      window.agsSetOpponentRating?.(record.opponentRatingAtStart);
+      window.agsRecordEloResult?.(0);
+    }
+    window.agsRecordMatchHistory?.({ ...historyEntry, result: 'loss' });
+    showConnBanner(`You didn't reconnect in time — recorded as a loss vs ${record.opponentName}.`, 'error');
+  } else {
+    await window.agsResolveMatchForfeit?.(record.myUserId, record.matchId, record.opponentUserId);
+    window.agsIncrementWin?.();
+    window.agsIncrementGamePlayed?.('online');
+    window.agsUpdateStreak?.();
+    if (typeof record.opponentRatingAtStart === 'number') {
+      window.agsSetOpponentRating?.(record.opponentRatingAtStart);
+      window.agsRecordEloResult?.(1);
+    }
+    window.agsRecordMatchHistory?.({ ...historyEntry, result: 'win' });
+    showConnBanner(`${record.opponentName} didn't reconnect in time — recorded as a win.`, 'success');
+  }
+  clearActiveMatch();
 }
 
 function startHeartbeat(conn) {
@@ -1761,11 +2023,16 @@ function handleConnectionLost() {
   stopHeartbeat();
   if (peerConn) { try { peerConn.close(); } catch {} peerConn = null; }
   updateChatAvailability();
-  showConnBanner('Connection lost — returning to menu…', 'error');
+  markMatchDisconnected(); // starts the 10-minute resume window — the match isn't lost
+  showConnBanner('Connection lost. You can resume this game later.', 'error');
   setTimeout(() => {
     closeModal('game-over-modal');
     destroyPeer();
     showScreen('home');
+    // The side that *didn't* reload (still logged in, tab still open) never
+    // re-triggers hydrateAuthenticatedUser — without this, only a fresh login
+    // would ever see the resume prompt, leaving this side with no way back in.
+    window.agsCheckResumableMatch?.();
   }, 2500);
 }
 
@@ -2067,6 +2334,7 @@ function setupPeerConnection(conn, role) {
       const oppColor = playerColor === 'white' ? 'black' : 'white';
       setPlayerInfo(oppColor, opponentName, opponentId);
       activateChatForCurrentMatch();
+      saveActiveMatch(); // host: opponent identity only becomes known here, after startGame() already ran
     } else if (data.type === 'move') {
       const move = normalizePeerMove(data);
       if (move) applyOpponentMove(move.fr, move.fc, move.toR, move.toC, move.promType);
@@ -2702,6 +2970,7 @@ window.getSpectatorMatchData = function() {
   const myName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'Player'
   const myUserId = window.agsCurrentUserId || ''
   return {
+    matchId: currentMatchId,
     active: isGameActiveStatus(game.status),
     moves: game.moveHistory.map(m => ({ fr: m.fr, fc: m.fc, toR: m.toR, toC: m.toC, promType: m.promType })),
     whiteName: playerColor === 'white' ? myName : (currentOpponent?.name || 'Opponent'),
