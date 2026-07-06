@@ -3,7 +3,12 @@ import { UsersV4Api } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
 import { moderateIncomingDisplayName } from './content-moderation.mjs'
 
-const LEADERBOARD_CODE = 'chess-wins-lb'
+// Ranks by chess-rating (Elo-style skill), not raw win count — ten wins
+// against weak opponents isn't the same as ten wins against strong ones, and
+// a rating captures that where a win counter can't. The old chess-wins-lb
+// board is left in place in AGS (dormant, not deleted) rather than removed,
+// in case its historical win-count data is useful later.
+const LEADERBOARD_CODE = 'chess-rating-lb'
 const NAME_CACHE_KEY = 'ags-name-cache'
 
 export function cacheDisplayName(userId, displayName) {

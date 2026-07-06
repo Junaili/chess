@@ -1696,7 +1696,8 @@ async function initAuth() {
   }
   window.agsRecordEloResult = async (score) => {
     if (!currentUserId || pendingOpponentRating == null) return
-    const newRating = await recordEloResult(currentUserId, currentUserRating, pendingOpponentRating, score)
+    const displayName = document.getElementById('ags-signedin-name')?.textContent || null
+    const newRating = await recordEloResult(currentUserId, currentUserRating, pendingOpponentRating, score, displayName)
     if (newRating != null) {
       currentUserRating = newRating
       updateStatsUI(await fetchStats(currentUserId), currentStreak)

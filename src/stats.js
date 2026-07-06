@@ -175,10 +175,12 @@ export async function recordMatchHistory(match) {
   }
 }
 
-function setStat(userId, statCode, value, updateStrategy) {
+function setStat(userId, statCode, value, updateStrategy, displayName = null) {
   // _v2 is the update-strategy variant ({ value, updateStrategy }); the v1
   // method takes an increment body instead.
-  return UserStatisticApi(sdk).updateStatitemValue_ByUserId_ByStatCode_v2(userId, statCode, { value, updateStrategy })
+  const body = { value, updateStrategy }
+  if (displayName) body.additionalData = { displayName }
+  return UserStatisticApi(sdk).updateStatitemValue_ByUserId_ByStatCode_v2(userId, statCode, body)
 }
 
 async function readStreakStats(userId, codes) {
@@ -189,12 +191,15 @@ async function readStreakStats(userId, codes) {
 
 // Applies one match's Elo result and persists the new rating. Only called for
 // online matches where the opponent's pre-game rating was actually received
-// over the peer connection — skip (don't guess) otherwise.
-export async function recordEloResult(userId, myRatingBefore, opponentRating, score) {
+// over the peer connection — skip (don't guess) otherwise. displayName is
+// attached the same way incrementStat does for chess-wins, so a brand-new
+// leaderboard entry has a name available immediately rather than depending on
+// the (already-existing, still-correct) IAM-lookup fallback in leaderboard.js.
+export async function recordEloResult(userId, myRatingBefore, opponentRating, score, displayName = null) {
   if (!userId || typeof opponentRating !== 'number') return null
   const newRating = computeEloUpdate(myRatingBefore, opponentRating, score)
   try {
-    await setStat(userId, RATING, newRating, 'OVERRIDE')
+    await setStat(userId, RATING, newRating, 'OVERRIDE', displayName)
     return newRating
   } catch (e) {
     console.warn('[AGS rating] record:', e?.response?.data || e?.message)
