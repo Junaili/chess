@@ -48,8 +48,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-ByFNQAO0.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-xuOhZSIr.css">
+  <script type="module" crossorigin src="/chess/assets/index-Ch8o0C8L.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-DazxmZiH.css">
 </head>
 <body>
 
@@ -170,15 +170,17 @@
               <button class="btn-mini" id="btn-copy-invite-link" onclick="window.agsCopyInviteLink && window.agsCopyInviteLink()">Share Invite Link</button>
             </div>
             <div id="ags-invite-share-row" style="margin-top:6px"></div>
-            <div id="ags-add-friend-form" style="display:none;margin-top:8px">
-              <div style="display:flex;gap:6px;align-items:center">
+            <form id="ags-add-friend-form" class="add-friend-form" style="display:none"
+              onsubmit="event.preventDefault();window.agsAddFriendByEmail&&window.agsAddFriendByEmail()">
+              <label for="ags-add-friend-email">Add by email</label>
+              <div class="add-friend-controls">
                 <input type="email" id="ags-add-friend-email" class="name-input" placeholder="friend@example.com"
-                  style="flex:1;min-width:0;font-size:0.78rem;padding:7px 12px"
-                  onkeydown="if(event.key==='Enter')window.agsAddFriendByEmail&&window.agsAddFriendByEmail()" />
-                <button class="btn-mini" onclick="window.agsAddFriendByEmail&&window.agsAddFriendByEmail()">Add</button>
+                  autocomplete="email" required aria-describedby="ags-add-friend-hint ags-add-friend-result" />
+                <button type="submit" id="ags-add-friend-submit" class="btn-mini success">Send request</button>
               </div>
-            </div>
-            <div id="ags-add-friend-result" style="margin-top:6px"></div>
+              <p id="ags-add-friend-hint" class="add-friend-hint">We will find their player account. They must accept before you become friends.</p>
+            </form>
+            <div id="ags-add-friend-result" class="add-friend-result" aria-live="polite"></div>
           </section>
         </div>
         <div id="home-leaderboard-panel" class="leaderboard-panel">
@@ -239,7 +241,70 @@
           <span>Leaderboard</span>
           <strong id="profile-rank">—</strong>
         </div>
+        <div class="profile-stat">
+          <span>Rating</span>
+          <strong id="profile-rating">—</strong>
+        </div>
       </div>
+      <section id="profile-chess-stats" class="profile-history-card" style="display:none">
+        <div class="profile-history-head">
+          <h3>Chess Stats</h3>
+        </div>
+        <div id="profile-head-to-head" class="profile-stat" style="display:none">
+          <span>Head-to-head</span>
+          <strong id="profile-head-to-head-value">—</strong>
+        </div>
+        <div class="profile-stats-grid">
+          <div class="profile-stat">
+            <span>As White</span>
+            <strong id="profile-rate-white">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>As Black</span>
+            <strong id="profile-rate-black">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Vs. Bot</span>
+            <strong id="profile-rate-vs-bot">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Vs. Human</span>
+            <strong id="profile-rate-vs-human">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Favorite opening</span>
+            <strong id="profile-favorite-opening">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Time played</span>
+            <strong id="profile-time-played">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Castling</span>
+            <strong id="profile-castling">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Longest / shortest</span>
+            <strong id="profile-game-length">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Fastest checkmate</span>
+            <strong id="profile-fastest-checkmate">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Comeback wins</span>
+            <strong id="profile-comeback-wins">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Game endings</span>
+            <strong id="profile-end-reasons">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Toughest opponent</span>
+            <strong id="profile-nemesis">—</strong>
+          </div>
+        </div>
+      </section>
       <div id="profile-friend-card" class="profile-friend-card">
         <p id="profile-friend-status" class="auth-message"></p>
         <button class="btn btn-primary" id="profile-add-friend-btn" onclick="window.agsProfileAddFriend && window.agsProfileAddFriend()">Add Friend</button>
