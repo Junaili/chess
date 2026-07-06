@@ -730,6 +730,25 @@ input[type="checkbox"] {
   min-width: 0;
 }
 
+.friend-profile-link {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.friend-profile-link:hover .friend-name {
+  color: var(--accent-2);
+}
+
+.friend-profile-link:focus-visible {
+  border-radius: 8px;
+}
+
 .friend-name,
 .friend-id {
   display: block;
@@ -893,6 +912,164 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 
+.friends-availability {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(144, 223, 177, 0.18);
+  border-radius: 12px;
+  background: rgba(63, 147, 104, 0.08);
+}
+
+.friends-availability strong {
+  color: #dfffee;
+  font-size: 0.82rem;
+}
+
+.friends-availability span {
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.friends-online-empty {
+  display: grid;
+  gap: 4px;
+  padding: 13px 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.friends-online-empty strong {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
+.friends-online-empty span {
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.offline-friends-trigger {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.04);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.offline-friends-trigger:hover {
+  border-color: rgba(240, 195, 122, 0.26);
+  background: rgba(240, 195, 122, 0.07);
+}
+
+.offline-friends-trigger strong {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.offline-friends-open {
+  overflow: hidden;
+}
+
+.offline-friends-overlay {
+  position: fixed;
+  z-index: 170;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right))
+    max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  background: rgba(10, 8, 12, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.offline-friends-overlay[hidden] {
+  display: none;
+}
+
+.offline-friends-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(560px, 100%);
+  max-height: min(720px, 100%);
+  overflow: hidden;
+  border: 1px solid rgba(255, 244, 229, 0.15);
+  border-radius: 22px;
+  color: var(--text);
+  background: radial-gradient(circle at 90% 0, rgba(126, 166, 255, 0.1), transparent 30%), #1d191f;
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.58);
+}
+
+.offline-friends-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px 24px 17px;
+  border-bottom: 1px solid rgba(255, 244, 229, 0.09);
+}
+
+.offline-friends-header h2 {
+  font-size: clamp(1.45rem, 4vw, 2rem);
+}
+
+.offline-friends-header > div > p:last-child {
+  max-width: 410px;
+  margin-top: 6px;
+  color: var(--text-soft);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.offline-friends-close {
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.06);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.offline-friends-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+.offline-friends-list .friend-row {
+  flex: 0 0 auto;
+}
+
 .friends-add-row {
   display: flex;
   gap: 8px;
@@ -997,6 +1174,26 @@ input[type="checkbox"] {
 
   .add-friend-controls .btn-mini {
     width: 100%;
+  }
+
+  .offline-friends-overlay {
+    padding: 0;
+  }
+
+  .offline-friends-dialog {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .offline-friends-header {
+    padding: max(18px, env(safe-area-inset-top)) 18px 15px;
+  }
+
+  .offline-friends-list {
+    padding: 14px 18px max(18px, env(safe-area-inset-bottom));
   }
 }
 

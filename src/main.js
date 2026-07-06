@@ -112,6 +112,7 @@ let reviewedLegalDocumentIds = new Set()
 let acceptedLegalDocuments = []
 let activeLegalReaderDocument = null
 let legalReaderTrigger = null
+let offlineFriendsTrigger = null
 let friendsState = { friends: [], incoming: [], outgoing: [] }
 let friendsRefreshTimer = null
 let unsubscribePresenceUpdates = null
@@ -2801,18 +2802,92 @@ function showInviteJoinToast({ fromUserId, fromName }) {
   }
 }
 
-function friendRow(item, actions = '') {
-  const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'))
+function friendRow(item, actions = '', { profileLink = false } = {}) {
+  const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
   const presence = item.presence || { status: 'offline', label: 'Offline' }
+  const identity = `<span class="friend-name">${esc(item.displayName)}
+    <span class="friend-presence ${esc(presence.status)}">${esc(presence.label)}</span>
+  </span>`
   return `<div class="friend-row">
     <div class="friend-main">
-      <span class="friend-name">${esc(item.displayName)}
-        <span class="friend-presence ${esc(presence.status)}">${esc(presence.label)}</span>
-      </span>
+      ${profileLink
+        ? `<button type="button" class="friend-profile-link" data-action="profile" data-user-id="${esc(item.userId)}" data-display-name="${esc(item.displayName || '')}" aria-label="View ${esc(item.displayName || 'friend')} profile and stats">${identity}</button>`
+        : identity}
     </div>
     ${actions ? `<div class="friend-actions">${actions}</div>` : ''}
   </div>`
 }
+
+function openFriendProfile(userId, displayName = '') {
+  closeOfflineFriends()
+  openPublicProfile(userId, displayName)
+}
+
+function renderOfflineFriends(friends) {
+  const list = document.getElementById('offline-friends-list')
+  const title = document.getElementById('offline-friends-title')
+  if (!list || !title) return
+
+  title.textContent = `Offline friends (${friends.length})`
+  list.innerHTML = friends.length
+    ? friends.map(item => friendRow(item, '', { profileLink: true })).join('')
+    : '<p class="friends-empty">No friends are offline.</p>'
+  list.querySelectorAll('[data-action="profile"]').forEach(button => {
+    button.addEventListener('click', () => {
+      openFriendProfile(button.dataset.userId, button.dataset.displayName || '')
+    })
+  })
+}
+
+function openOfflineFriends(trigger = null) {
+  const overlay = document.getElementById('offline-friends-overlay')
+  const close = document.getElementById('offline-friends-close')
+  if (!overlay || !close) return
+  offlineFriendsTrigger = trigger || document.activeElement
+  overlay.hidden = false
+  document.body.classList.add('offline-friends-open')
+  close.focus()
+}
+
+function closeOfflineFriends() {
+  const overlay = document.getElementById('offline-friends-overlay')
+  if (!overlay || overlay.hidden) return
+  overlay.hidden = true
+  document.body.classList.remove('offline-friends-open')
+  const trigger = offlineFriendsTrigger
+  offlineFriendsTrigger = null
+  trigger?.focus?.()
+}
+
+function initializeOfflineFriendsOverlay() {
+  const overlay = document.getElementById('offline-friends-overlay')
+  overlay?.addEventListener('click', event => {
+    if (event.target === overlay) closeOfflineFriends()
+  })
+  document.addEventListener('keydown', event => {
+    if (overlay?.hidden !== false) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeOfflineFriends()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const focusable = [...overlay.querySelectorAll('button:not(:disabled)')]
+    if (!focusable.length) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  })
+}
+
+window.agsOpenOfflineFriends = openOfflineFriends
+window.agsCloseOfflineFriends = closeOfflineFriends
 
 function renderFriendsListOnlineFirst(friends) {
   const el = document.getElementById('ags-friends-list')
@@ -2821,38 +2896,64 @@ function renderFriendsListOnlineFirst(friends) {
   if (countEl) countEl.textContent = friends.length || ''
 
   if (!friends.length) {
-    el.innerHTML = '<p class="friends-empty">No friends yet.</p>'
+    el.innerHTML = `<div class="friends-availability">
+      <strong>0 online</strong>
+      <span>0 total</span>
+    </div>
+    <div class="friends-online-empty">
+      <strong>No friends yet</strong>
+      <span>Add a friend or share an invite to start playing together.</span>
+    </div>`
+    renderOfflineFriends([])
     return
   }
 
   const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
   const online = friends.filter(f => ['online', 'in-match'].includes(f.presence?.status))
   const offline = friends.filter(f => !['online', 'in-match'].includes(f.presence?.status))
-  let html = ''
+  let html = `<div class="friends-availability">
+    <strong>${online.length} online</strong>
+    <span>${friends.length} total</span>
+  </div>`
+  html += `<div class="friends-group-divider"><span>Online · ${online.length}</span></div>`
   if (online.length) {
-    html += `<div class="friends-group-divider"><span>Online · ${online.length}</span></div>`
     html += online.map(item => {
       const inMatch = item.presence?.status === 'in-match'
       // Use data attributes — never put user-controlled strings into inline event handlers.
       const action = inMatch
         ? `<button class="btn-mini spectator" data-action="watch" data-user-id="${esc(item.userId)}" data-display-name="${esc(item.displayName || '')}">Watch</button>`
         : `<button class="btn-mini success" data-action="invite" data-user-id="${esc(item.userId)}">Invite</button>`
-      return friendRow(item, action)
+      return friendRow(item, action, { profileLink: true })
     }).join('')
+  } else {
+    html += `<div class="friends-online-empty">
+      <strong>No friends online right now</strong>
+      <span>You can still view offline profiles or share an invite.</span>
+    </div>`
   }
   if (offline.length) {
-    if (online.length) html += `<div class="friends-group-divider"><span>Offline · ${offline.length}</span></div>`
-    html += offline.map(item => friendRow(item, '')).join('')
+    html += `<button type="button" class="offline-friends-trigger" data-action="offline">
+      <span>Offline friends</span>
+      <strong>${offline.length}</strong>
+      <span aria-hidden="true">View →</span>
+    </button>`
   }
   el.innerHTML = html
+  renderOfflineFriends(offline)
 
   el.querySelectorAll('button[data-action]').forEach(btn => {
     btn.addEventListener('click', () => {
       const { action, userId, displayName } = btn.dataset
       if (action === 'watch') window.agsWatchFriend?.(userId, displayName || '')
       else if (action === 'invite') window.agsInviteFriend?.(userId)
+      else if (action === 'profile') openFriendProfile(userId, displayName || '')
+      else if (action === 'offline') openOfflineFriends(btn)
     })
   })
+}
+
+if (import.meta.env.DEV) {
+  window.agsRenderFriendsListForTesting = renderFriendsListOnlineFirst
 }
 
 // onAction(action, userId) is called when any data-action button is clicked.
@@ -3249,4 +3350,5 @@ document.addEventListener('visibilitychange', () => {
 })
 
 initializeLegalReader()
+initializeOfflineFriendsOverlay()
 initAuth()

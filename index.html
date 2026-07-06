@@ -356,6 +356,22 @@
     </div>
   </div>
 
+  <div id="offline-friends-overlay" class="offline-friends-overlay" hidden>
+    <section class="offline-friends-dialog" role="dialog" aria-modal="true"
+      aria-labelledby="offline-friends-title" aria-describedby="offline-friends-description">
+      <header class="offline-friends-header">
+        <div>
+          <p class="auth-eyebrow">Friends</p>
+          <h2 id="offline-friends-title">Offline friends</h2>
+          <p id="offline-friends-description">Open a friend’s profile to view their stats and match history.</p>
+        </div>
+        <button type="button" id="offline-friends-close" class="offline-friends-close"
+          onclick="window.agsCloseOfflineFriends && window.agsCloseOfflineFriends()">Close</button>
+      </header>
+      <div id="offline-friends-list" class="offline-friends-list"></div>
+    </section>
+  </div>
+
   <!-- ── Invite Landing Screen ───────────────────────────────────────────── -->
   <div id="screen-invite" class="screen">
     <div class="invite-landing">

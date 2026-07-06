@@ -241,6 +241,57 @@ test.describe('UI smoke (signed out)', () => {
     }
   });
 
+  test('friends show online count, offline overlay, and profile links', async ({ page }) => {
+    await gotoApp(page);
+    await page.evaluate(() => {
+      document.getElementById('ags-friends-panel').style.display = '';
+      window.agsRenderFriendsListForTesting([
+        {
+          userId: 'online-user',
+          displayName: 'Online Player',
+          presence: { status: 'online', label: 'Online' },
+        },
+        ...Array.from({ length: 12 }, (_, index) => ({
+          userId: `offline-${index}`,
+          displayName: `Offline Player ${index + 1}`,
+          presence: { status: 'offline', label: 'Offline' },
+        })),
+      ]);
+    });
+
+    await expect(page.locator('.friends-availability')).toContainText('1 online');
+    await expect(page.locator('#ags-friends-list .friend-row')).toHaveCount(1);
+    await expect(page.locator('.offline-friends-trigger')).toContainText('12');
+
+    const trigger = page.locator('.offline-friends-trigger');
+    await trigger.click();
+    const overlay = page.locator('#offline-friends-overlay');
+    await expect(overlay).toBeVisible();
+    await expect(page.locator('#offline-friends-list .friend-row')).toHaveCount(12);
+
+    await page.keyboard.press('Escape');
+    await expect(overlay).toBeHidden();
+    await expect(trigger).toBeFocused();
+
+    await trigger.click();
+    await page.getByRole('button', { name: 'View Offline Player 1 profile and stats' }).click();
+    await expect(page.locator('#screen-profile')).toBeVisible();
+    await expect(page.locator('#profile-display-name')).toHaveText('Offline Player 1');
+
+    await page.evaluate(() => {
+      window.showScreen('home');
+      window.agsRenderFriendsListForTesting([
+        {
+          userId: 'offline-only',
+          displayName: 'Sleeping Player',
+          presence: { status: 'offline', label: 'Offline' },
+        },
+      ]);
+    });
+    await expect(page.locator('.friends-availability')).toContainText('0 online');
+    await expect(page.locator('.friends-online-empty')).toContainText('No friends online right now');
+  });
+
   test('random matchmaking shows elapsed waiting time and clears it on cancel', async ({ page }) => {
     await gotoApp(page);
     await page.evaluate(() => {
