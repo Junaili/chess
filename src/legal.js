@@ -157,6 +157,54 @@ export async function fetchAcceptedLegalDocuments() {
   }
 }
 
+export async function fetchLegalAttachment(document) {
+  const location = normalizeDocumentLocation(document?.attachmentLocation)
+  if (!location) {
+    return { ok: false, error: 'This document does not have a valid published attachment.' }
+  }
+
+  try {
+    if (window.Capacitor?.isNativePlatform?.()) {
+      const { CapacitorHttp } = await import('@capacitor/core')
+      const response = await CapacitorHttp.get({
+        url: location,
+        headers: { Accept: 'text/markdown, text/plain;q=0.9, */*;q=0.5' },
+        responseType: 'text',
+      })
+      if (response.status < 200 || response.status >= 300) {
+        return { ok: false, error: 'The document could not be loaded. Check your connection and try again.' }
+      }
+      const text = typeof response.data === 'string' ? response.data : String(response.data || '')
+      if (!text.trim()) return { ok: false, error: 'The published document is empty.' }
+      return { ok: true, text }
+    }
+
+    const response = await fetch(location, {
+      method: 'GET',
+      credentials: 'omit',
+      headers: { Accept: 'text/markdown, text/plain;q=0.9, */*;q=0.5' },
+    })
+    if (!response.ok) {
+      return { ok: false, error: 'The document could not be loaded. Check your connection and try again.' }
+    }
+
+    const contentType = response.headers.get('content-type')?.toLowerCase() || ''
+    if (contentType.includes('application/pdf')) {
+      return { ok: false, reason: 'unsupported', error: 'This document format cannot be displayed in the in-app reader.' }
+    }
+
+    const text = await response.text()
+    if (!text.trim()) return { ok: false, error: 'The published document is empty.' }
+    return { ok: true, text }
+  } catch {
+    return {
+      ok: false,
+      reason: 'unavailable',
+      error: 'The document could not be loaded in the app. Check your connection and try again.',
+    }
+  }
+}
+
 export async function acceptLegalDocuments(documents) {
   const headers = getAuthHeaders()
   if (!headers) {

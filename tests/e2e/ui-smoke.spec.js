@@ -121,6 +121,126 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#chess-board .piece')).toHaveCount(32);
   });
 
+  test('match layout fits the viewport without clipping or page scrolling', async ({ page }) => {
+    await gotoApp(page);
+    await openGuestColorSelect(page);
+    await page.locator('#screen-color-select .color-btn.white-btn').click();
+    await page.locator('#piece-color-options > *').first().click();
+    await page.locator('#screen-difficulty .diff-btn.easy').click();
+
+    const geometry = await page.evaluate(() => {
+      const viewport = { width: window.innerWidth, height: window.innerHeight };
+      const rect = selector => {
+        const box = document.querySelector(selector).getBoundingClientRect();
+        return { top: box.top, right: box.right, bottom: box.bottom, left: box.left };
+      };
+      const screen = document.getElementById('screen-game');
+      return {
+        viewport,
+        opponent: rect('#opponent-player-strip'),
+        board: rect('.board-container'),
+        player: rect('#you-player-strip'),
+        sidebar: rect('.game-sidebar.right'),
+        scrollHeight: screen.scrollHeight,
+        clientHeight: screen.clientHeight,
+      };
+    });
+
+    for (const region of [geometry.opponent, geometry.board, geometry.player, geometry.sidebar]) {
+      expect(region.top).toBeGreaterThanOrEqual(0);
+      expect(region.left).toBeGreaterThanOrEqual(0);
+      expect(region.right).toBeLessThanOrEqual(geometry.viewport.width);
+      expect(region.bottom).toBeLessThanOrEqual(geometry.viewport.height);
+    }
+    expect(geometry.scrollHeight).toBeLessThanOrEqual(geometry.clientHeight);
+    await expect(page.locator('#privacy-center-button')).toBeHidden();
+
+    await page.getByRole('tab', { name: 'More' }).click();
+    await expect(page.locator('#btn-match-privacy')).toBeVisible();
+  });
+
+  test('signed-in dashboard contains long lists without page scrolling', async ({ page }) => {
+    await gotoApp(page);
+    await page.evaluate(() => {
+      const screen = document.getElementById('screen-home');
+      screen.classList.add('signed-in');
+      document.getElementById('ags-account-entry').style.display = 'none';
+      document.getElementById('ags-guest-entry').style.display = 'none';
+      document.getElementById('ags-signedin-info').style.display = '';
+      document.getElementById('ags-member-play-actions').style.display = '';
+      document.getElementById('ags-friends-panel').style.display = '';
+      document.getElementById('home-leaderboard-panel').style.display = '';
+      document.getElementById('ags-friends-list').innerHTML = Array.from(
+        { length: 14 },
+        (_, index) => `<div class="friend-row"><span class="friend-name">Friend ${index + 1}</span></div>`,
+      ).join('');
+      document.getElementById('lb-list').innerHTML = Array.from(
+        { length: 20 },
+        (_, index) => `<div class="lb-row"><span>${index + 1}. Player</span><strong>${20 - index}</strong></div>`,
+      ).join('');
+    });
+
+    const geometry = await page.evaluate(() => {
+      const screen = document.getElementById('screen-home');
+      const bounds = selector => {
+        const rect = document.querySelector(selector).getBoundingClientRect();
+        return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+      };
+      return {
+        viewport: { width: innerWidth, height: innerHeight },
+        screen: { scrollHeight: screen.scrollHeight, clientHeight: screen.clientHeight },
+        home: bounds('.home-container'),
+        friends: bounds('#ags-friends-panel'),
+        leaderboard: bounds('#home-leaderboard-panel'),
+      };
+    });
+
+    expect(geometry.screen.scrollHeight).toBeLessThanOrEqual(geometry.screen.clientHeight);
+    for (const region of [geometry.home, geometry.friends, geometry.leaderboard]) {
+      expect(region.top).toBeGreaterThanOrEqual(0);
+      expect(region.left).toBeGreaterThanOrEqual(0);
+      expect(region.right).toBeLessThanOrEqual(geometry.viewport.width);
+      expect(region.bottom).toBeLessThanOrEqual(geometry.viewport.height);
+    }
+  });
+
+  test('profile sections stay within the viewport and use internal panels', async ({ page }) => {
+    await gotoApp(page);
+    await page.evaluate(() => {
+      window.showScreen('profile');
+      document.getElementById('profile-chess-stats').style.display = '';
+      document.getElementById('profile-account-safety').style.display = '';
+      document.querySelector('[data-profile-tab="stats"]').hidden = false;
+      document.querySelector('[data-profile-tab="account"]').hidden = false;
+      document.getElementById('profile-match-history').innerHTML = Array.from(
+        { length: 20 },
+        (_, index) => `<div class="profile-history-row"><span>Game ${index + 1}</span></div>`,
+      ).join('');
+    });
+
+    for (const tab of ['overview', 'stats', 'history', 'account']) {
+      await page.evaluate(name => window.agsShowProfileTab(name), tab);
+      const geometry = await page.evaluate(name => {
+        const screen = document.getElementById('screen-profile');
+        const container = document.querySelector('.profile-container').getBoundingClientRect();
+        const panel = document.querySelector(`[data-profile-panel="${name}"]`).getBoundingClientRect();
+        return {
+          viewportHeight: innerHeight,
+          screenScrollHeight: screen.scrollHeight,
+          screenClientHeight: screen.clientHeight,
+          container: { top: container.top, bottom: container.bottom },
+          panel: { top: panel.top, bottom: panel.bottom },
+        };
+      }, tab);
+
+      expect(geometry.screenScrollHeight).toBeLessThanOrEqual(geometry.screenClientHeight);
+      expect(geometry.container.top).toBeGreaterThanOrEqual(0);
+      expect(geometry.container.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
+      expect(geometry.panel.top).toBeGreaterThanOrEqual(geometry.container.top);
+      expect(geometry.panel.bottom).toBeLessThanOrEqual(geometry.container.bottom);
+    }
+  });
+
   test('random matchmaking shows elapsed waiting time and clears it on cancel', async ({ page }) => {
     await gotoApp(page);
     await page.evaluate(() => {

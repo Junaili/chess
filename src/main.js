@@ -5,7 +5,8 @@ import { setQueueUIHandler, cancelLoginQueue } from './login-queue.js'
 import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
 import { installSessionKeepAlive, scheduleProactiveRefresh, subscribeAccessTokenRefresh } from './session.js'
-import { fetchPendingLegalDocuments, fetchAcceptedLegalDocuments, acceptLegalDocuments } from './legal.js'
+import { fetchPendingLegalDocuments, fetchAcceptedLegalDocuments, fetchLegalAttachment, acceptLegalDocuments } from './legal.js'
+import { parseLegalMarkdown } from './legal-markdown.mjs'
 import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave, recordEloResult } from './stats.js'
 import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache, fetchMergedAchievements } from './achievements.js'
 import { sendEvent, flushPendingEvents, captureUtm, clearPendingEvents } from './telemetry.js'
@@ -109,6 +110,8 @@ let pendingLegalDocuments = []
 let pendingLegalProfile = null
 let reviewedLegalDocumentIds = new Set()
 let acceptedLegalDocuments = []
+let activeLegalReaderDocument = null
+let legalReaderTrigger = null
 let friendsState = { friends: [], incoming: [], outgoing: [] }
 let friendsRefreshTimer = null
 let unsubscribePresenceUpdates = null
@@ -664,25 +667,10 @@ function renderLegalDocuments(documents) {
     const action = document.createElement('button')
     action.type = 'button'
     action.className = 'btn btn-secondary legal-review-button'
-    action.textContent = doc.attachmentLocation ? 'Open document ↗' : 'Document unavailable'
+    action.textContent = doc.attachmentLocation ? 'Read in app' : 'Document unavailable'
     action.disabled = !doc.attachmentLocation
     if (doc.attachmentLocation) {
-      action.addEventListener('click', async () => {
-        action.disabled = true
-        const opened = await openExternalURL(doc.attachmentLocation)
-        action.disabled = false
-        if (!opened) {
-          setLegalMessage('The document could not be opened. Check your connection and try again.', 'error')
-          return
-        }
-        reviewedLegalDocumentIds.add(doc.localizedPolicyVersionId)
-        action.textContent = 'Reviewed ✓'
-        action.classList.add('reviewed')
-        card.classList.add('reviewed')
-        status.textContent = 'Reviewed'
-        setLegalMessage('')
-        updateLegalAcceptanceState()
-      })
+      action.addEventListener('click', () => openLegalReader(doc, action))
     }
     card.appendChild(action)
 
@@ -696,6 +684,156 @@ function renderLegalDocuments(documents) {
     listEl.appendChild(card)
   }
 }
+
+function renderLegalMarkdown(container, source) {
+  container.replaceChildren()
+  for (const block of parseLegalMarkdown(source)) {
+    let element
+    if (block.type === 'heading') {
+      element = document.createElement(block.level <= 2 ? 'h3' : 'h4')
+      element.textContent = block.text
+    } else if (block.type === 'ordered-list' || block.type === 'unordered-list') {
+      element = document.createElement(block.type === 'ordered-list' ? 'ol' : 'ul')
+      for (const item of block.items) {
+        const listItem = document.createElement('li')
+        listItem.textContent = item
+        element.appendChild(listItem)
+      }
+    } else {
+      element = document.createElement('p')
+      element.textContent = block.text
+    }
+    container.appendChild(element)
+  }
+}
+
+function updateLegalReaderProgress() {
+  const scroller = document.getElementById('legal-reader-scroll')
+  const progress = document.getElementById('legal-reader-progress-bar')
+  const finish = document.getElementById('legal-reader-finish')
+  const guidance = document.getElementById('legal-reader-guidance')
+  if (!scroller || !progress || !finish || !guidance) return
+
+  const scrollable = Math.max(scroller.scrollHeight - scroller.clientHeight, 0)
+  const ratio = scrollable === 0 ? 1 : Math.min(scroller.scrollTop / scrollable, 1)
+  const reachedEnd = ratio >= 0.98
+  progress.style.width = `${Math.round(ratio * 100)}%`
+  finish.disabled = !reachedEnd
+  guidance.textContent = reachedEnd
+    ? 'You reached the end of this document.'
+    : 'Read to the end to finish reviewing.'
+}
+
+async function loadLegalReaderDocument() {
+  const loading = document.getElementById('legal-reader-loading')
+  const content = document.getElementById('legal-reader-content')
+  const error = document.getElementById('legal-reader-error')
+  const errorMessage = document.getElementById('legal-reader-error-message')
+  const finish = document.getElementById('legal-reader-finish')
+  const scroller = document.getElementById('legal-reader-scroll')
+  if (!activeLegalReaderDocument || !loading || !content || !error || !errorMessage || !finish || !scroller) return
+
+  loading.hidden = false
+  content.hidden = true
+  error.hidden = true
+  finish.disabled = true
+  scroller.scrollTop = 0
+
+  const result = await fetchLegalAttachment(activeLegalReaderDocument)
+  loading.hidden = true
+  if (!result.ok) {
+    errorMessage.textContent = result.error
+    error.hidden = false
+    return
+  }
+
+  renderLegalMarkdown(content, result.text)
+  content.hidden = false
+  requestAnimationFrame(updateLegalReaderProgress)
+}
+
+function openLegalReader(documentToReview, trigger = null) {
+  const overlay = document.getElementById('legal-reader-overlay')
+  const title = document.getElementById('legal-reader-title')
+  const meta = document.getElementById('legal-reader-meta')
+  const close = document.getElementById('legal-reader-close')
+  if (!overlay || !title || !meta || !close) return
+
+  activeLegalReaderDocument = documentToReview
+  legalReaderTrigger = trigger || document.activeElement
+  title.textContent = documentToReview.policyName || 'Legal document'
+  meta.textContent = [
+    documentToReview.policyVersionDisplay ? `Version ${documentToReview.policyVersionDisplay}` : '',
+    documentToReview.localeCode?.toUpperCase() || '',
+  ].filter(Boolean).join(' · ')
+  overlay.hidden = false
+  document.body.classList.add('legal-reader-open')
+  close.focus()
+  loadLegalReaderDocument()
+}
+
+function closeLegalReader() {
+  const overlay = document.getElementById('legal-reader-overlay')
+  if (!overlay || overlay.hidden) return
+  overlay.hidden = true
+  document.body.classList.remove('legal-reader-open')
+  activeLegalReaderDocument = null
+  const trigger = legalReaderTrigger
+  legalReaderTrigger = null
+  trigger?.focus?.()
+}
+
+function finishLegalReview() {
+  const documentId = activeLegalReaderDocument?.localizedPolicyVersionId
+  if (!documentId) return
+  reviewedLegalDocumentIds.add(documentId)
+  const card = document.querySelector(`[data-legal-document-id="${CSS.escape(documentId)}"]`)
+  const action = card?.querySelector('.legal-review-button')
+  const status = card?.querySelector('.legal-doc-status')
+  if (action) {
+    action.textContent = 'Reviewed'
+    action.classList.add('reviewed')
+  }
+  card?.classList.add('reviewed')
+  if (status) status.textContent = 'Reviewed'
+  setLegalMessage('')
+  updateLegalAcceptanceState()
+  closeLegalReader()
+}
+
+function initializeLegalReader() {
+  const overlay = document.getElementById('legal-reader-overlay')
+  const scroller = document.getElementById('legal-reader-scroll')
+  document.getElementById('legal-reader-close')?.addEventListener('click', closeLegalReader)
+  document.getElementById('legal-reader-finish')?.addEventListener('click', finishLegalReview)
+  document.getElementById('legal-reader-retry')?.addEventListener('click', loadLegalReaderDocument)
+  scroller?.addEventListener('scroll', updateLegalReaderProgress, { passive: true })
+  overlay?.addEventListener('click', event => {
+    if (event.target === overlay) closeLegalReader()
+  })
+  document.addEventListener('keydown', event => {
+    if (overlay?.hidden !== false) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeLegalReader()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const focusable = [...overlay.querySelectorAll('button:not(:disabled), [tabindex="0"]')]
+    if (!focusable.length) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  })
+}
+
+window.agsOpenLegalDocument = openLegalReader
 
 function updateLegalAcceptanceState() {
   const checkbox = document.getElementById('ags-legal-confirm')
@@ -1767,6 +1905,26 @@ function bindLeaderboardProfileButtons(listEl) {
   })
 }
 
+function showProfileTab(name = 'overview') {
+  document.querySelectorAll('[data-profile-tab]').forEach(tab => {
+    const selected = tab.dataset.profileTab === name
+    tab.classList.toggle('active', selected)
+    tab.setAttribute('aria-selected', String(selected))
+    tab.tabIndex = selected ? 0 : -1
+  })
+  document.querySelectorAll('[data-profile-panel]').forEach(panel => {
+    panel.classList.toggle('active', panel.dataset.profilePanel === name)
+    if (panel.dataset.profilePanel === name) panel.scrollTop = 0
+  })
+}
+
+function setProfileTabVisible(name, visible) {
+  const tab = document.querySelector(`[data-profile-tab="${name}"]`)
+  if (tab) tab.hidden = !visible
+}
+
+window.agsShowProfileTab = showProfileTab
+
 async function openPublicProfile(userId, displayName = '') {
   const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
   activeProfileUser = { userId, displayName }
@@ -1789,6 +1947,9 @@ async function openPublicProfile(userId, displayName = '') {
   const editForm = document.getElementById('profile-name-edit-form')
 
   if (typeof window.showScreen === 'function') window.showScreen('profile')
+  showProfileTab('overview')
+  setProfileTabVisible('stats', !!currentUserId)
+  setProfileTabVisible('account', false)
   if (nameEl) nameEl.textContent = displayName || userId.slice(0, 8)
   if (editBtn) editBtn.style.display = 'none'
   if (editForm) editForm.style.display = 'none'
@@ -1855,6 +2016,7 @@ async function openPublicProfile(userId, displayName = '') {
     if (statusEl) statusEl.textContent = 'This is your profile.'
     if (editBtn) editBtn.style.display = ''
     if (accountSafetyCard) accountSafetyCard.style.display = ''
+    setProfileTabVisible('account', true)
     renderBlockedPlayers()
     return
   }
@@ -3086,4 +3248,5 @@ document.addEventListener('visibilitychange', () => {
   }
 })
 
+initializeLegalReader()
 initAuth()

@@ -228,6 +228,14 @@
           <button class="btn btn-secondary" onclick="window.agsOpenRegister && window.agsOpenRegister()">Create Free Account</button>
         </div>
       </div>
+      <div class="profile-tabs" role="tablist" aria-label="Profile sections">
+        <button type="button" class="profile-tab active" data-profile-tab="overview" onclick="window.agsShowProfileTab && window.agsShowProfileTab('overview')" role="tab">Overview</button>
+        <button type="button" class="profile-tab" data-profile-tab="stats" onclick="window.agsShowProfileTab && window.agsShowProfileTab('stats')" role="tab">Chess Stats</button>
+        <button type="button" class="profile-tab" data-profile-tab="history" onclick="window.agsShowProfileTab && window.agsShowProfileTab('history')" role="tab">History</button>
+        <button type="button" class="profile-tab" data-profile-tab="account" onclick="window.agsShowProfileTab && window.agsShowProfileTab('account')" role="tab">Account</button>
+      </div>
+      <div class="profile-panels">
+      <div class="profile-panel active" data-profile-panel="overview">
       <div id="profile-stats-grid" class="profile-stats-grid">
         <div class="profile-stat">
           <span>Wins</span>
@@ -246,6 +254,12 @@
           <strong id="profile-rating">—</strong>
         </div>
       </div>
+      <div id="profile-friend-card" class="profile-friend-card">
+        <p id="profile-friend-status" class="auth-message"></p>
+        <button class="btn btn-primary" id="profile-add-friend-btn" onclick="window.agsProfileAddFriend && window.agsProfileAddFriend()">Add Friend</button>
+      </div>
+      </div>
+      <div class="profile-panel" data-profile-panel="stats">
       <section id="profile-chess-stats" class="profile-history-card" style="display:none">
         <div class="profile-history-head">
           <h3>Chess Stats</h3>
@@ -305,10 +319,8 @@
           </div>
         </div>
       </section>
-      <div id="profile-friend-card" class="profile-friend-card">
-        <p id="profile-friend-status" class="auth-message"></p>
-        <button class="btn btn-primary" id="profile-add-friend-btn" onclick="window.agsProfileAddFriend && window.agsProfileAddFriend()">Add Friend</button>
       </div>
+      <div class="profile-panel" data-profile-panel="account">
       <section id="profile-account-safety" class="profile-account-safety" style="display:none">
         <div class="profile-history-head">
           <h3>Account &amp; Safety</h3>
@@ -325,6 +337,8 @@
           <button type="button" class="btn btn-danger" onclick="window.agsOpenDeleteAccount && window.agsOpenDeleteAccount()">Delete Account</button>
         </div>
       </section>
+      </div>
+      <div class="profile-panel" data-profile-panel="history">
       <section class="profile-history-card">
         <div class="profile-history-head">
           <h3>Match History</h3>
@@ -337,6 +351,8 @@
           </div>
         </div>
       </section>
+      </div>
+      </div>
     </div>
   </div>
 
@@ -524,6 +540,34 @@
     </div>
   </div>
 
+  <div id="legal-reader-overlay" class="legal-reader-overlay" hidden>
+    <section class="legal-reader" role="dialog" aria-modal="true" aria-labelledby="legal-reader-title"
+      aria-describedby="legal-reader-meta">
+      <header class="legal-reader-header">
+        <div>
+          <p class="auth-eyebrow">Required document</p>
+          <h2 id="legal-reader-title">Legal document</h2>
+          <p id="legal-reader-meta" class="legal-reader-meta"></p>
+        </div>
+        <button type="button" id="legal-reader-close" class="legal-reader-close" aria-label="Close document">Close</button>
+      </header>
+      <div class="legal-reader-progress" aria-hidden="true"><span id="legal-reader-progress-bar"></span></div>
+      <div id="legal-reader-scroll" class="legal-reader-scroll" tabindex="0">
+        <div id="legal-reader-loading" class="legal-reader-state">Loading document...</div>
+        <article id="legal-reader-content" class="legal-reader-content" hidden></article>
+        <div id="legal-reader-error" class="legal-reader-state error" hidden>
+          <strong>Document unavailable</strong>
+          <p id="legal-reader-error-message"></p>
+          <button type="button" id="legal-reader-retry" class="btn btn-secondary">Try again</button>
+        </div>
+      </div>
+      <footer class="legal-reader-footer">
+        <p id="legal-reader-guidance">Read to the end to finish reviewing.</p>
+        <button type="button" id="legal-reader-finish" class="btn btn-primary" disabled>Finished reviewing</button>
+      </footer>
+    </section>
+  </div>
+
   <!-- ── Color Select ────────────────────────────────────────────────────── -->
   <div id="screen-color-select" class="screen">
     <div class="color-select-container">
@@ -644,6 +688,7 @@
           <button class="btn btn-hint" id="btn-hint" onclick="showHint()">Get Hint</button>
           <button class="btn btn-video-chat" id="btn-video-chat" onclick="startVideoChat()" style="display:none">Video Chat</button>
           <button type="button" class="btn btn-secondary" id="btn-match-safety" onclick="openMatchSafety()" style="display:none">Safety</button>
+          <button type="button" class="btn btn-secondary" id="btn-match-privacy" onclick="window.agsOpenPrivacyChoices && window.agsOpenPrivacyChoices()">Privacy &amp; Support</button>
           <button class="btn btn-secondary" id="btn-new-game" onclick="confirmNewGame()" style="display:none">New Game</button>
           <button class="btn btn-danger" id="btn-resign" onclick="resignGame()" style="display:none">Resign</button>
           <button class="btn btn-home" onclick="confirmGoHome()">Leave game</button>
