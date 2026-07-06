@@ -163,6 +163,10 @@ let matchHistoryRecorded = false;
 let gameEndedByResignation = false;
 let gameOverCountdownTimer = null;
 let gameOverCountdownRemaining = 0;
+let boardFlipped = false;
+let matchClockTimer = null;
+let matchClockLastTick = 0;
+let matchClockElapsed = { white: 0, black: 0 };
 let homeIdleTimer = null;
 let homeIdleShown = false;
 
@@ -368,6 +372,8 @@ function startGame() {
   matchStartedAt = new Date();
   matchHistoryRecorded = false;
   gameEndedByResignation = false;
+  boardFlipped = playerColor === 'black';
+  resetMatchClocks();
   game = new ChessGame();
   selectedSquare = null;
   validMoves = [];
@@ -380,8 +386,8 @@ function startGame() {
   document.getElementById('move-list').innerHTML = '';
   document.getElementById('captured-by-white').innerHTML = '';
   document.getElementById('captured-by-black').innerHTML = '';
-  document.getElementById('black-score').textContent = '0';
-  document.getElementById('white-score').textContent = '0';
+  document.getElementById('black-score').textContent = 'Even';
+  document.getElementById('white-score').textContent = 'Even';
   resetChatState();
 
   const isOnline = gameMode === 'online';
@@ -414,12 +420,18 @@ function startGame() {
   if (ngBtn) ngBtn.style.display = showVsComputerControls ? '' : 'none';
   if (rsBtn) rsBtn.style.display = showVsComputerControls ? '' : 'none';
   document.getElementById('online-chat').style.display = isOnline ? 'flex' : 'none';
+  document.getElementById('match-chat-unavailable').style.display = isOnline ? 'none' : '';
+  document.getElementById('match-chat-tab').style.display = isOnline ? '' : 'none';
+  document.getElementById('btn-match-safety').style.display = isOnline ? '' : 'none';
+  showMatchTab('moves');
+  arrangePlayerStrips();
   updateChatAvailability();
   if (isOnline) activateChatForCurrentMatch();
 
   showScreen('game');
   renderBoard();
   updateStatus();
+  startMatchClocks();
 
   if (gameMode === 'computer' && playerColor === 'black') {
     scheduleAIMove();
@@ -437,7 +449,7 @@ function startNewGame() {
 function initBoard() {
   const boardEl = document.getElementById('chess-board');
   boardEl.innerHTML = '';
-  const flipped = playerColor === 'black';
+  const flipped = boardFlipped;
   boardEl.dataset.flipped = flipped;
 
   for (let ri = 0; ri < 8; ri++) {
@@ -800,6 +812,71 @@ function showHint() {
 
 // ─── UI updates ───────────────────────────────────────────────────────────────
 
+function showMatchTab(name) {
+  document.querySelectorAll('[data-match-tab]').forEach(tab => {
+    const selected = tab.dataset.matchTab === name;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+  });
+  document.querySelectorAll('[data-match-panel]').forEach(panel => {
+    panel.classList.toggle('active', panel.dataset.matchPanel === name);
+  });
+}
+
+function flipBoard() {
+  boardFlipped = !boardFlipped;
+  renderBoard();
+}
+
+function arrangePlayerStrips() {
+  const center = document.querySelector('#screen-game .game-center');
+  const board = center?.querySelector('.board-container');
+  const white = document.getElementById('white-player-card')?.closest('.match-player-strip');
+  const black = document.getElementById('black-player-card')?.closest('.match-player-strip');
+  if (!center || !board || !white || !black) return;
+  const opponent = playerColor === 'white' ? black : white;
+  const you = playerColor === 'white' ? white : black;
+  opponent.className = 'match-player-strip opponent-strip';
+  you.className = 'match-player-strip you-strip';
+  center.insertBefore(opponent, board);
+  board.insertAdjacentElement('afterend', you);
+}
+
+function formatMatchClock(milliseconds) {
+  const seconds = Math.floor(milliseconds / 1000);
+  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function renderMatchClocks() {
+  for (const color of ['white', 'black']) {
+    const clock = document.getElementById(`${color}-clock`);
+    if (!clock) continue;
+    clock.textContent = formatMatchClock(matchClockElapsed[color]);
+    clock.classList.toggle('active', isGameActiveStatus(game?.status) && game.currentTurn === color);
+  }
+}
+
+function resetMatchClocks() {
+  clearInterval(matchClockTimer);
+  matchClockTimer = null;
+  matchClockElapsed = { white: 0, black: 0 };
+  matchClockLastTick = Date.now();
+  renderMatchClocks();
+}
+
+function startMatchClocks() {
+  clearInterval(matchClockTimer);
+  matchClockLastTick = Date.now();
+  matchClockTimer = setInterval(() => {
+    const now = Date.now();
+    if (isGameActiveStatus(game?.status)) {
+      matchClockElapsed[game.currentTurn] += now - matchClockLastTick;
+      renderMatchClocks();
+    }
+    matchClockLastTick = now;
+  }, 1000);
+}
+
 function getMoveActor(moveColor, isLocalMove) {
   if (gameMode === 'computer') return isLocalMove ? 'You' : 'Computer';
   if (gameMode === 'online') return isLocalMove ? 'You' : 'Opponent';
@@ -866,8 +943,9 @@ function updateCapturedPieces() {
   }
   document.getElementById('captured-by-white').innerHTML = wHtml;
   document.getElementById('captured-by-black').innerHTML = bHtml;
-  document.getElementById('white-score').textContent = wScore;
-  document.getElementById('black-score').textContent = bScore;
+  const balance = wScore - bScore;
+  document.getElementById('white-score').textContent = balance > 0 ? `+${balance}` : 'Even';
+  document.getElementById('black-score').textContent = balance < 0 ? `+${Math.abs(balance)}` : 'Even';
 }
 
 function addMoveToList(notation, color) {
@@ -926,6 +1004,9 @@ function showPromotionModal(color) {
 // ─── Game over modal ──────────────────────────────────────────────────────────
 
 function showGameOver() {
+  clearInterval(matchClockTimer);
+  matchClockTimer = null;
+  renderMatchClocks();
   recordMatchHistoryOnce();
   window.agsClearLiveMatch?.()
 
@@ -1173,6 +1254,8 @@ function endOnlineAndGoHome() {
 // ─── PeerJS — Online Multiplayer ──────────────────────────────────────────────
 
 function destroyPeer() {
+  clearInterval(matchClockTimer);
+  matchClockTimer = null;
   endVideoChat();
   stopHeartbeat();
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
