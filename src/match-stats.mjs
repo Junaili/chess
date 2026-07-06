@@ -19,18 +19,6 @@ function isCastleMove(move, color) {
   return move.fr === homeRow && move.fc === 4 && move.toR === homeRow && Math.abs(move.toC - 4) === 2
 }
 
-// The cold-start matchmaking bot (Gambit Gus) connects through the same
-// PeerJS flow as a real player, so mode is 'online' for bot games exactly
-// like a human match — mode alone can't tell them apart. The bot's peer
-// messages don't carry an explicit isBot flag, but they always send its
-// hardcoded display name (peerjs-bot-spike/play.mjs), which is the only
-// signal the web client actually has available for this.
-const BOT_OPPONENT_NAMES = new Set(['Gambit Gus'])
-
-function isBotMatch(match) {
-  return match.mode === 'computer' || BOT_OPPONENT_NAMES.has(match.opponentName)
-}
-
 const RATING_K_FACTOR = 32
 
 // Standard Elo update, K=32 (casual-game constant — no separate provisional
@@ -97,13 +85,15 @@ export function computeMatchStats(matches) {
       endReasonCounts.unknown++
     }
 
-    // vs bot / vs human
-    if (isBotMatch(match)) tally(byOpponentType.vsBot, match.result)
+    // vs bot / vs human — matchmaking-found opponents (including the
+    // cold-start bot) count as human for now: mode 'computer' is only the
+    // local, offline AI, everything found via matchmaking is treated as a
+    // real opponent.
+    if (match.mode === 'computer') tally(byOpponentType.vsBot, match.result)
     else if (match.mode === 'online') tally(byOpponentType.vsHuman, match.result)
 
-    // Head-to-head (online matches with a real human opponent only — a
-    // matchmaking-found bot game isn't a "friend rivalry").
-    if (match.mode === 'online' && match.opponentUserId && !isBotMatch(match)) {
+    // Head-to-head (online matches with a real opponent id only)
+    if (match.mode === 'online' && match.opponentUserId) {
       let entry = headToHeadMap.get(match.opponentUserId)
       if (!entry) {
         entry = { opponentUserId: match.opponentUserId, name: match.opponentName || 'Opponent', ...emptyRecord() }
