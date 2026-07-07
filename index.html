@@ -185,6 +185,10 @@
         </div>
         <div id="home-leaderboard-panel" class="leaderboard-panel">
           <h3 class="lb-heading">Leaderboard</h3>
+          <div class="lb-view-toggle" role="tablist" aria-label="Leaderboard time range">
+            <button type="button" class="lb-view-btn active" data-lb-view="rating" role="tab" aria-selected="true" onclick="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('rating')">All Time</button>
+            <button type="button" class="lb-view-btn" data-lb-view="weekly" role="tab" aria-selected="false" onclick="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('weekly')">This Week</button>
+          </div>
           <div class="lb-list" id="lb-list"></div>
           <p class="lb-signin-cta" id="lb-signin-cta" role="button" tabindex="0" onclick="window.agsLogin && window.agsLogin()" onkeydown="if(event.key==='Enter'||event.key===' ')window.agsLogin&&window.agsLogin()">Sign in to appear on the leaderboard →</p>
           <button class="btn-lb-reset" onclick="resetLeaderboard()">Reset</button>

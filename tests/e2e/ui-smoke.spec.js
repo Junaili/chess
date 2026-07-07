@@ -331,4 +331,31 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#screen-home')).toBeVisible();
     await expect(timer).toBeHidden();
   });
+
+  test('leaderboard view toggle switches the active tab (All Time / This Week)', async ({ page }) => {
+    await gotoApp(page);
+    await page.evaluate(() => {
+      document.getElementById('screen-home').classList.add('signed-in');
+      document.getElementById('home-leaderboard-panel').style.display = '';
+    });
+
+    const allTimeTab = page.locator('[data-lb-view="rating"]');
+    const weeklyTab = page.locator('[data-lb-view="weekly"]');
+
+    // Defaults to All Time.
+    await expect(allTimeTab).toHaveClass(/active/);
+    await expect(allTimeTab).toHaveAttribute('aria-selected', 'true');
+    await expect(weeklyTab).not.toHaveClass(/active/);
+    await expect(weeklyTab).toHaveAttribute('aria-selected', 'false');
+
+    await weeklyTab.click();
+    await expect(weeklyTab).toHaveClass(/active/);
+    await expect(weeklyTab).toHaveAttribute('aria-selected', 'true');
+    await expect(allTimeTab).not.toHaveClass(/active/);
+    await expect(allTimeTab).toHaveAttribute('aria-selected', 'false');
+
+    await allTimeTab.click();
+    await expect(allTimeTab).toHaveClass(/active/);
+    await expect(weeklyTab).not.toHaveClass(/active/);
+  });
 });

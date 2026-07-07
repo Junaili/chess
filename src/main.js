@@ -12,7 +12,7 @@ import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnl
 import { sendEvent, flushPendingEvents, captureUtm, clearPendingEvents } from './telemetry.js'
 import { readPrivacyPreferences, writePrivacyPreferences } from './privacy-preferences.mjs'
 import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching, fetchLiveMatch, resolveMatchForfeit } from './spectator.js'
-import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName } from './leaderboard.js'
+import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName, LEADERBOARD_VIEWS } from './leaderboard.js'
 import { computeMatchStats } from './match-stats.mjs'
 import { deriveMatchRoles, computeDeadline, isPastDeadline, isResumable, pickAuthoritativeMoves } from './match-resume.mjs'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
@@ -105,6 +105,7 @@ let currentUserId = null
 let currentUserWins = 0
 let currentStreak = 0
 let currentUserRating = 1200
+let currentLeaderboardView = 'rating'
 let pendingOpponentRating = null  // received from the opponent over the peer connection for the in-progress online match
 let seenIncomingRequestIds = null  // null until first friends load — avoids notifying for pre-existing requests
 let pendingLegalDocuments = []
@@ -1966,14 +1967,28 @@ async function initAuth() {
 async function refreshLeaderboard() {
   const needsRank = currentUserId && currentUserWins > 0
   const [rankings, userRankData] = await Promise.all([
-    fetchTopRankings(10),
-    needsRank ? fetchUserRank(currentUserId) : Promise.resolve(null),
+    fetchTopRankings(currentLeaderboardView, 10),
+    needsRank ? fetchUserRank(currentUserId, currentLeaderboardView) : Promise.resolve(null),
   ])
   if (rankings === null) return  // hard failure — keep local leaderboard visible
   try { await enrichDisplayNames(rankings) } catch (e) { console.warn('[lb] enrichDisplayNames:', e) }
   const nameMap = resolveDisplayNames(rankings)
   renderAGSLeaderboard(rankings, nameMap, userRankData)
 }
+
+function switchLeaderboardView(view) {
+  if (!LEADERBOARD_VIEWS[view] || view === currentLeaderboardView) return
+  currentLeaderboardView = view
+  document.querySelectorAll('[data-lb-view]').forEach(btn => {
+    const selected = btn.dataset.lbView === view
+    btn.classList.toggle('active', selected)
+    btn.setAttribute('aria-selected', String(selected))
+  })
+  const listEl = document.getElementById('lb-list')
+  if (listEl) listEl.innerHTML = '<p class="lb-empty">Loading…</p>'
+  refreshLeaderboard()
+}
+window.agsSwitchLeaderboardView = switchLeaderboardView
 
 function renderAGSLeaderboard(rankings, nameMap, userRankData) {
   const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))

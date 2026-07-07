@@ -3,12 +3,19 @@ import { UsersV4Api } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
 import { moderateIncomingDisplayName } from './content-moderation.mjs'
 
-// Ranks by chess-rating (Elo-style skill), not raw win count — ten wins
-// against weak opponents isn't the same as ten wins against strong ones, and
-// a rating captures that where a win counter can't. The old chess-wins-lb
-// board is left in place in AGS (dormant, not deleted) rather than removed,
-// in case its historical win-count data is useful later.
-const LEADERBOARD_CODE = 'chess-rating-lb'
+// Two views, both backed by real AGS leaderboard configs:
+// - "rating": chess-rating-lb, all-time — Elo-style skill, ten wins against
+//   weak opponents isn't the same as ten wins against strong ones, and a
+//   rating captures that where a raw win counter can't.
+// - "weekly": chess-wins-lb (revived from dormant — it used to be the
+//   all-time win-count board before rating replaced it), now cycle-scoped to
+//   the "chessweekly" stat cycle (resets every Monday 00:00 UTC) — gives new
+//   players a fresh, winnable target instead of only ever competing against
+//   whoever has the most cumulative rating from months of play.
+export const LEADERBOARD_VIEWS = {
+  rating: { code: 'chess-rating-lb', kind: 'alltime' },
+  weekly: { code: 'chess-wins-lb', kind: 'cycle', cycleId: 'chessweekly' },
+}
 const NAME_CACHE_KEY = 'ags-name-cache'
 
 export function cacheDisplayName(userId, displayName) {
@@ -31,12 +38,16 @@ function getCachedNameAnyAge(cache, userId) {
   return entry.name
 }
 
-export async function fetchTopRankings(limit = 10) {
+export async function fetchTopRankings(view = 'rating', limit = 10) {
+  const config = LEADERBOARD_VIEWS[view] || LEADERBOARD_VIEWS.rating
   try {
-    const res = await LeaderboardDataV3Api(sdk).getAlltime_ByLeaderboardCode_v3(
-      LEADERBOARD_CODE,
-      { limit, offset: 0 }
-    )
+    const res = config.kind === 'cycle'
+      ? await LeaderboardDataV3Api(sdk).getCycle_ByLeaderboardCode_ByCycleId_v3(
+          config.code, config.cycleId, { limit, offset: 0 },
+        )
+      : await LeaderboardDataV3Api(sdk).getAlltime_ByLeaderboardCode_v3(
+          config.code, { limit, offset: 0 },
+        )
     return res.data?.data || []
   } catch (e) {
     if (e?.response?.status === 404) return []  // empty leaderboard — not an error
@@ -45,12 +56,16 @@ export async function fetchTopRankings(limit = 10) {
   }
 }
 
-export async function fetchUserRank(userId) {
+export async function fetchUserRank(userId, view = 'rating') {
+  const config = LEADERBOARD_VIEWS[view] || LEADERBOARD_VIEWS.rating
   try {
     const res = await LeaderboardDataV3Api(sdk).getUser_ByLeaderboardCode_ByUserId_v3(
-      LEADERBOARD_CODE,
-      userId
+      config.code,
+      userId,
     )
+    if (config.kind === 'cycle') {
+      return res.data?.cycles?.find(c => c.cycleId === config.cycleId) || null
+    }
     return res.data?.allTime || null
   } catch (e) {
     if (e?.response?.status === 404) return null  // user not ranked yet — not an error
