@@ -28,6 +28,97 @@ export function computeEloUpdate(myRating, opponentRating, score) {
   return Math.round(myRating + RATING_K_FACTOR * (score - expected))
 }
 
+// ─── Coaching summary (pure aggregation) ────────────────────────────────────
+// The per-move grading itself lives in src/main.js (analyzeReplayMove — it
+// needs the ChessGame/ChessAI globals, which are classic non-module scripts
+// and can't be imported here). These functions only count and label the
+// grades it produces, in language a non-chess-parent can act on.
+
+// Simple thirds by ply index — deliberately engine-free. Good enough to tell
+// a parent "the mistakes cluster early" vs "endgames are the struggle".
+export function bucketMoveIndexByPhase(moveIndex, totalMoves) {
+  if (totalMoves <= 0) return 'opening'
+  const third = totalMoves / 3
+  if (moveIndex < third) return 'opening'
+  if (moveIndex < third * 2) return 'middlegame'
+  return 'endgame'
+}
+
+const PHASE_ORDER = ['opening', 'middlegame', 'endgame']
+
+// grades: [{ moveIndex, mover: 'white'|'black', grade }] for EVERY ply of one
+// game; subjectColor picks out whose play is being coached. Grade strings are
+// analyzeReplayMove's: 'Strong move' | 'Playable' | 'Better move available' |
+// 'Forced'.
+export function summarizeCoachingGrades(grades, totalMoves, subjectColor) {
+  const own = (grades || []).filter(g => g && g.mover === subjectColor)
+  const summary = {
+    movesGraded: own.length,
+    strongCount: 0,
+    playableCount: 0,
+    blunderCount: 0,
+    blundersByPhase: { opening: 0, middlegame: 0, endgame: 0 },
+    weakestPhase: null,
+    headline: '',
+  }
+  for (const g of own) {
+    if (g.grade === 'Strong move') summary.strongCount++
+    else if (g.grade === 'Playable') summary.playableCount++
+    else if (g.grade === 'Better move available') {
+      summary.blunderCount++
+      summary.blundersByPhase[bucketMoveIndexByPhase(g.moveIndex, totalMoves)]++
+    }
+  }
+  if (summary.blunderCount > 0) {
+    summary.weakestPhase = PHASE_ORDER.reduce((worst, phase) =>
+      summary.blundersByPhase[phase] > summary.blundersByPhase[worst] ? phase : worst,
+    PHASE_ORDER[0])
+  }
+  const missed = summary.blunderCount
+  summary.headline = missed === 0
+    ? (own.length ? 'No significant mistakes — a solid game.' : 'No moves to review in this game.')
+    : `${missed} move${missed === 1 ? '' : 's'} gave away real advantage${summary.weakestPhase ? `, mostly in the ${summary.weakestPhase}` : ''}.`
+  return summary
+}
+
+// Rolls per-game summaries (most recent first) into one trend a parent can
+// coach from.
+export function combineCoachingSummaries(perGameSummaries) {
+  const games = (perGameSummaries || []).filter(Boolean)
+  const combined = {
+    gamesAnalyzed: games.length,
+    movesGraded: 0,
+    strongCount: 0,
+    playableCount: 0,
+    blunderCount: 0,
+    blundersByPhase: { opening: 0, middlegame: 0, endgame: 0 },
+    weakestPhase: null,
+    strongRate: null,
+    headline: '',
+  }
+  for (const game of games) {
+    combined.movesGraded += game.movesGraded
+    combined.strongCount += game.strongCount
+    combined.playableCount += game.playableCount
+    combined.blunderCount += game.blunderCount
+    for (const phase of PHASE_ORDER) combined.blundersByPhase[phase] += game.blundersByPhase[phase]
+  }
+  if (combined.blunderCount > 0) {
+    combined.weakestPhase = PHASE_ORDER.reduce((worst, phase) =>
+      combined.blundersByPhase[phase] > combined.blundersByPhase[worst] ? phase : worst,
+    PHASE_ORDER[0])
+  }
+  if (combined.movesGraded > 0) {
+    combined.strongRate = combined.strongCount / combined.movesGraded
+  }
+  combined.headline = !games.length
+    ? 'No recent games to analyze yet.'
+    : combined.blunderCount === 0
+      ? `No significant mistakes across the last ${games.length} game${games.length === 1 ? '' : 's'} — great consistency.`
+      : `${combined.blunderCount} missed move${combined.blunderCount === 1 ? '' : 's'} across the last ${games.length} game${games.length === 1 ? '' : 's'}${combined.weakestPhase ? ` — the ${combined.weakestPhase} is the best place to focus practice` : ''}.`
+  return combined
+}
+
 function emptyRecord() {
   return { wins: 0, losses: 0, draws: 0, games: 0 }
 }

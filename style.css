@@ -798,6 +798,56 @@ input[type="checkbox"] {
   color: var(--text-soft);
 }
 
+.family-role-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  border: 1px solid rgba(240, 195, 122, 0.35);
+  color: #fff1d2;
+  background: rgba(240, 195, 122, 0.14);
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.family-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+}
+
+.family-empty p {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.family-invite-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.family-invite-picker .friends-empty {
+  color: var(--text-soft);
+  font-size: 0.8rem;
+}
+
+.coaching-headline {
+  color: var(--text-dim);
+  font-size: 0.92rem;
+  line-height: 1.5;
+  margin: 6px 0 10px;
+}
+
 .friend-id {
   width: min(230px, 48vw);
   margin-top: 2px;

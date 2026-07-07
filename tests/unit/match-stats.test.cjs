@@ -191,3 +191,70 @@ test('computeMatchStats: empty match list returns zeroed stats without throwing'
   assert.equal(stats.nemesis, null)
   assert.equal(stats.favoriteOpening, null)
 })
+
+test('bucketMoveIndexByPhase: splits plies into thirds', async () => {
+  const { bucketMoveIndexByPhase } = await modulePromise
+  assert.equal(bucketMoveIndexByPhase(0, 30), 'opening')
+  assert.equal(bucketMoveIndexByPhase(9, 30), 'opening')
+  assert.equal(bucketMoveIndexByPhase(10, 30), 'middlegame')
+  assert.equal(bucketMoveIndexByPhase(19, 30), 'middlegame')
+  assert.equal(bucketMoveIndexByPhase(20, 30), 'endgame')
+  assert.equal(bucketMoveIndexByPhase(29, 30), 'endgame')
+  assert.equal(bucketMoveIndexByPhase(0, 0), 'opening') // degenerate game
+})
+
+test('summarizeCoachingGrades: counts only the subject color and finds the weakest phase', async () => {
+  const { summarizeCoachingGrades } = await modulePromise
+  const grades = [
+    { moveIndex: 0, mover: 'white', grade: 'Strong move' },
+    { moveIndex: 1, mover: 'black', grade: 'Better move available' }, // opponent — ignored
+    { moveIndex: 2, mover: 'white', grade: 'Better move available' }, // opening blunder
+    { moveIndex: 3, mover: 'black', grade: 'Playable' },
+    { moveIndex: 12, mover: 'white', grade: 'Better move available' }, // middlegame blunder
+    { moveIndex: 14, mover: 'white', grade: 'Better move available' }, // middlegame blunder
+    { moveIndex: 28, mover: 'white', grade: 'Playable' },
+  ]
+  const summary = summarizeCoachingGrades(grades, 30, 'white')
+  assert.equal(summary.movesGraded, 5)
+  assert.equal(summary.strongCount, 1)
+  assert.equal(summary.playableCount, 1)
+  assert.equal(summary.blunderCount, 3)
+  assert.equal(summary.weakestPhase, 'middlegame')
+  assert.match(summary.headline, /3 moves gave away real advantage/)
+  assert.match(summary.headline, /middlegame/)
+})
+
+test('summarizeCoachingGrades: clean game produces an encouraging headline', async () => {
+  const { summarizeCoachingGrades } = await modulePromise
+  const summary = summarizeCoachingGrades(
+    [{ moveIndex: 0, mover: 'black', grade: 'Strong move' }], 2, 'black')
+  assert.equal(summary.blunderCount, 0)
+  assert.equal(summary.weakestPhase, null)
+  assert.match(summary.headline, /solid game/i)
+})
+
+test('combineCoachingSummaries: rolls up games, computes strong rate and focus phase', async () => {
+  const { summarizeCoachingGrades, combineCoachingSummaries } = await modulePromise
+  const g1 = summarizeCoachingGrades([
+    { moveIndex: 0, mover: 'white', grade: 'Strong move' },
+    { moveIndex: 2, mover: 'white', grade: 'Better move available' },
+  ], 6, 'white')
+  const g2 = summarizeCoachingGrades([
+    { moveIndex: 0, mover: 'white', grade: 'Better move available' },
+    { moveIndex: 2, mover: 'white', grade: 'Strong move' },
+  ], 6, 'white')
+  const combined = combineCoachingSummaries([g1, g2])
+  assert.equal(combined.gamesAnalyzed, 2)
+  assert.equal(combined.movesGraded, 4)
+  assert.equal(combined.blunderCount, 2)
+  assert.equal(combined.strongRate, 0.5)
+  assert.equal(combined.weakestPhase, 'opening')
+  assert.match(combined.headline, /opening is the best place to focus practice/)
+})
+
+test('combineCoachingSummaries: empty input yields a calm empty-state headline', async () => {
+  const { combineCoachingSummaries } = await modulePromise
+  const combined = combineCoachingSummaries([])
+  assert.equal(combined.gamesAnalyzed, 0)
+  assert.match(combined.headline, /no recent games/i)
+})

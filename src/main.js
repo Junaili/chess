@@ -13,10 +13,11 @@ import { sendEvent, flushPendingEvents, captureUtm, clearPendingEvents } from '.
 import { readPrivacyPreferences, writePrivacyPreferences } from './privacy-preferences.mjs'
 import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching, fetchLiveMatch, resolveMatchForfeit } from './spectator.js'
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName, LEADERBOARD_VIEWS } from './leaderboard.js'
-import { computeMatchStats } from './match-stats.mjs'
+import { computeMatchStats, summarizeCoachingGrades, combineCoachingSummaries } from './match-stats.mjs'
 import { deriveMatchRoles, computeDeadline, isPastDeadline, isResumable, pickAuthoritativeMoves } from './match-resume.mjs'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
+import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite, rejectFamilyInvite, removeFamilyMember, leaveFamily } from './family.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
 import {
@@ -132,9 +133,12 @@ const STATIC_ACTIONS = new Set([
   'agsConfirmDeleteAccount',
   'agsContinueAsGuestFromInvite',
   'agsCopyInviteLink',
+  'agsCreateFamily',
   'agsDeclineLegal',
   'agsDiscardActiveMatch',
+  'agsDismissFamilyNudge',
   'agsEditName',
+  'agsLeaveFamily',
   'agsLogin',
   'agsLoginApple',
   'agsLogout',
@@ -149,10 +153,12 @@ const STATIC_ACTIONS = new Set([
   'agsOpenPrivacyChoices',
   'agsOpenRegister',
   'agsPasswordLogin',
+  'agsPlayFamilyNudge',
   'agsProfileAddFriend',
   'agsProfileCancelEdit',
   'agsProfileEditName',
   'agsProfileSaveName',
+  'agsRefreshFamily',
   'agsRefreshFriends',
   'agsRegister',
   'agsRequestLastOpponent',
@@ -168,6 +174,7 @@ const STATIC_ACTIONS = new Set([
   'agsStopWatching',
   'agsSwitchLeaderboardView',
   'agsToggleAddFriend',
+  'agsToggleFamilyInvite',
   'agsUpdateDeleteConfirmation',
 ])
 
@@ -285,6 +292,7 @@ let activeLegalReaderDocument = null
 let legalReaderTrigger = null
 let offlineFriendsTrigger = null
 let friendsState = { friends: [], incoming: [], outgoing: [] }
+let familyState = { group: null, members: [], incomingInvites: [] }
 let friendsRefreshTimer = null
 let unsubscribePresenceUpdates = null
 let unsubscribeGameInvites = null
@@ -1670,6 +1678,80 @@ async function initAuth() {
   window.agsCancelFriendRequest = async friendId => {
     await runFriendAction(() => cancelFriendRequest(friendId), 'Friend request canceled.')
   }
+  window.agsRefreshFamily = refreshFamilyUI
+  window.agsCreateFamily = async () => {
+    const myName = document.getElementById('ags-signedin-name')?.textContent || 'My'
+    setFamilyMessage('Creating your family...')
+    const result = await createFamilyGroup(`${myName}'s Family`)
+    if (!result.ok) {
+      setFamilyMessage(result.error, 'error')
+      return
+    }
+    setFamilyMessage('Family created — invite your family members!', 'success')
+    await refreshFamilyUI(false)
+    window.agsToggleFamilyInvite?.(true)
+  }
+  window.agsToggleFamilyInvite = forceOpen => {
+    const picker = document.getElementById('ags-family-invite-picker')
+    if (!picker) return
+    const open = forceOpen === true || picker.style.display === 'none'
+    picker.style.display = open ? '' : 'none'
+    if (open) renderFamilyInvitePicker()
+  }
+  window.agsInviteToFamily = async userId => {
+    if (!familyState.group) return
+    ensureNotificationPermission()  // user gesture — ask now so they can be notified of the reply
+    setFamilyMessage('Sending family invite...')
+    const result = await inviteToFamily(userId, familyState.group.groupId)
+    setFamilyMessage(result.ok ? 'Family invite sent.' : result.error, result.ok ? 'success' : 'error')
+    if (result.ok) sendEvent('family_invite_sent', {})
+  }
+  window.agsAcceptFamilyInvite = async groupId => {
+    setFamilyMessage('Joining family...')
+    const result = await acceptFamilyInvite(groupId)
+    if (!result.ok) {
+      setFamilyMessage(result.error, 'error')
+      return
+    }
+    setFamilyMessage('Welcome to the family!', 'success')
+    sendEvent('family_invite_accepted', {})
+    await refreshFamilyUI(false)
+  }
+  window.agsRejectFamilyInvite = async groupId => {
+    const result = await rejectFamilyInvite(groupId)
+    setFamilyMessage(result.ok ? 'Family invite declined.' : result.error, result.ok ? '' : 'error')
+    if (result.ok) await refreshFamilyUI(false)
+  }
+  window.agsRemoveFamilyMember = async userId => {
+    if (!familyState.group) return
+    const member = familyState.members.find(m => m.userId === userId)
+    if (!confirm(`Remove ${member?.displayName || 'this member'} from the family?`)) return
+    const result = await removeFamilyMember(userId, familyState.group.groupId)
+    setFamilyMessage(result.ok ? 'Family member removed.' : result.error, result.ok ? '' : 'error')
+    if (result.ok) await refreshFamilyUI(false)
+  }
+  window.agsLeaveFamily = async () => {
+    if (!familyState.group) return
+    if (!confirm('Leave this family? A guardian can invite you back later.')) return
+    const result = await leaveFamily(familyState.group.groupId)
+    setFamilyMessage(result.ok ? 'You left the family.' : result.error, result.ok ? '' : 'error')
+    if (result.ok) await refreshFamilyUI(false)
+  }
+  window.agsInviteFamilyMember = userId => {
+    ensureNotificationPermission()
+    const member = familyState.members.find(m => m.userId === userId)
+    if (!member) {
+      setFamilyMessage('Family member is not available.', 'error')
+      return
+    }
+    if (typeof window.startFriendMatchInvite !== 'function') {
+      setFamilyMessage('Match invites are not ready yet.', 'error')
+      return
+    }
+    // Same match-invite flow friends use — a family member row carries the
+    // same {userId, displayName} shape startFriendMatchInvite expects.
+    window.startFriendMatchInvite(member)
+  }
   window.agsRequestFriend = async friendId => {
     ensureNotificationPermission()  // user gesture — ask now so they can be notified when accepted
     await runFriendAction(() => requestFriend(friendId), 'Friend request sent.')
@@ -2252,6 +2334,7 @@ async function openPublicProfile(userId, displayName = '') {
   showProfileTab('overview')
   setProfileTabVisible('stats', !!currentUserId)
   setProfileTabVisible('account', false)
+  setProfileTabVisible('coaching', false)
   if (nameEl) nameEl.textContent = displayName || userId.slice(0, 8)
   if (editBtn) editBtn.style.display = 'none'
   if (editForm) editForm.style.display = 'none'
@@ -2309,6 +2392,13 @@ async function openPublicProfile(userId, displayName = '') {
     ? null
     : computeMatchStats(myMatchHistory).headToHead.find(h => h.opponentUserId === userId)
   renderChessStats(computeMatchStats(matchHistory), headToHeadEntry)
+
+  // Coaching tab: guardians only, and only on a linked child's profile —
+  // the role check is against the shared chess-family group.
+  const showCoaching = currentUserIsGuardian()
+    && familyState.members.some(m => m.userId === userId && m.role === 'child')
+  setProfileTabVisible('coaching', showCoaching)
+  if (showCoaching) renderFamilyCoachingTab(userId, matchHistory)
 
   const friend = friendsState.friends.find(item => item.userId === userId)
   const incoming = friendsState.incoming.find(item => item.userId === userId)
@@ -2909,6 +2999,7 @@ async function runFriendAction(action, successMessage) {
 async function refreshFriendsUI(showLoading = true, preserveMessage = false) {
   if (!currentUserId) {
     renderFriendsPanel(false)
+    renderFamilyPanel(false)
     return
   }
   if (showLoading) setFriendsMessage('Loading friends...')
@@ -2923,6 +3014,10 @@ async function refreshFriendsUI(showLoading = true, preserveMessage = false) {
   renderFriendsPanel(true)
   notifyNewFriendRequests(state.incoming)
   if ((state.friends?.length || 0) >= 5) unlockEventAchievement(currentUserId, 'chess-social-5')  // 5+ friends (409 no-op if already unlocked)
+
+  // Family rides the same refresh cycle (login, 15s timer, lobby reconnect) —
+  // fire-and-forget so a family hiccup never blocks the friends list.
+  refreshFamilyUI(false)
 
   const anyAccepted = await processIncomingInviteAcceptances(state.incoming)
   if (anyAccepted) await refreshFriendsUI(false)
@@ -2979,6 +3074,25 @@ function startPresenceUpdates() {
     if (changed) {
       friendsState = { ...friendsState, friends }
       renderFriendsPanel(true)
+    }
+
+    // Family-online nudge: same event stream, filtered to family members
+    // coming online. Compare against the previously-stored presence on the
+    // member entry so only the offline→online transition fires it.
+    let familyChanged = false
+    const members = familyState.members.map(member => {
+      if (normalizeFriendUserId(member.userId) !== normalizedUserId) return member
+      const wasOnline = ['online', 'in-match'].includes(member.presence?.status)
+      const isOnline = ['online', 'in-match'].includes(presence?.status)
+      if (!wasOnline && isOnline && member.userId !== currentUserId) {
+        showFamilyOnlineNudge(member)
+      }
+      familyChanged = true
+      return { ...member, presence }
+    })
+    if (familyChanged) {
+      familyState = { ...familyState, members }
+      renderFamilyPanel(true)
     }
   })
   unsubscribeLobbyOpen = subscribeLobbyOpen(() => {
@@ -3108,11 +3222,12 @@ function showInviteJoinToast({ fromUserId, fromName }) {
   }
 }
 
-function friendRow(item, actions = '', { profileLink = false } = {}) {
+function friendRow(item, actions = '', { profileLink = false, roleLabel = '' } = {}) {
   const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
   const presence = item.presence || { status: 'offline', label: 'Offline' }
   const identity = `<span class="friend-name">${esc(item.displayName)}
     <span class="friend-presence ${esc(presence.status)}">${esc(presence.label)}</span>
+    ${roleLabel ? `<span class="family-role-badge">${esc(roleLabel)}</span>` : ''}
   </span>`
   return `<div class="friend-row">
     <div class="friend-main">
@@ -3308,6 +3423,166 @@ function renderFriendsPanel(loggedIn) {
   )
 }
 
+// ─── Family panel ───────────────────────────────────────────────────────────
+
+function setFamilyMessage(text, tone = '') {
+  const el = document.getElementById('ags-family-message')
+  if (!el) return
+  el.className = `auth-message${tone ? ' ' + tone : ''}`
+  el.textContent = text || ''
+}
+
+function currentUserIsGuardian() {
+  return familyState.members.some(m => m.userId === currentUserId && m.role === 'guardian')
+}
+
+async function refreshFamilyUI(showLoading = true) {
+  if (!currentUserId) {
+    renderFamilyPanel(false)
+    return
+  }
+  if (showLoading) setFamilyMessage('Loading family...')
+  const state = await fetchFamilyState()
+  if (!state.ok) {
+    setFamilyMessage(state.error, 'error')
+    renderFamilyPanel(true)
+    return
+  }
+  familyState = state
+  if (showLoading) setFamilyMessage('')
+  renderFamilyPanel(true)
+}
+
+function renderFamilyPanel(loggedIn) {
+  const panel = document.getElementById('ags-family-panel')
+  if (!panel) return
+  panel.style.display = loggedIn ? '' : 'none'
+  if (!loggedIn) return
+
+  const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
+  const membersSection = document.getElementById('ags-section-family-members')
+  const listEl = document.getElementById('ags-family-list')
+  const nameEl = document.getElementById('ags-family-name')
+  const countEl = document.getElementById('ags-count-family')
+  const emptyEl = document.getElementById('ags-family-empty')
+  const actionsEl = document.getElementById('ags-family-actions')
+  const inviteBtn = document.getElementById('btn-family-invite-expand')
+  if (!membersSection || !listEl) return
+
+  const isGuardian = currentUserIsGuardian()
+
+  if (familyState.group) {
+    membersSection.style.display = ''
+    if (emptyEl) emptyEl.style.display = 'none'
+    if (actionsEl) actionsEl.style.display = ''
+    // Only guardians hold GROUP:INVITE — the button gate is cosmetic, the
+    // group service enforces it server-side either way.
+    if (inviteBtn) inviteBtn.style.display = isGuardian ? '' : 'none'
+    if (nameEl) nameEl.textContent = familyState.group.groupName
+    if (countEl) countEl.textContent = familyState.members.length
+
+    listEl.innerHTML = familyState.members.map(member => {
+      const isSelf = member.userId === currentUserId
+      const online = ['online', 'in-match'].includes(member.presence?.status)
+      const actions = [
+        !isSelf && online ? `<button class="btn-mini success" data-action="play" data-user-id="${esc(member.userId)}">Play</button>` : '',
+        !isSelf && isGuardian ? `<button class="btn-mini" data-action="remove" data-user-id="${esc(member.userId)}">Remove</button>` : '',
+      ].filter(Boolean).join('')
+      return friendRow(member, actions, {
+        profileLink: !isSelf,
+        roleLabel: member.role === 'guardian' ? 'Guardian' : 'Child',
+      })
+    }).join('')
+    listEl.querySelectorAll('button[data-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const { action, userId, displayName } = btn.dataset
+        if (action === 'play') window.agsInviteFamilyMember?.(userId)
+        else if (action === 'remove') window.agsRemoveFamilyMember?.(userId)
+        else if (action === 'profile') openPublicProfile(userId, displayName || '')
+      })
+    })
+  } else {
+    membersSection.style.display = 'none'
+    if (actionsEl) actionsEl.style.display = 'none'
+    if (emptyEl) emptyEl.style.display = familyState.incomingInvites.length ? 'none' : ''
+  }
+
+  const invitesSection = document.getElementById('ags-section-family-invites')
+  const invitesList = document.getElementById('ags-family-invites')
+  const invitesCount = document.getElementById('ags-count-family-invites')
+  if (invitesSection && invitesList) {
+    const invites = familyState.group ? [] : familyState.incomingInvites
+    invitesSection.style.display = invites.length ? '' : 'none'
+    if (invitesCount) invitesCount.textContent = invites.length
+    invitesList.innerHTML = invites.map(invite => `<div class="friend-row">
+      <div class="friend-main"><span class="friend-name">${esc(invite.groupName)}</span></div>
+      <div class="friend-actions">
+        <button class="btn-mini success" data-action="accept-family" data-group-id="${esc(invite.groupId)}">Accept</button>
+        <button class="btn-mini" data-action="decline-family" data-group-id="${esc(invite.groupId)}">Decline</button>
+      </div>
+    </div>`).join('')
+    invitesList.querySelectorAll('button[data-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const { action, groupId } = btn.dataset
+        if (action === 'accept-family') window.agsAcceptFamilyInvite?.(groupId)
+        else if (action === 'decline-family') window.agsRejectFamilyInvite?.(groupId)
+      })
+    })
+  }
+
+  renderFamilyInvitePicker()
+}
+
+// "Your kid is online — play now?" banner. Fired from the presence stream on
+// an offline→online transition of a family member; deliberately quiet
+// otherwise (at most one nudge per member per session).
+let familyNudgeUserId = null
+const familyNudgedThisSession = new Set()
+
+function showFamilyOnlineNudge(member) {
+  if (familyNudgedThisSession.has(member.userId)) return
+  const banner = document.getElementById('family-online-notification')
+  const nameEl = document.getElementById('family-online-name')
+  if (!banner || !nameEl) return
+  // Don't interrupt an active game with a social nudge.
+  if (document.getElementById('screen-game')?.classList.contains('active')) return
+  familyNudgedThisSession.add(member.userId)
+  familyNudgeUserId = member.userId
+  nameEl.textContent = `${member.displayName || 'A family member'} is online`
+  banner.style.display = 'flex'
+}
+
+window.agsPlayFamilyNudge = () => {
+  const banner = document.getElementById('family-online-notification')
+  if (banner) banner.style.display = 'none'
+  if (familyNudgeUserId) window.agsInviteFamilyMember?.(familyNudgeUserId)
+  familyNudgeUserId = null
+}
+
+window.agsDismissFamilyNudge = () => {
+  const banner = document.getElementById('family-online-notification')
+  if (banner) banner.style.display = 'none'
+  familyNudgeUserId = null
+}
+
+// Guardian picks family members from the existing friends list — the
+// invite/accept handshake is the real consent, friendship is just the
+// discovery UX (no typing user IDs).
+function renderFamilyInvitePicker() {
+  const picker = document.getElementById('ags-family-invite-picker')
+  if (!picker || picker.style.display === 'none') return
+  const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
+  const memberIds = new Set(familyState.members.map(m => m.userId))
+  const candidates = friendsState.friends.filter(friend => !memberIds.has(friend.userId))
+  picker.innerHTML = candidates.length
+    ? candidates.map(friend => friendRow(friend,
+        `<button class="btn-mini success" data-action="family-invite" data-user-id="${esc(friend.userId)}">Invite</button>`)).join('')
+    : '<p class="friends-empty">All your friends are already in the family — add more friends first.</p>'
+  picker.querySelectorAll('button[data-action="family-invite"]').forEach(btn => {
+    btn.addEventListener('click', () => window.agsInviteToFamily?.(btn.dataset.userId))
+  })
+}
+
 async function updatePostMatchFriendAction(opponent) {
   const btn = document.getElementById('btn-add-match-friend')
   const note = document.getElementById('match-friend-message')
@@ -3486,6 +3761,106 @@ function analyzeReplayMove(matchData, moveIndex) {
     text: `${moverName}'s ${playedNotation} misses a stronger continuation and gives up ${formatPawnLoss(loss)}.`,
     recommendation: `Recommended: ${bestNotation}.`,
   }
+}
+
+// ─── Coaching summary (family feature) ──────────────────────────────────────
+// Aggregates the existing per-move analyzeReplayMove grading across whole
+// games into a parent-readable summary. Engine-dependent orchestration lives
+// here; the pure counting/labeling lives in match-stats.mjs
+// (summarizeCoachingGrades/combineCoachingSummaries) where it's unit-tested.
+
+function gradeAllMoves(matchData) {
+  return (matchData.moves || []).map((_, i) => {
+    const analysis = analyzeReplayMove(matchData, i)
+    return analysis && {
+      moveIndex: i,
+      mover: i % 2 === 0 ? 'white' : 'black', // white always moves ply 0
+      grade: analysis.grade,
+    }
+  }).filter(Boolean)
+}
+
+let coachingRenderToken = 0
+
+async function renderFamilyCoachingTab(userId, matchHistory) {
+  const statusEl = document.getElementById('profile-coaching-status')
+  const headlineEl = document.getElementById('profile-coaching-headline')
+  const gridEl = document.getElementById('profile-coaching-grid')
+  const gamesEl = document.getElementById('profile-coaching-games')
+  if (!headlineEl || !gamesEl) return
+  const token = ++coachingRenderToken
+  const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
+
+  // Work from profileMatchHistoryRows (set by renderProfileMatchHistory just
+  // before this runs) so drill-down indices line up with replayMatchHistoryAt.
+  const candidates = profileMatchHistoryRows
+    .map((match, index) => ({ match, index }))
+    .filter(({ match }) => Array.isArray(match.moves) && match.moves.length
+      && (match.myColor === 'white' || match.myColor === 'black'))
+    .slice(0, 5)
+
+  if (!candidates.length) {
+    if (statusEl) statusEl.textContent = ''
+    headlineEl.textContent = 'No analyzable games yet — play a game or two and check back.'
+    if (gridEl) gridEl.style.display = 'none'
+    gamesEl.innerHTML = ''
+    return
+  }
+
+  if (statusEl) statusEl.textContent = `Analyzing ${candidates.length} game${candidates.length === 1 ? '' : 's'}…`
+  headlineEl.textContent = ''
+  if (gridEl) gridEl.style.display = 'none'
+  gamesEl.innerHTML = '<div class="profile-history-loading"><span></span><span></span><span></span></div>'
+
+  // Grading re-runs the engine for every ply — a few hundred depth-2 evals
+  // for 5 games. Yield between games so the UI stays responsive, and bail if
+  // the user navigated to a different profile mid-analysis.
+  const perGame = []
+  for (const { match, index } of candidates) {
+    await new Promise(resolve => setTimeout(resolve, 0))
+    if (token !== coachingRenderToken) return
+    const grades = gradeAllMoves(match)
+    perGame.push({
+      index,
+      match,
+      summary: summarizeCoachingGrades(grades, match.moves.length, match.myColor),
+    })
+  }
+  if (token !== coachingRenderToken) return
+
+  const combined = combineCoachingSummaries(perGame.map(g => g.summary))
+  if (statusEl) statusEl.textContent = `Last ${combined.gamesAnalyzed} game${combined.gamesAnalyzed === 1 ? '' : 's'}`
+  headlineEl.textContent = combined.headline
+  if (gridEl) {
+    gridEl.style.display = ''
+    const set = (id, text) => {
+      const el = document.getElementById(id)
+      if (el) el.textContent = text
+    }
+    set('coaching-strong', combined.strongRate != null ? `${Math.round(combined.strongRate * 100)}%` : '—')
+    set('coaching-blunders', String(combined.blunderCount))
+    set('coaching-focus', combined.weakestPhase
+      ? combined.weakestPhase[0].toUpperCase() + combined.weakestPhase.slice(1)
+      : 'None')
+  }
+
+  gamesEl.innerHTML = perGame.map(({ index, match, summary }) => {
+    const result = match.result === 'win' ? 'Won' : match.result === 'loss' ? 'Lost' : 'Draw'
+    return `<button class="profile-history-row replayable" type="button" data-coaching-replay="${index}">
+      <span class="profile-history-result ${esc(match.result || '')}">${esc(result)}</span>
+      <div class="profile-history-main">
+        <strong>vs ${esc(match.opponentName || 'Opponent')}</strong>
+        <span>${esc(summary.headline)}</span>
+      </div>
+    </button>`
+  }).join('')
+  gamesEl.querySelectorAll('[data-coaching-replay]').forEach(button => {
+    button.addEventListener('click', () => {
+      // Jumps into the existing replay viewer + per-move analysis panel so a
+      // parent can see exactly why a move was graded the way it was.
+      replayMatchHistoryAt(Number(button.dataset.coachingReplay))
+    })
+  })
 }
 
 function renderSpectatorAnalysis(matchData, replayIndex) {

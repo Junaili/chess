@@ -179,6 +179,36 @@
             </form>
             <div id="ags-add-friend-result" class="add-friend-result" aria-live="polite"></div>
           </section>
+          <section id="ags-family-panel" class="friends-panel" style="display:none">
+            <div class="friends-header">
+              <h3>Family</h3>
+              <button class="btn-mini" data-click="window.agsRefreshFamily && window.agsRefreshFamily()">Refresh</button>
+            </div>
+            <p id="ags-family-message" class="auth-message" aria-live="polite"></p>
+            <div class="friends-section" id="ags-section-family-members" style="display:none">
+              <div class="friends-section-header">
+                <span class="friends-section-label" id="ags-family-name">Family</span>
+                <span class="friends-section-count" id="ags-count-family"></span>
+              </div>
+              <div id="ags-family-list" class="friends-list"></div>
+            </div>
+            <div class="friends-section" id="ags-section-family-invites" style="display:none">
+              <div class="friends-section-header">
+                <span class="friends-section-label">Family invites</span>
+                <span class="friends-section-count pending" id="ags-count-family-invites"></span>
+              </div>
+              <div id="ags-family-invites" class="friends-list"></div>
+            </div>
+            <div id="ags-family-empty" class="family-empty" style="display:none">
+              <p>Bring your family to the board — create a family, invite your kids or parents, and play together.</p>
+              <button class="btn-mini success" data-click="window.agsCreateFamily && window.agsCreateFamily()">Create Family</button>
+            </div>
+            <div class="friends-add-row" id="ags-family-actions" style="display:none">
+              <button class="btn-mini" id="btn-family-invite-expand" data-click="window.agsToggleFamilyInvite && window.agsToggleFamilyInvite()">+ Invite to Family</button>
+              <button class="btn-mini" id="btn-family-leave" data-click="window.agsLeaveFamily && window.agsLeaveFamily()">Leave Family</button>
+            </div>
+            <div id="ags-family-invite-picker" class="family-invite-picker" style="display:none"></div>
+          </section>
         </div>
         <div id="home-leaderboard-panel" class="leaderboard-panel">
           <h3 class="lb-heading">Leaderboard</h3>
@@ -232,6 +262,7 @@
         <button type="button" class="profile-tab active" data-profile-tab="overview" data-click="window.agsShowProfileTab && window.agsShowProfileTab('overview')" role="tab">Overview</button>
         <button type="button" class="profile-tab" data-profile-tab="stats" data-click="window.agsShowProfileTab && window.agsShowProfileTab('stats')" role="tab">Chess Stats</button>
         <button type="button" class="profile-tab" data-profile-tab="history" data-click="window.agsShowProfileTab && window.agsShowProfileTab('history')" role="tab">History</button>
+        <button type="button" class="profile-tab" data-profile-tab="coaching" data-click="window.agsShowProfileTab && window.agsShowProfileTab('coaching')" role="tab" hidden>Coaching</button>
         <button type="button" class="profile-tab" data-profile-tab="account" data-click="window.agsShowProfileTab && window.agsShowProfileTab('account')" role="tab">Account</button>
       </div>
       <div class="profile-panels">
@@ -350,6 +381,30 @@
             <span>Completed games and replays will appear here after you sign in.</span>
           </div>
         </div>
+      </section>
+      </div>
+      <div class="profile-panel" data-profile-panel="coaching">
+      <section class="profile-history-card">
+        <div class="profile-history-head">
+          <h3>Coaching Insights</h3>
+          <span id="profile-coaching-status"></span>
+        </div>
+        <p id="profile-coaching-headline" class="coaching-headline"></p>
+        <div class="profile-stats-grid" id="profile-coaching-grid" style="display:none">
+          <div class="profile-stat">
+            <span>Strong moves</span>
+            <strong id="coaching-strong">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Missed chances</span>
+            <strong id="coaching-blunders">—</strong>
+          </div>
+          <div class="profile-stat">
+            <span>Focus area</span>
+            <strong id="coaching-focus">—</strong>
+          </div>
+        </div>
+        <div id="profile-coaching-games" class="profile-match-history"></div>
       </section>
       </div>
       </div>
@@ -976,6 +1031,17 @@
     <div class="vcn-buttons">
       <button class="btn btn-primary" data-click="acceptFriendMatchInvite()">Accept</button>
       <button class="btn btn-secondary" data-click="declineFriendMatchInvite()">Decline</button>
+    </div>
+  </div>
+
+  <!-- ── Family Online Nudge ─────────────────────────────────────────────────── -->
+  <div id="family-online-notification" class="video-call-notification" style="display:none">
+    <p class="vcn-title">👨‍👩‍👧 Family Time</p>
+    <p class="vcn-sub" id="family-online-name">A family member is online</p>
+    <p class="vcn-sub muted">Up for a game together?</p>
+    <div class="vcn-buttons">
+      <button class="btn btn-primary" data-click="window.agsPlayFamilyNudge && window.agsPlayFamilyNudge()">Play Now</button>
+      <button class="btn btn-secondary" data-click="window.agsDismissFamilyNudge && window.agsDismissFamilyNudge()">Not Now</button>
     </div>
   </div>
 
