@@ -3439,11 +3439,12 @@ input[type="checkbox"] {
   border-radius: 20px;
   padding: 16px 18px;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   grid-template-areas:
-    "name score"
-    "id score";
-  gap: 4px 14px;
+    "name turn score"
+    "id turn score";
+  gap: 4px 10px;
+  min-width: 0;
 }
 
 .player-info.active-player {
@@ -3465,9 +3466,10 @@ input[type="checkbox"] {
 
 .player-info.active-player::after {
   content: attr(data-turn-label);
-  position: absolute;
-  top: 8px;
-  right: 10px;
+  grid-area: turn;
+  align-self: center;
+  justify-self: end;
+  position: static;
   padding: 4px 8px;
   border-radius: 999px;
   background: rgba(240, 195, 122, 0.18);
@@ -3476,6 +3478,7 @@ input[type="checkbox"] {
   font-size: 0.62rem;
   font-weight: 800;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .player-info.waiting-player {
@@ -3488,6 +3491,10 @@ input[type="checkbox"] {
 
 .player-name {
   grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.96rem;
   font-weight: 800;
 }
@@ -3504,12 +3511,14 @@ input[type="checkbox"] {
 .player-score {
   grid-area: score;
   align-self: center;
+  justify-self: end;
   padding: 8px 12px;
   border-radius: 999px;
   background: rgba(240, 195, 122, 0.12);
   color: var(--accent-2);
   font-size: 0.86rem;
   font-weight: 800;
+  white-space: nowrap;
 }
 
 .captured-pieces {

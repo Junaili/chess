@@ -165,6 +165,7 @@ test.describe('UI smoke (signed out)', () => {
         sidebar: rect('.game-sidebar.right'),
         scrollHeight: screen.scrollHeight,
         clientHeight: screen.clientHeight,
+        activeCardGrid: getComputedStyle(document.querySelector('.player-info.active-player')).gridTemplateAreas,
       };
     });
 
@@ -175,6 +176,7 @@ test.describe('UI smoke (signed out)', () => {
       expect(region.bottom).toBeLessThanOrEqual(geometry.viewport.height);
     }
     expect(geometry.scrollHeight).toBeLessThanOrEqual(geometry.clientHeight);
+    expect(geometry.activeCardGrid).toContain('turn');
     await expect(page.locator('#privacy-center-button')).toBeHidden();
 
     await page.getByRole('tab', { name: 'More' }).click();
