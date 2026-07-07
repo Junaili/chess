@@ -17,7 +17,7 @@ import { computeMatchStats, summarizeCoachingGrades, combineCoachingSummaries } 
 import { deriveMatchRoles, computeDeadline, isPastDeadline, isResumable, pickAuthoritativeMoves } from './match-resume.mjs'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
-import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite, rejectFamilyInvite, removeFamilyMember, leaveFamily } from './family.js'
+import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite, rejectFamilyInvite, removeFamilyMember, leaveFamily, familyTransportAvailable } from './family.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
 import {
@@ -3456,8 +3456,10 @@ async function refreshFamilyUI(showLoading = true) {
 function renderFamilyPanel(loggedIn) {
   const panel = document.getElementById('ags-family-panel')
   if (!panel) return
-  panel.style.display = loggedIn ? '' : 'none'
-  if (!loggedIn) return
+  // Hidden entirely where the Group transport can't work from the browser
+  // (production, pending the Extend proxy) — no half-working panel.
+  panel.style.display = loggedIn && familyTransportAvailable() ? '' : 'none'
+  if (!loggedIn || !familyTransportAvailable()) return
 
   const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
   const membersSection = document.getElementById('ags-section-family-members')

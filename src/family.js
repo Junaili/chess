@@ -14,6 +14,21 @@ import { normalizeFamilyError, isNotInGroupResponse, resolveMemberRole } from '.
 
 const CONFIGURATION_CODE = 'chess-family'
 
+// The AGS Group service handles the CORS *preflight* (OPTIONS returns
+// Access-Control-Allow-Origin) but its actual API responses omit that header
+// entirely — verified against production — so a browser can never read a
+// Group response cross-origin, unlike Leaderboard/Cloudsave whose real
+// responses do include it. In dev/e2e the Vite proxy makes /group same-origin
+// so it works; in the deployed build (junaili.github.io → seal-chessags…) it
+// can't. Until the Group calls are proxied through the Extend backend
+// (server-to-server, no browser CORS — same fix the CloudFront legal
+// attachments needed), the family feature is only wired up where the
+// same-origin proxy exists. import.meta.env.DEV is true under Vite dev + the
+// Playwright dev server, false in the production bundle.
+export function familyTransportAvailable() {
+  return !!import.meta.env.DEV
+}
+
 function getConfig() {
   const { coreConfig } = sdk.assembly()
   return { baseURL: coreConfig.baseURL, namespace: coreConfig.namespace }
@@ -93,6 +108,13 @@ async function withPresence(members) {
 // Same {ok, ...} result convention as fetchFriendState so main.js can treat
 // the two identically.
 export async function fetchFamilyState() {
+  // Skip the network entirely where the browser can't read Group responses
+  // (see familyTransportAvailable) — an empty, ok state so the panel simply
+  // stays hidden with no console noise, rather than a doomed cross-origin
+  // fetch on every refresh.
+  if (!familyTransportAvailable()) {
+    return { ok: true, group: null, members: [], incomingInvites: [] }
+  }
   try {
     const [mine, invites, rolesById] = await Promise.all([
       groupFetch('GET', 'v2/public/namespaces/{ns}/users/me/groups?limit=10'),
