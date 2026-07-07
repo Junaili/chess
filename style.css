@@ -32,7 +32,7 @@
   --rail: clamp(280px, 26vw, 380px);
   /* Board fills the column left of the rail, capped by the viewport height so
      the whole match always fits with no scrolling. */
-  --board-size: min(calc(100vw - var(--rail) - 100px), calc(100dvh - 222px), 980px);
+  --board-size: min(calc(100vw - var(--rail) - 100px), calc(100dvh - 252px), 980px);
 }
 
 html, body {
@@ -94,7 +94,8 @@ button:focus-visible {
   inset: 0;
   z-index: 1;
   width: 100%;
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   padding: 28px;
   padding-top: max(28px, env(safe-area-inset-top));
   padding-bottom: max(28px, env(safe-area-inset-bottom));
@@ -107,6 +108,7 @@ button:focus-visible {
 .screen.active {
   display: flex;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 /* The match screen fills the viewport and never scrolls — the board is always
@@ -2563,7 +2565,7 @@ input[type="checkbox"] {
   position: fixed;
   z-index: 72;
   right: max(12px, env(safe-area-inset-right));
-  bottom: max(12px, env(safe-area-inset-bottom));
+  bottom: max(18px, env(safe-area-inset-bottom));
   padding: 8px 12px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
@@ -3771,7 +3773,7 @@ input[type="checkbox"] {
 
 .game-status {
   width: min(100%, calc(var(--board-size) + 40px));
-  min-height: 60px;
+  min-height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3780,8 +3782,8 @@ input[type="checkbox"] {
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--text-dim);
   text-align: center;
-  padding: 10px 18px;
-  font-size: 0.98rem;
+  padding: 6px 14px;
+  font-size: 0.84rem;
   font-weight: 700;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
@@ -4559,7 +4561,7 @@ input[type="checkbox"] {
     --rail: clamp(260px, 27vw, 350px);
     --board-size: min(
       calc(100vw - var(--rail) - 72px),
-      calc(100dvh - 198px),
+      calc(100dvh - 248px),
       820px
     );
   }
@@ -4587,8 +4589,8 @@ input[type="checkbox"] {
   }
 
   #screen-home.signed-in .home-container h1 {
-    margin-bottom: 8px;
-    font-size: clamp(1.7rem, 3vw, 2.25rem);
+    margin-bottom: 6px;
+    font-size: clamp(1.55rem, 2.8vw, 2.05rem);
   }
 
   #screen-home.signed-in .home-body {
@@ -4598,8 +4600,8 @@ input[type="checkbox"] {
 
   #screen-home.signed-in .home-left,
   #screen-home.signed-in .leaderboard-panel {
-    padding: 15px;
-    border-radius: 20px;
+    padding: 12px;
+    border-radius: 18px;
   }
 
   #screen-home.signed-in .home-left {
@@ -4611,13 +4613,17 @@ input[type="checkbox"] {
   }
 
   #screen-home.signed-in .menu-buttons .btn {
-    padding: 11px 16px;
+    padding: 10px 16px;
   }
 
   #screen-home.signed-in .signedin-card,
   #screen-home.signed-in .friends-panel {
-    padding: 12px;
+    padding: 10px;
     border-radius: 15px;
+  }
+
+  #screen-home.signed-in .ags-stats {
+    padding: 8px 12px;
   }
 
   #screen-home.signed-in .friend-row {
@@ -4688,7 +4694,7 @@ input[type="checkbox"] {
 
   .match-player-strip {
     width: min(100%, calc(var(--board-size) + 16px));
-    min-height: 50px;
+    min-height: 46px;
     border-radius: 15px;
   }
 
@@ -4706,9 +4712,15 @@ input[type="checkbox"] {
   }
 
   .player-clock {
-    min-width: 78px;
-    padding: 7px 10px;
-    font-size: 1rem;
+    min-width: 74px;
+    padding: 6px 9px;
+    font-size: 0.95rem;
+  }
+
+  .game-status {
+    min-height: 28px;
+    padding: 4px 12px;
+    font-size: 0.74rem;
   }
 
   .game-sidebar.right {
@@ -5183,6 +5195,7 @@ input[type="checkbox"] {
   margin-top: 16px;
   padding-top: 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
+  text-align: center;
 }
 
 .game-over-invite-prompt:empty {
@@ -5190,11 +5203,15 @@ input[type="checkbox"] {
 }
 
 .invite-nudge-text {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   font-size: 0.82rem;
   font-weight: 700;
   color: var(--text-dim);
   letter-spacing: 0.01em;
+}
+
+.game-over-invite-prompt .share-row {
+  justify-content: center;
 }
 
 .invite-nudge-cta {

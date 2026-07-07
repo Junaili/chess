@@ -77,6 +77,175 @@ window.agsSendChatMessage = message => chatClient.send(message)
 window.agsDeactivateChat = () => chatClient.deactivateTopic()
 window.agsGetChatState = () => chatClient.snapshot()
 
+const STATIC_ACTIONS = new Set([
+  'acceptFriendMatchInvite',
+  'acceptRematch',
+  'acceptVideoCall',
+  'addContact',
+  'backFromContacts',
+  'blockCurrentOpponent',
+  'cancelWaiting',
+  'closeModal',
+  'closeSafetyReport',
+  'confirmGoHome',
+  'confirmNewGame',
+  'copyInviteLink',
+  'declineFriendMatchInvite',
+  'declineRematch',
+  'declineVideoCall',
+  'endVideoChat',
+  'flipBoard',
+  'handleChatInputKeydown',
+  'hideAddContact',
+  'openMatchSafety',
+  'playAgainFromGameOver',
+  'reportCurrentOpponent',
+  'requestRematch',
+  'resetLeaderboard',
+  'resignGame',
+  'selectColor',
+  'sendChatMessage',
+  'shareInviteLink',
+  'showAddContact',
+  'showColorSelect',
+  'showContactsForInvite',
+  'showHint',
+  'showMatchTab',
+  'showScreen',
+  'startNewGame',
+  'startRandomMatchmaking',
+  'startVideoChat',
+  'startVsComputer',
+  'submitSafetyReport',
+  'toggleAudio',
+  'toggleVideoFeed',
+  'agsAcceptLegal',
+  'agsAddFriendByEmail',
+  'agsCancelEdit',
+  'agsCancelLoginQueue',
+  'agsChooseAnalytics',
+  'agsCloseAchievements',
+  'agsCloseDeleteAccount',
+  'agsCloseOfflineFriends',
+  'agsClosePrivacyChoices',
+  'agsCompletePasswordReset',
+  'agsConfirmDeleteAccount',
+  'agsContinueAsGuestFromInvite',
+  'agsCopyInviteLink',
+  'agsDeclineLegal',
+  'agsDiscardActiveMatch',
+  'agsEditName',
+  'agsLogin',
+  'agsLoginApple',
+  'agsLogout',
+  'agsOpenDeleteAccount',
+  'agsOpenAchievements',
+  'agsOpenForgotPassword',
+  'agsOpenGuestPlay',
+  'agsOpenLegalDocument',
+  'agsOpenLogin',
+  'agsOpenOfflineFriends',
+  'agsOpenPolicy',
+  'agsOpenPrivacyChoices',
+  'agsOpenRegister',
+  'agsPasswordLogin',
+  'agsProfileAddFriend',
+  'agsProfileCancelEdit',
+  'agsProfileEditName',
+  'agsProfileSaveName',
+  'agsRefreshFriends',
+  'agsRegister',
+  'agsRequestLastOpponent',
+  'agsRequestPasswordReset',
+  'agsResumeActiveMatch',
+  'agsSaveName',
+  'agsSavePrivacyChoices',
+  'agsShowProfileTab',
+  'agsSpectatorFirst',
+  'agsSpectatorLast',
+  'agsSpectatorNext',
+  'agsSpectatorPrev',
+  'agsStopWatching',
+  'agsSwitchLeaderboardView',
+  'agsToggleAddFriend',
+  'agsUpdateDeleteConfirmation',
+])
+
+function parseStaticArgs(rawArgs, event) {
+  const raw = String(rawArgs || '').trim()
+  if (!raw) return []
+  return raw.split(',').map(value => {
+    const token = value.trim()
+    if (token === 'event') return event
+    if (token === 'true') return true
+    if (token === 'false') return false
+    const quoted = /^'([^']*)'$/.exec(token)
+    if (quoted) return quoted[1]
+    const number = Number(token)
+    if (Number.isFinite(number)) return number
+    throw new Error(`Unsupported static action argument: ${token}`)
+  })
+}
+
+function runStaticCall(source, event, element) {
+  const action = String(source || '').trim().replace(/;$/, '')
+  if (!action) return
+  if (action === "this.closest('#invite-join-toast').classList.remove('show')") {
+    element.closest('#invite-join-toast')?.classList.remove('show')
+    return
+  }
+
+  let match = /^window\.([A-Za-z0-9_]+)\s*&&\s*window\.\1\((.*)\)$/.exec(action)
+  if (!match) match = /^window\.([A-Za-z0-9_]+)\((.*)\)$/.exec(action)
+  if (!match) match = /^([A-Za-z0-9_]+)\((.*)\)$/.exec(action)
+  if (!match) throw new Error(`Unsupported static action: ${action}`)
+
+  const [, name, rawArgs] = match
+  if (!STATIC_ACTIONS.has(name) || typeof window[name] !== 'function') {
+    throw new Error(`Blocked static action: ${name}`)
+  }
+  window[name](...parseStaticArgs(rawArgs, event))
+}
+
+function runStaticAction(source, event, element) {
+  const action = String(source || '').trim()
+  if (action.startsWith('event.preventDefault();')) {
+    event.preventDefault()
+    runStaticAction(action.slice('event.preventDefault();'.length), event, element)
+    return
+  }
+
+  if (action.startsWith('if(event.key===')) {
+    const keyPattern = /if\(event\.key==='([^']+)'(?:\|\|event\.key==='([^']+)')?\)\s*([^;]+(?:;|$))/g
+    for (const match of action.matchAll(keyPattern)) {
+      const [, firstKey, secondKey, callSource] = match
+      if (event.key === firstKey || event.key === secondKey) {
+        runStaticCall(callSource.replace(/;$/, ''), event, element)
+      }
+    }
+    return
+  }
+
+  runStaticCall(action, event, element)
+}
+
+function bindStaticActions(root = document) {
+  for (const element of root.querySelectorAll('[data-click]')) {
+    element.addEventListener('click', event => runStaticAction(element.dataset.click, event, element))
+  }
+  for (const element of root.querySelectorAll('[data-keydown]')) {
+    element.addEventListener('keydown', event => runStaticAction(element.dataset.keydown, event, element))
+  }
+  for (const element of root.querySelectorAll('[data-submit]')) {
+    element.addEventListener('submit', event => runStaticAction(element.dataset.submit, event, element))
+  }
+  for (const element of root.querySelectorAll('[data-input]')) {
+    element.addEventListener('input', event => runStaticAction(element.dataset.input, event, element))
+  }
+}
+
+bindStaticActions()
+
 async function connectAuthenticatedChat() {
   try {
     const response = await ChatConfigApi(sdk).getConfig_ByNamespace()
@@ -2376,7 +2545,7 @@ function renderProfileMatchHistory(matches) {
       : match.mode === 'online'
         ? 'Online'
         : 'Match'
-    return `<button class="profile-history-row${canReplay ? ' replayable' : ' no-replay'}" type="button" ${canReplay ? `onclick="window.agsReplayMatchHistory(${index})"` : 'disabled'}>
+    return `<button class="profile-history-row${canReplay ? ' replayable' : ' no-replay'}" type="button" ${canReplay ? `data-replay-index="${index}"` : 'disabled'}>
       <span class="profile-history-result ${esc(resultClass)}">${esc(result)}</span>
       <div class="profile-history-main">
         <strong>${esc(opponent)}</strong>
@@ -2388,6 +2557,11 @@ function renderProfileMatchHistory(matches) {
       </div>
     </button>`
   }).join('')
+  el.querySelectorAll('[data-replay-index]').forEach(button => {
+    button.addEventListener('click', () => {
+      window.agsReplayMatchHistory?.(Number(button.dataset.replayIndex))
+    })
+  })
 }
 
 function formatDuration(durationMs) {

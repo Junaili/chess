@@ -76,6 +76,35 @@ test.describe('Play vs Computer', () => {
     await expect(page.locator('#game-over-message')).toHaveText(/.+/);
   });
 
+  test('computer game-over offers replay, main menu, and a working challenge share prompt', async ({ page }) => {
+    await startVsComputer(page, { color: 'white', difficulty: 'easy' });
+    await playMove(page, 'e2', 'e4');
+
+    await page.getByRole('tab', { name: 'More' }).click();
+    await page.locator('#btn-resign').click();
+    await expect(page.locator('#game-over-modal')).toBeVisible();
+    await expect(page.locator('#btn-play-again')).toBeVisible();
+    await expect(page.locator('#btn-game-over-home')).toBeVisible();
+    await expect(page.locator('#game-over-invite-prompt')).toContainText(/(Share a challenge link|Create an account to invite)/);
+    const shareRow = page.locator('#game-over-invite-prompt .share-row');
+    if (await shareRow.isVisible().catch(() => false)) {
+      await expect(shareRow.locator('.share-chip').first()).toBeVisible();
+    } else {
+      await expect(page.locator('#game-over-invite-prompt .invite-nudge-cta')).toHaveAttribute('role', 'button');
+    }
+
+    await page.locator('#btn-play-again').click();
+    await expect(page.locator('#game-over-modal')).toBeHidden();
+    await expect(page.locator('#screen-game')).toBeVisible();
+    await expect(page.locator('#move-list .move-row')).toHaveCount(0);
+
+    await page.getByRole('tab', { name: 'More' }).click();
+    await page.locator('#btn-resign').click();
+    await page.locator('#btn-game-over-home').click();
+    await expect(page.locator('#game-over-modal')).toBeHidden();
+    await expect(page.locator('#screen-home')).toBeVisible();
+  });
+
   // Regression test: an incoming rematch request keeps the game-over modal
   // open (with its Decline button on a separate, absolutely-positioned
   // notification) while a decision is pending. That notification previously

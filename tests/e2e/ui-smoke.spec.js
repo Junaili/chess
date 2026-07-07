@@ -141,10 +141,13 @@ test.describe('UI smoke (signed out)', () => {
 
   test('match layout fits the viewport without clipping or page scrolling', async ({ page }) => {
     await gotoApp(page);
-    await openGuestColorSelect(page);
-    await page.locator('#screen-color-select .color-btn.white-btn').click();
-    await page.locator('#piece-color-options > *').first().click();
-    await page.locator('#screen-difficulty .diff-btn.easy').click();
+    await page.evaluate(() => {
+      window.showColorSelect('computer');
+      window.selectColor('white');
+      window.selectPieceColor('#fffdf5');
+      window.startVsComputer('easy');
+    });
+    await expect(page.locator('#chess-board [data-r]')).toHaveCount(64);
 
     const geometry = await page.evaluate(() => {
       const viewport = { width: window.innerWidth, height: window.innerHeight };
@@ -158,13 +161,14 @@ test.describe('UI smoke (signed out)', () => {
         opponent: rect('#opponent-player-strip'),
         board: rect('.board-container'),
         player: rect('#you-player-strip'),
+        status: rect('.game-status'),
         sidebar: rect('.game-sidebar.right'),
         scrollHeight: screen.scrollHeight,
         clientHeight: screen.clientHeight,
       };
     });
 
-    for (const region of [geometry.opponent, geometry.board, geometry.player, geometry.sidebar]) {
+    for (const region of [geometry.opponent, geometry.board, geometry.player, geometry.status, geometry.sidebar]) {
       expect(region.top).toBeGreaterThanOrEqual(0);
       expect(region.left).toBeGreaterThanOrEqual(0);
       expect(region.right).toBeLessThanOrEqual(geometry.viewport.width);
@@ -175,6 +179,78 @@ test.describe('UI smoke (signed out)', () => {
 
     await page.getByRole('tab', { name: 'More' }).click();
     await expect(page.locator('#btn-match-privacy')).toBeVisible();
+  });
+
+  test('iPad landscape match and dashboard stay inside a tighter safe viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 720 });
+    await gotoApp(page);
+
+    await page.evaluate(() => {
+      const screen = document.getElementById('screen-home');
+      screen.classList.add('signed-in');
+      document.getElementById('ags-account-entry').style.display = 'none';
+      document.getElementById('ags-guest-entry').style.display = 'none';
+      document.getElementById('ags-signedin-info').style.display = '';
+      document.getElementById('ags-member-play-actions').style.display = '';
+      document.getElementById('ags-friends-panel').style.display = '';
+      document.getElementById('home-leaderboard-panel').style.display = '';
+    });
+
+    const homeGeometry = await page.evaluate(() => {
+      const screen = document.getElementById('screen-home');
+      const bounds = selector => {
+        const rect = document.querySelector(selector).getBoundingClientRect();
+        return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+      };
+      return {
+        viewport: { width: innerWidth, height: innerHeight },
+        screen: { scrollHeight: screen.scrollHeight, clientHeight: screen.clientHeight },
+        home: bounds('.home-container'),
+        left: bounds('.home-left'),
+        leaderboard: bounds('#home-leaderboard-panel'),
+      };
+    });
+
+    expect(homeGeometry.screen.scrollHeight).toBeLessThanOrEqual(homeGeometry.screen.clientHeight);
+    for (const region of [homeGeometry.home, homeGeometry.left, homeGeometry.leaderboard]) {
+      expect(region.top).toBeGreaterThanOrEqual(0);
+      expect(region.left).toBeGreaterThanOrEqual(0);
+      expect(region.right).toBeLessThanOrEqual(homeGeometry.viewport.width);
+      expect(region.bottom).toBeLessThanOrEqual(homeGeometry.viewport.height);
+    }
+
+    await page.evaluate(() => {
+      window.showColorSelect('computer');
+      window.selectColor('white');
+      window.selectPieceColor('#fffdf5');
+      window.startVsComputer('easy');
+    });
+    await expect(page.locator('#chess-board [data-r]')).toHaveCount(64);
+
+    const matchGeometry = await page.evaluate(() => {
+      const screen = document.getElementById('screen-game');
+      const bounds = selector => {
+        const rect = document.querySelector(selector).getBoundingClientRect();
+        return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+      };
+      return {
+        viewport: { width: innerWidth, height: innerHeight },
+        screen: { scrollHeight: screen.scrollHeight, clientHeight: screen.clientHeight },
+        opponent: bounds('#opponent-player-strip'),
+        board: bounds('.board-container'),
+        player: bounds('#you-player-strip'),
+        status: bounds('.game-status'),
+        sidebar: bounds('.game-sidebar.right'),
+      };
+    });
+
+    expect(matchGeometry.screen.scrollHeight).toBeLessThanOrEqual(matchGeometry.screen.clientHeight);
+    for (const region of [matchGeometry.opponent, matchGeometry.board, matchGeometry.player, matchGeometry.status, matchGeometry.sidebar]) {
+      expect(region.top).toBeGreaterThanOrEqual(0);
+      expect(region.left).toBeGreaterThanOrEqual(0);
+      expect(region.right).toBeLessThanOrEqual(matchGeometry.viewport.width);
+      expect(region.bottom).toBeLessThanOrEqual(matchGeometry.viewport.height);
+    }
   });
 
   test('signed-in dashboard contains long lists without page scrolling', async ({ page }) => {

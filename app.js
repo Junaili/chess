@@ -450,6 +450,11 @@ function startNewGame() {
   showScreen('home');
 }
 
+function playAgainFromGameOver() {
+  closeModal('game-over-modal');
+  startGame();
+}
+
 // ─── Board rendering ──────────────────────────────────────────────────────────
 
 function initBoard() {
@@ -1088,21 +1093,50 @@ function showGameOver() {
       const nudge = document.createElement('p');
       nudge.className = 'invite-nudge-text';
       if (inviteUrl) {
-        nudge.textContent = isWin ? '🎉 Challenge someone new →' : '💪 Challenge a different opponent →';
+        nudge.textContent = isWin ? '🎉 Share a challenge link:' : '💪 Share a challenge link with a different opponent:';
         invitePrompt.appendChild(nudge);
-        if (typeof window.agsShareRow === 'function') window.agsShareRow(invitePrompt, inviteUrl);
+        if (typeof window.agsShareRow === 'function') {
+          window.agsShareRow(invitePrompt, inviteUrl, {
+            campaign: 'post-game-challenge',
+            sharePayload: { trigger: 'game_over', mode: gameMode, result: isWin ? 'win' : isLoss ? 'loss' : 'completed' },
+          });
+        }
       } else if (cameFromLiveInvite) {
         nudge.textContent = '🤝 Create an account to become friends and keep playing!';
         nudge.className += ' invite-nudge-cta';
-        nudge.addEventListener('click', () => { window.agsOpenRegister?.(); });
+        const openRegister = () => {
+          closeModal('game-over-modal');
+          window.agsOpenRegister?.();
+        };
+        nudge.setAttribute('role', 'button');
+        nudge.tabIndex = 0;
+        nudge.addEventListener('click', openRegister);
+        nudge.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openRegister();
+          }
+        });
         invitePrompt.appendChild(nudge);
         window.agsGetPendingInviteName?.().then(name => {
           if (name) nudge.textContent = `🤝 Create an account to add ${name} as a friend!`;
         });
       } else {
-        nudge.textContent = isWin ? '🎉 Invite a friend to challenge you!' : '💪 Think you can win? Invite a friend!';
+        nudge.textContent = isWin ? '🎉 Create an account to invite friends!' : '💪 Create an account to invite a different opponent!';
         nudge.className += ' invite-nudge-cta';
-        nudge.addEventListener('click', () => { window.agsOpenRegister?.(); });
+        const openRegister = () => {
+          closeModal('game-over-modal');
+          window.agsOpenRegister?.();
+        };
+        nudge.setAttribute('role', 'button');
+        nudge.tabIndex = 0;
+        nudge.addEventListener('click', openRegister);
+        nudge.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openRegister();
+          }
+        });
         invitePrompt.appendChild(nudge);
       }
     }

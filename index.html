@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; script-src-attr 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; media-src 'self' blob:; connect-src 'self' https://*.accelbyte.io wss://*.accelbyte.io https://0.peerjs.com wss://0.peerjs.com https://api4.ipify.org; object-src 'none'; base-uri 'self'; form-action 'self'" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; media-src 'self' blob:; connect-src 'self' https://*.accelbyte.io wss://*.accelbyte.io https://0.peerjs.com wss://0.peerjs.com https://api4.ipify.org; object-src 'none'; base-uri 'self'; form-action 'self'" />
   <script type="module" src="/src/native-auth-bounce.js"></script>
   <title>Ethan's Chess — Play Multiplayer Chess with Friends</title>
   <meta name="description" content="Play multiplayer chess with friends and family anywhere in the world. Real-time matches, leaderboard rankings, video chat, and more — free to play." />
@@ -73,7 +73,7 @@
             <h2>Join the table</h2>
             <p>Start free. Your friends, progress, and match history stay with you.</p>
           </div>
-          <button id="ags-signin-btn" class="btn btn-google" onclick="window.agsLogin && window.agsLogin()">
+          <button id="ags-signin-btn" class="btn btn-google" data-click="window.agsLogin && window.agsLogin()">
             <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
               <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
               <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -82,7 +82,7 @@
             </svg>
             Continue with Google
           </button>
-          <button id="ags-signin-apple" class="btn btn-apple" style="display:none" onclick="window.agsLoginApple && window.agsLoginApple()">
+          <button id="ags-signin-apple" class="btn btn-apple" style="display:none" data-click="window.agsLoginApple && window.agsLoginApple()">
             <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0">
               <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-3.038 1.5-.12-1.08.42-2.24 1.05-2.97.71-.84 1.99-1.46 3.16-1.61.02.13.005.27.005.4zM20.5 17.04c-.41.93-.62 1.34-1.15 2.16-.74 1.16-1.79 2.61-3.08 2.62-1.15.01-1.44-.75-3-.74-1.56.01-1.88.75-3.03.74-1.29-.01-2.28-1.31-3.02-2.47-2.07-3.24-2.29-7.04-1.01-9.06.91-1.43 2.34-2.27 3.69-2.27 1.37 0 2.23.75 3.36.75 1.1 0 1.77-.75 3.36-.75 1.2 0 2.47.65 3.38 1.78-2.97 1.63-2.49 5.87.12 7.04z"/>
             </svg>
@@ -90,58 +90,56 @@
           </button>
           <div class="auth-divider" id="ags-auth-or-divider"><span>or sign up with email</span></div>
           <div id="ags-auth-actions" class="auth-actions">
-            <button class="btn btn-register" onclick="window.agsOpenRegister && window.agsOpenRegister()">Create Free Account</button>
-            <button class="auth-login-link" onclick="window.agsOpenLogin && window.agsOpenLogin()">Already have an account? <strong>Sign in</strong></button>
+            <button class="btn btn-register" data-click="window.agsOpenRegister && window.agsOpenRegister()">Create Free Account</button>
+            <button class="auth-login-link" data-click="window.agsOpenLogin && window.agsOpenLogin()">Already have an account? <strong>Sign in</strong></button>
           </div>
           <div id="ags-signedin-info" class="signedin-card" style="display:none">
             <span class="signedin-greeting">Signed in as</span>
             <div class="signedin-name-row">
               <span id="ags-signedin-name" class="signedin-name"></span>
-              <button class="btn-edit-name" id="btn-edit-name" title="Edit display name" aria-label="Edit display name" onclick="window.agsEditName && window.agsEditName()">✏</button>
+              <button class="btn-edit-name" id="btn-edit-name" title="Edit display name" aria-label="Edit display name" data-click="window.agsEditName && window.agsEditName()">✏</button>
             </div>
             <div id="name-edit-form" style="display:none">
-              <input type="text" id="name-edit-input" class="name-edit-input" maxlength="48" placeholder="New display name"
-                onkeydown="if(event.key==='Enter') window.agsSaveName && window.agsSaveName(); if(event.key==='Escape') window.agsCancelEdit && window.agsCancelEdit()" />
+              <input type="text" id="name-edit-input" class="name-edit-input" maxlength="48" placeholder="New display name" data-keydown="if(event.key==='Enter') window.agsSaveName && window.agsSaveName(); if(event.key==='Escape') window.agsCancelEdit && window.agsCancelEdit()" />
               <div class="name-edit-actions">
-                <button class="btn btn-primary" id="btn-save-name" onclick="window.agsSaveName && window.agsSaveName()">Save</button>
-                <button class="btn btn-secondary" onclick="window.agsCancelEdit && window.agsCancelEdit()">Cancel</button>
+                <button class="btn btn-primary" id="btn-save-name" data-click="window.agsSaveName && window.agsSaveName()">Save</button>
+                <button class="btn btn-secondary" data-click="window.agsCancelEdit && window.agsCancelEdit()">Cancel</button>
               </div>
               <p id="name-edit-message" class="auth-message" aria-live="polite"></p>
             </div>
             <div class="signedin-footer">
-              <button class="btn-signout" onclick="window.agsLogout && window.agsLogout()">Log out</button>
+              <button class="btn-signout" data-click="window.agsLogout && window.agsLogout()">Log out</button>
             </div>
           </div>
           <div id="ags-stats" class="ags-stats" style="display:none"></div>
-          <button id="btn-achievements" class="btn btn-achievements" style="display:none" onclick="window.agsOpenAchievements && window.agsOpenAchievements()">🏆 Achievements</button>
+          <button id="btn-achievements" class="btn btn-achievements" style="display:none" data-click="window.agsOpenAchievements && window.agsOpenAchievements()">🏆 Achievements</button>
           <div id="ags-member-play-actions" class="menu-buttons">
-            <button class="btn btn-primary"   onclick="showColorSelect('computer')">Play vs Computer</button>
-            <button class="btn btn-secondary" onclick="showColorSelect('online')">Invite Friend</button>
-            <button class="btn btn-matchmake" id="btn-play-random" style="display:none" onclick="startRandomMatchmaking()">Play vs Random</button>
+            <button class="btn btn-primary" data-click="showColorSelect('computer')">Play vs Computer</button>
+            <button class="btn btn-secondary" data-click="showColorSelect('online')">Invite Friend</button>
+            <button class="btn btn-matchmake" id="btn-play-random" style="display:none" data-click="startRandomMatchmaking()">Play vs Random</button>
           </div>
           <p class="menu-note">Choose your color, customize your pieces, and start from the board you actually want to play on.</p>
           <div id="home-idle-prompt" class="home-idle-prompt" style="display:none">
             <span class="idle-eyebrow">💡 Still here?</span>
             <p class="idle-text">Invite a friend and play a live game right now.</p>
             <div id="home-idle-share-row"></div>
-            <button id="home-idle-signup-btn" class="btn btn-primary btn-mini" style="display:none" onclick="window.agsOpenRegister && window.agsOpenRegister()">Create free account →</button>
+            <button id="home-idle-signup-btn" class="btn btn-primary btn-mini" style="display:none" data-click="window.agsOpenRegister && window.agsOpenRegister()">Create free account →</button>
           </div>
           <div id="ags-guest-entry" class="guest-entry">
             <div class="auth-divider" id="ags-guest-divider"><span>want to try it first?</span></div>
-            <button id="ags-open-guest" class="btn btn-guest" aria-expanded="false" aria-controls="ags-guest-options"
-              onclick="window.agsOpenGuestPlay && window.agsOpenGuestPlay()">Play vs Computer as Guest</button>
+            <button id="ags-open-guest" class="btn btn-guest" aria-expanded="false" aria-controls="ags-guest-options" data-click="window.agsOpenGuestPlay && window.agsOpenGuestPlay()">Play vs Computer as Guest</button>
             <div id="ags-guest-options" class="guest-options" hidden>
               <label class="auth-field" for="player-name-input">
                 <span>Guest name</span>
                 <input type="text" id="player-name-input" class="name-input" placeholder="How should we call you?" maxlength="20" autocomplete="nickname" />
               </label>
-              <button class="btn btn-secondary" onclick="showColorSelect('computer')">Continue to Game Setup</button>
+              <button class="btn btn-secondary" data-click="showColorSelect('computer')">Continue to Game Setup</button>
             </div>
           </div>
           <section id="ags-friends-panel" class="friends-panel" style="display:none">
             <div class="friends-header">
               <h3>Friends</h3>
-              <button class="btn-mini" onclick="window.agsRefreshFriends && window.agsRefreshFriends()">Refresh</button>
+              <button class="btn-mini" data-click="window.agsRefreshFriends && window.agsRefreshFriends()">Refresh</button>
             </div>
             <p id="ags-friends-message" class="auth-message"></p>
             <div class="friends-section" id="ags-section-friends">
@@ -166,12 +164,11 @@
               <div id="ags-friends-outgoing" class="friends-list"></div>
             </div>
             <div class="friends-add-row">
-              <button class="btn-mini" id="btn-add-friend-expand" onclick="window.agsToggleAddFriend && window.agsToggleAddFriend()">+ Add Friend</button>
-              <button class="btn-mini" id="btn-copy-invite-link" onclick="window.agsCopyInviteLink && window.agsCopyInviteLink()">Share Invite Link</button>
+              <button class="btn-mini" id="btn-add-friend-expand" data-click="window.agsToggleAddFriend && window.agsToggleAddFriend()">+ Add Friend</button>
+              <button class="btn-mini" id="btn-copy-invite-link" data-click="window.agsCopyInviteLink && window.agsCopyInviteLink()">Share Invite Link</button>
             </div>
             <div id="ags-invite-share-row" style="margin-top:6px"></div>
-            <form id="ags-add-friend-form" class="add-friend-form" style="display:none"
-              onsubmit="event.preventDefault();window.agsAddFriendByEmail&&window.agsAddFriendByEmail()">
+            <form id="ags-add-friend-form" class="add-friend-form" style="display:none" data-submit="event.preventDefault();window.agsAddFriendByEmail&&window.agsAddFriendByEmail()">
               <label for="ags-add-friend-email">Add by email</label>
               <div class="add-friend-controls">
                 <input type="email" id="ags-add-friend-email" class="name-input" placeholder="friend@example.com"
@@ -186,12 +183,12 @@
         <div id="home-leaderboard-panel" class="leaderboard-panel">
           <h3 class="lb-heading">Leaderboard</h3>
           <div class="lb-view-toggle" role="tablist" aria-label="Leaderboard time range">
-            <button type="button" class="lb-view-btn active" data-lb-view="rating" role="tab" aria-selected="true" onclick="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('rating')">All Time</button>
-            <button type="button" class="lb-view-btn" data-lb-view="weekly" role="tab" aria-selected="false" onclick="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('weekly')">This Week</button>
+            <button type="button" class="lb-view-btn active" data-lb-view="rating" data-click="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('rating')" role="tab" aria-selected="true">All Time</button>
+            <button type="button" class="lb-view-btn" data-lb-view="weekly" data-click="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('weekly')" role="tab" aria-selected="false">This Week</button>
           </div>
           <div class="lb-list" id="lb-list"></div>
-          <p class="lb-signin-cta" id="lb-signin-cta" role="button" tabindex="0" onclick="window.agsLogin && window.agsLogin()" onkeydown="if(event.key==='Enter'||event.key===' ')window.agsLogin&&window.agsLogin()">Sign in to appear on the leaderboard →</p>
-          <button class="btn-lb-reset" onclick="resetLeaderboard()">Reset</button>
+          <p class="lb-signin-cta" id="lb-signin-cta" role="button" tabindex="0" data-click="window.agsLogin && window.agsLogin()" data-keydown="if(event.key==='Enter'||event.key===' ')window.agsLogin&&window.agsLogin()">Sign in to appear on the leaderboard →</p>
+          <button class="btn-lb-reset" data-click="resetLeaderboard()">Reset</button>
         </div>
       </div>
     </div>
@@ -205,19 +202,18 @@
           <p class="auth-eyebrow">Player Profile</p>
           <div class="profile-name-row">
             <h2 id="profile-display-name">Player</h2>
-            <button class="btn-edit-name" id="profile-btn-edit-name" style="display:none" title="Edit display name" aria-label="Edit display name" onclick="window.agsProfileEditName && window.agsProfileEditName()">✏</button>
+            <button class="btn-edit-name" id="profile-btn-edit-name" style="display:none" title="Edit display name" aria-label="Edit display name" data-click="window.agsProfileEditName && window.agsProfileEditName()">✏</button>
           </div>
           <div id="profile-name-edit-form" style="display:none;margin-top:8px">
-            <input type="text" id="profile-name-edit-input" class="name-edit-input" maxlength="48" placeholder="New display name"
-              onkeydown="if(event.key==='Enter') window.agsProfileSaveName && window.agsProfileSaveName(); if(event.key==='Escape') window.agsProfileCancelEdit && window.agsProfileCancelEdit()" />
+            <input type="text" id="profile-name-edit-input" class="name-edit-input" maxlength="48" placeholder="New display name" data-keydown="if(event.key==='Enter') window.agsProfileSaveName && window.agsProfileSaveName(); if(event.key==='Escape') window.agsProfileCancelEdit && window.agsProfileCancelEdit()" />
             <div class="name-edit-actions" style="margin-top:8px">
-              <button class="btn btn-primary" id="profile-btn-save-name" onclick="window.agsProfileSaveName && window.agsProfileSaveName()">Save</button>
-              <button class="btn btn-secondary" onclick="window.agsProfileCancelEdit && window.agsProfileCancelEdit()">Cancel</button>
+              <button class="btn btn-primary" id="profile-btn-save-name" data-click="window.agsProfileSaveName && window.agsProfileSaveName()">Save</button>
+              <button class="btn btn-secondary" data-click="window.agsProfileCancelEdit && window.agsProfileCancelEdit()">Cancel</button>
             </div>
             <p id="profile-name-edit-message" class="auth-message" aria-live="polite"></p>
           </div>
         </div>
-        <button class="btn-mini" onclick="showScreen('home')">Back</button>
+        <button class="btn-mini" data-click="showScreen('home')">Back</button>
       </div>
       <div id="profile-auth-gate" class="profile-auth-gate" style="display:none">
         <div class="profile-auth-gate-copy">
@@ -228,15 +224,15 @@
           </div>
         </div>
         <div class="profile-auth-gate-actions">
-          <button class="btn btn-primary" onclick="window.agsOpenLogin && window.agsOpenLogin()">Sign In</button>
-          <button class="btn btn-secondary" onclick="window.agsOpenRegister && window.agsOpenRegister()">Create Free Account</button>
+          <button class="btn btn-primary" data-click="window.agsOpenLogin && window.agsOpenLogin()">Sign In</button>
+          <button class="btn btn-secondary" data-click="window.agsOpenRegister && window.agsOpenRegister()">Create Free Account</button>
         </div>
       </div>
       <div class="profile-tabs" role="tablist" aria-label="Profile sections">
-        <button type="button" class="profile-tab active" data-profile-tab="overview" onclick="window.agsShowProfileTab && window.agsShowProfileTab('overview')" role="tab">Overview</button>
-        <button type="button" class="profile-tab" data-profile-tab="stats" onclick="window.agsShowProfileTab && window.agsShowProfileTab('stats')" role="tab">Chess Stats</button>
-        <button type="button" class="profile-tab" data-profile-tab="history" onclick="window.agsShowProfileTab && window.agsShowProfileTab('history')" role="tab">History</button>
-        <button type="button" class="profile-tab" data-profile-tab="account" onclick="window.agsShowProfileTab && window.agsShowProfileTab('account')" role="tab">Account</button>
+        <button type="button" class="profile-tab active" data-profile-tab="overview" data-click="window.agsShowProfileTab && window.agsShowProfileTab('overview')" role="tab">Overview</button>
+        <button type="button" class="profile-tab" data-profile-tab="stats" data-click="window.agsShowProfileTab && window.agsShowProfileTab('stats')" role="tab">Chess Stats</button>
+        <button type="button" class="profile-tab" data-profile-tab="history" data-click="window.agsShowProfileTab && window.agsShowProfileTab('history')" role="tab">History</button>
+        <button type="button" class="profile-tab" data-profile-tab="account" data-click="window.agsShowProfileTab && window.agsShowProfileTab('account')" role="tab">Account</button>
       </div>
       <div class="profile-panels">
       <div class="profile-panel active" data-profile-panel="overview">
@@ -260,7 +256,7 @@
       </div>
       <div id="profile-friend-card" class="profile-friend-card">
         <p id="profile-friend-status" class="auth-message"></p>
-        <button class="btn btn-primary" id="profile-add-friend-btn" onclick="window.agsProfileAddFriend && window.agsProfileAddFriend()">Add Friend</button>
+        <button class="btn btn-primary" id="profile-add-friend-btn" data-click="window.agsProfileAddFriend && window.agsProfileAddFriend()">Add Friend</button>
       </div>
       </div>
       <div class="profile-panel" data-profile-panel="stats">
@@ -338,7 +334,7 @@
             <strong>Delete account</strong>
             <span>Request permanent deletion of your account and game data.</span>
           </div>
-          <button type="button" class="btn btn-danger" onclick="window.agsOpenDeleteAccount && window.agsOpenDeleteAccount()">Delete Account</button>
+          <button type="button" class="btn btn-danger" data-click="window.agsOpenDeleteAccount && window.agsOpenDeleteAccount()">Delete Account</button>
         </div>
       </section>
       </div>
@@ -369,8 +365,7 @@
           <h2 id="offline-friends-title">Offline friends</h2>
           <p id="offline-friends-description">Open a friend’s profile to view their stats and match history.</p>
         </div>
-        <button type="button" id="offline-friends-close" class="offline-friends-close"
-          onclick="window.agsCloseOfflineFriends && window.agsCloseOfflineFriends()">Close</button>
+        <button type="button" id="offline-friends-close" class="offline-friends-close" data-click="window.agsCloseOfflineFriends && window.agsCloseOfflineFriends()">Close</button>
       </header>
       <div id="offline-friends-list" class="offline-friends-list"></div>
     </section>
@@ -386,11 +381,11 @@
 
       <!-- Referral link (?invitedBy= only, no live match): account creation is the primary CTA. -->
       <div id="invite-landing-actions-default" class="invite-landing-actions">
-        <button class="btn btn-primary btn-invite-cta" onclick="window.agsOpenRegister && window.agsOpenRegister()">Create Account — Play Now</button>
+        <button class="btn btn-primary btn-invite-cta" data-click="window.agsOpenRegister && window.agsOpenRegister()">Create Account — Play Now</button>
       </div>
       <div id="invite-landing-divider-default" class="auth-divider invite-divider"><span>already have an account?</span></div>
       <div id="invite-landing-signin-default" class="invite-signin-row">
-        <button class="btn btn-google invite-google" onclick="window.agsLogin && window.agsLogin()">
+        <button class="btn btn-google invite-google" data-click="window.agsLogin && window.agsLogin()">
           <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
             <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -400,15 +395,15 @@
           Sign in with Google
         </button>
         <div class="invite-password-row">
-          <button class="btn btn-secondary invite-pw" onclick="window.agsOpenLogin && window.agsOpenLogin()">Log in with password</button>
-          <button class="btn btn-secondary invite-forgot" onclick="window.agsOpenForgotPassword && window.agsOpenForgotPassword()">Forgot password?</button>
+          <button class="btn btn-secondary invite-pw" data-click="window.agsOpenLogin && window.agsOpenLogin()">Log in with password</button>
+          <button class="btn btn-secondary invite-forgot" data-click="window.agsOpenForgotPassword && window.agsOpenForgotPassword()">Forgot password?</button>
         </div>
       </div>
 
       <!-- Live match link (?peer=): sign in (Google/Apple) or jump in as a guest; account
            creation is deferred to the post-game nudge (see game-over-invite-prompt in app.js). -->
       <div id="invite-landing-actions-live" class="invite-landing-actions" style="display:none">
-        <button class="btn btn-google invite-google" onclick="window.agsLogin && window.agsLogin()">
+        <button class="btn btn-google invite-google" data-click="window.agsLogin && window.agsLogin()">
           <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
             <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -417,18 +412,18 @@
           </svg>
           Sign in with Google
         </button>
-        <button id="invite-live-apple" class="btn btn-apple" style="display:none" onclick="window.agsLoginApple && window.agsLoginApple()">
+        <button id="invite-live-apple" class="btn btn-apple" style="display:none" data-click="window.agsLoginApple && window.agsLoginApple()">
           <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0">
             <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-3.038 1.5-.12-1.08.42-2.24 1.05-2.97.71-.84 1.99-1.46 3.16-1.61.02.13.005.27.005.4zM20.5 17.04c-.41.93-.62 1.34-1.15 2.16-.74 1.16-1.79 2.61-3.08 2.62-1.15.01-1.44-.75-3-.74-1.56.01-1.88.75-3.03.74-1.29-.01-2.28-1.31-3.02-2.47-2.07-3.24-2.29-7.04-1.01-9.06.91-1.43 2.34-2.27 3.69-2.27 1.37 0 2.23.75 3.36.75 1.1 0 1.77-.75 3.36-.75 1.2 0 2.47.65 3.38 1.78-2.97 1.63-2.49 5.87.12 7.04z"/>
           </svg>
           Sign in with Apple
         </button>
-        <button class="btn btn-secondary invite-guest-cta" onclick="window.agsContinueAsGuestFromInvite && window.agsContinueAsGuestFromInvite()">Play without an account</button>
+        <button class="btn btn-secondary invite-guest-cta" data-click="window.agsContinueAsGuestFromInvite && window.agsContinueAsGuestFromInvite()">Play without an account</button>
         <div class="auth-divider invite-divider"><span>already have an account?</span></div>
-        <button class="btn btn-secondary invite-pw" onclick="window.agsOpenLogin && window.agsOpenLogin()">Log in with password</button>
+        <button class="btn btn-secondary invite-pw" data-click="window.agsOpenLogin && window.agsOpenLogin()">Log in with password</button>
       </div>
 
-      <button class="btn btn-back invite-back" onclick="window.showScreen && window.showScreen('home')">← Just browsing</button>
+      <button class="btn btn-back invite-back" data-click="window.showScreen && window.showScreen('home')">← Just browsing</button>
     </div>
   </div>
 
@@ -452,12 +447,12 @@
         </div>
         <p id="ags-login-message" class="auth-message"></p>
         <div class="auth-form-actions">
-          <button class="btn btn-primary" id="ags-login-submit" onclick="window.agsPasswordLogin && window.agsPasswordLogin()">Sign In</button>
-          <button class="btn btn-secondary" id="ags-login-forgot" onclick="window.agsOpenForgotPassword && window.agsOpenForgotPassword()">Forgot Password?</button>
+          <button class="btn btn-primary" id="ags-login-submit" data-click="window.agsPasswordLogin && window.agsPasswordLogin()">Sign In</button>
+          <button class="btn btn-secondary" id="ags-login-forgot" data-click="window.agsOpenForgotPassword && window.agsOpenForgotPassword()">Forgot Password?</button>
         </div>
-        <button class="auth-login-link" onclick="window.agsLogin && window.agsLogin()">Prefer Google? <strong>Continue with Google</strong></button>
+        <button class="auth-login-link" data-click="window.agsLogin && window.agsLogin()">Prefer Google? <strong>Continue with Google</strong></button>
       </div>
-      <button class="btn btn-back" onclick="showScreen('home')">← Back</button>
+      <button class="btn btn-back" data-click="showScreen('home')">← Back</button>
     </div>
   </div>
 
@@ -473,7 +468,7 @@
           <input type="email" id="ags-forgot-email" class="name-input" placeholder="you@example.com" autocomplete="email" required />
         </label>
         <div class="auth-form-actions">
-          <button class="btn btn-primary" id="ags-forgot-submit" onclick="window.agsRequestPasswordReset && window.agsRequestPasswordReset()">Send Reset Code</button>
+          <button class="btn btn-primary" id="ags-forgot-submit" data-click="window.agsRequestPasswordReset && window.agsRequestPasswordReset()">Send Reset Code</button>
         </div>
         <div id="ags-reset-fields" class="password-reset-fields" hidden>
           <p class="auth-helper">Check your email, then enter the verification code and a new password below.</p>
@@ -489,13 +484,13 @@
             </div>
           </div>
           <div class="auth-form-actions">
-            <button class="btn btn-primary" id="ags-reset-submit" onclick="window.agsCompletePasswordReset && window.agsCompletePasswordReset()">Set New Password</button>
+            <button class="btn btn-primary" id="ags-reset-submit" data-click="window.agsCompletePasswordReset && window.agsCompletePasswordReset()">Set New Password</button>
           </div>
         </div>
         <p id="ags-forgot-message" class="auth-message" aria-live="polite"></p>
-        <button class="auth-login-link" onclick="window.agsOpenLogin && window.agsOpenLogin()">Remembered it? <strong>Back to sign in</strong></button>
+        <button class="auth-login-link" data-click="window.agsOpenLogin && window.agsOpenLogin()">Remembered it? <strong>Back to sign in</strong></button>
       </div>
-      <button class="btn btn-back" onclick="showScreen('login')">← Back</button>
+      <button class="btn btn-back" data-click="showScreen('login')">← Back</button>
     </div>
   </div>
 
@@ -528,11 +523,11 @@
         </label>
         <p id="ags-register-message" class="auth-message"></p>
         <div class="auth-form-actions">
-          <button class="btn btn-primary" id="ags-register-submit" onclick="window.agsRegister && window.agsRegister()">Create Free Account</button>
+          <button class="btn btn-primary" id="ags-register-submit" data-click="window.agsRegister && window.agsRegister()">Create Free Account</button>
         </div>
-        <button class="auth-login-link" onclick="showScreen('login')">Already have an account? <strong>Sign in</strong></button>
+        <button class="auth-login-link" data-click="showScreen('login')">Already have an account? <strong>Sign in</strong></button>
       </div>
-      <button class="btn btn-back" onclick="showScreen('home')">← Back</button>
+      <button class="btn btn-back" data-click="showScreen('home')">← Back</button>
     </div>
   </div>
 
@@ -579,8 +574,8 @@
       <div class="legal-action-bar">
         <p id="ags-legal-message" class="auth-message" role="status" aria-live="polite"></p>
         <div class="auth-form-actions">
-          <button class="btn btn-primary" id="ags-legal-accept" onclick="window.agsAcceptLegal && window.agsAcceptLegal()">Review documents to continue</button>
-          <button class="btn btn-secondary legal-signout" onclick="window.agsDeclineLegal && window.agsDeclineLegal()">Sign Out</button>
+          <button class="btn btn-primary" id="ags-legal-accept" data-click="window.agsAcceptLegal && window.agsAcceptLegal()">Review documents to continue</button>
+          <button class="btn btn-secondary legal-signout" data-click="window.agsDeclineLegal && window.agsDeclineLegal()">Sign Out</button>
         </div>
       </div>
     </div>
@@ -619,16 +614,16 @@
     <div class="color-select-container">
       <h2>Choose Your Color</h2>
       <div class="color-options">
-        <button class="color-btn white-btn" onclick="selectColor('white')">
+        <button class="color-btn white-btn" data-click="selectColor('white')">
           <span class="piece-icon white" data-static-piece data-piece-type="king" data-piece-color="white" aria-hidden="true"></span>
           White
         </button>
-        <button class="color-btn black-btn" onclick="selectColor('black')">
+        <button class="color-btn black-btn" data-click="selectColor('black')">
           <span class="piece-icon black" data-static-piece data-piece-type="king" data-piece-color="black" aria-hidden="true"></span>
           Black
         </button>
       </div>
-      <button class="btn btn-back" onclick="showScreen('home')">← Back</button>
+      <button class="btn btn-back" data-click="showScreen('home')">← Back</button>
     </div>
   </div>
 
@@ -638,7 +633,7 @@
       <h2>Choose Your Piece Color</h2>
       <p class="piece-color-sub" id="piece-color-sub"></p>
       <div class="piece-color-options" id="piece-color-options"></div>
-      <button class="btn btn-back" onclick="showScreen('color-select')">← Back</button>
+      <button class="btn btn-back" data-click="showScreen('color-select')">← Back</button>
     </div>
   </div>
 
@@ -647,20 +642,20 @@
     <div class="difficulty-container">
       <h2>Choose Difficulty</h2>
       <div class="difficulty-options">
-        <button class="diff-btn easy"   onclick="startVsComputer('easy')">
+        <button class="diff-btn easy" data-click="startVsComputer('easy')">
           <span>Easy</span>
           <small>For beginners</small>
         </button>
-        <button class="diff-btn medium" onclick="startVsComputer('medium')">
+        <button class="diff-btn medium" data-click="startVsComputer('medium')">
           <span>Medium</span>
           <small>A real challenge</small>
         </button>
-        <button class="diff-btn hard"   onclick="startVsComputer('hard')">
+        <button class="diff-btn hard" data-click="startVsComputer('hard')">
           <span>Hard</span>
           <small>Expert level</small>
         </button>
       </div>
-      <button class="btn btn-back" onclick="showScreen('piece-color')">← Back</button>
+      <button class="btn btn-back" data-click="showScreen('piece-color')">← Back</button>
     </div>
   </div>
 
@@ -702,15 +697,15 @@
 
       <aside class="game-sidebar right" aria-label="Match information and controls">
         <div class="match-tabs" role="tablist" aria-label="Match panel">
-          <button type="button" class="match-tab active" data-match-tab="moves" onclick="showMatchTab('moves')" role="tab">Moves</button>
-          <button type="button" class="match-tab" data-match-tab="chat" onclick="showMatchTab('chat')" role="tab" id="match-chat-tab">Chat</button>
-          <button type="button" class="match-tab" data-match-tab="more" onclick="showMatchTab('more')" role="tab">More</button>
+          <button type="button" class="match-tab active" data-match-tab="moves" data-click="showMatchTab('moves')" role="tab">Moves</button>
+          <button type="button" class="match-tab" data-match-tab="chat" data-click="showMatchTab('chat')" role="tab" id="match-chat-tab">Chat</button>
+          <button type="button" class="match-tab" data-match-tab="more" data-click="showMatchTab('more')" role="tab">More</button>
         </div>
         <div class="match-panel active" data-match-panel="moves">
           <div class="move-history">
             <div class="match-panel-heading">
               <h3>Moves</h3>
-              <button type="button" class="match-icon-button" onclick="flipBoard()" aria-label="Flip board">↻ Flip</button>
+              <button type="button" class="match-icon-button" data-click="flipBoard()" aria-label="Flip board">↻ Flip</button>
             </div>
             <div id="move-list"></div>
           </div>
@@ -723,21 +718,21 @@
             </div>
             <div class="online-chat-messages" id="online-chat-messages"></div>
             <div class="online-chat-compose">
-              <input type="text" id="online-chat-input" class="online-chat-input" placeholder="Message your opponent" maxlength="280" onkeydown="handleChatInputKeydown(event)" disabled />
-              <button class="btn btn-primary btn-chat-send" id="btn-chat-send" onclick="sendChatMessage()" disabled>Send</button>
+              <input type="text" id="online-chat-input" class="online-chat-input" placeholder="Message your opponent" maxlength="280" data-keydown="handleChatInputKeydown(event)" disabled />
+              <button class="btn btn-primary btn-chat-send" id="btn-chat-send" data-click="sendChatMessage()" disabled>Send</button>
             </div>
             <p id="online-chat-message" class="online-chat-notice" aria-live="polite"></p>
           </div>
           <p class="match-panel-empty" id="match-chat-unavailable">Chat is available in online games.</p>
         </div>
         <div class="match-panel match-more-panel" data-match-panel="more">
-          <button class="btn btn-hint" id="btn-hint" onclick="showHint()">Get Hint</button>
-          <button class="btn btn-video-chat" id="btn-video-chat" onclick="startVideoChat()" style="display:none">Video Chat</button>
-          <button type="button" class="btn btn-secondary" id="btn-match-safety" onclick="openMatchSafety()" style="display:none">Safety</button>
-          <button type="button" class="btn btn-secondary" id="btn-match-privacy" onclick="window.agsOpenPrivacyChoices && window.agsOpenPrivacyChoices()">Privacy &amp; Support</button>
-          <button class="btn btn-secondary" id="btn-new-game" onclick="confirmNewGame()" style="display:none">New Game</button>
-          <button class="btn btn-danger" id="btn-resign" onclick="resignGame()" style="display:none">Resign</button>
-          <button class="btn btn-home" onclick="confirmGoHome()">Leave game</button>
+          <button class="btn btn-hint" id="btn-hint" data-click="showHint()">Get Hint</button>
+          <button class="btn btn-video-chat" id="btn-video-chat" data-click="startVideoChat()" style="display:none">Video Chat</button>
+          <button type="button" class="btn btn-secondary" id="btn-match-safety" data-click="openMatchSafety()" style="display:none">Safety</button>
+          <button type="button" class="btn btn-secondary" id="btn-match-privacy" data-click="window.agsOpenPrivacyChoices && window.agsOpenPrivacyChoices()">Privacy &amp; Support</button>
+          <button class="btn btn-secondary" id="btn-new-game" data-click="confirmNewGame()" style="display:none">New Game</button>
+          <button class="btn btn-danger" id="btn-resign" data-click="resignGame()" style="display:none">Resign</button>
+          <button class="btn btn-home" data-click="confirmGoHome()">Leave game</button>
         </div>
       </aside>
 
@@ -760,17 +755,17 @@
         <p class="link-label">Share this link with your friend:</p>
         <div class="invite-link-box">
           <span id="invite-link-text" class="invite-link-text"></span>
-          <button class="btn-copy" id="btn-copy" onclick="copyInviteLink()">Copy</button>
+          <button class="btn-copy" id="btn-copy" data-click="copyInviteLink()">Copy</button>
         </div>
         <div class="invite-actions">
-          <button class="btn btn-secondary" onclick="shareInviteLink()">📤 Share…</button>
-          <button class="btn btn-secondary" onclick="showContactsForInvite()">👤 Send to Contact</button>
+          <button class="btn btn-secondary" data-click="shareInviteLink()">📤 Share…</button>
+          <button class="btn btn-secondary" data-click="showContactsForInvite()">👤 Send to Contact</button>
         </div>
         <div id="waiting-share-row" style="margin-top:4px"></div>
       </div>
 
       <div id="waiting-spinner" class="waiting-spinner" style="display:none"></div>
-      <button class="btn btn-back" style="margin-top:8px" id="btn-waiting-cancel" onclick="cancelWaiting()">← Cancel</button>
+      <button class="btn btn-back" style="margin-top:8px" id="btn-waiting-cancel" data-click="cancelWaiting()">← Cancel</button>
     </div>
   </div>
 
@@ -779,13 +774,13 @@
     <div class="contacts-container">
       <h2>Send Invite</h2>
       <div class="contacts-list" id="contacts-list"></div>
-      <button class="btn btn-add" onclick="showAddContact()">+ Add Contact</button>
+      <button class="btn btn-add" data-click="showAddContact()">+ Add Contact</button>
       <div class="add-contact-form" id="add-contact-form" style="display:none">
         <input type="text" id="contact-input" placeholder="Phone number or email" autocomplete="off" />
-        <button class="btn btn-primary"   onclick="addContact()">Add</button>
-        <button class="btn btn-secondary" onclick="hideAddContact()">Cancel</button>
+        <button class="btn btn-primary" data-click="addContact()">Add</button>
+        <button class="btn btn-secondary" data-click="hideAddContact()">Cancel</button>
       </div>
-      <button class="btn btn-back" onclick="backFromContacts()">← Back</button>
+      <button class="btn btn-back" data-click="backFromContacts()">← Back</button>
     </div>
   </div>
 
@@ -793,7 +788,7 @@
   <div id="screen-spectator" class="screen">
     <div class="spectator-container">
       <div class="spectator-header">
-        <button class="btn-back spectator-back" onclick="window.agsStopWatching && window.agsStopWatching()">← Stop Watching</button>
+        <button class="btn-back spectator-back" data-click="window.agsStopWatching && window.agsStopWatching()">← Stop Watching</button>
         <div class="spectator-players">
           <span id="spectator-white-name" class="spectator-player-name white-player">White</span>
           <span class="spectator-vs">vs</span>
@@ -814,11 +809,11 @@
         </div>
       </div>
       <div id="spectator-replay-controls" class="spectator-replay-controls" style="display:none">
-        <button class="replay-btn" title="Start" onclick="window.agsSpectatorFirst()">&#x23EE;</button>
-        <button class="replay-btn" title="Previous move" onclick="window.agsSpectatorPrev()">&#x25C0; Prev</button>
+        <button class="replay-btn" title="Start" data-click="window.agsSpectatorFirst()">&#x23EE;</button>
+        <button class="replay-btn" title="Previous move" data-click="window.agsSpectatorPrev()">&#x25C0; Prev</button>
         <span id="spectator-replay-pos" class="replay-pos"></span>
-        <button class="replay-btn" title="Next move" onclick="window.agsSpectatorNext()">Next &#x25B6;</button>
-        <button class="replay-btn" title="End" onclick="window.agsSpectatorLast()">&#x23ED;</button>
+        <button class="replay-btn" title="Next move" data-click="window.agsSpectatorNext()">Next &#x25B6;</button>
+        <button class="replay-btn" title="End" data-click="window.agsSpectatorLast()">&#x23ED;</button>
       </div>
       <div id="spectator-analysis" class="spectator-analysis" style="display:none">
         <div class="spectator-analysis-head">
@@ -847,9 +842,10 @@
       <h2 id="game-over-title">Game Over</h2>
       <p id="game-over-message"></p>
       <div class="modal-buttons">
-        <button class="btn btn-primary"   id="btn-play-again" onclick="startNewGame()">Play Again</button>
-        <button class="btn btn-primary"   id="btn-rematch"    onclick="requestRematch()" style="display:none">Rematch</button>
-        <button class="btn btn-secondary" id="btn-add-match-friend" onclick="window.agsRequestLastOpponent && window.agsRequestLastOpponent()" style="display:none">Add Opponent</button>
+        <button class="btn btn-primary"   id="btn-play-again" data-click="playAgainFromGameOver()">Play Again</button>
+        <button class="btn btn-secondary" id="btn-game-over-home" data-click="startNewGame()">Main Menu</button>
+        <button class="btn btn-primary"   id="btn-rematch" data-click="requestRematch()" style="display:none">Rematch</button>
+        <button class="btn btn-secondary" id="btn-add-match-friend" data-click="window.agsRequestLastOpponent && window.agsRequestLastOpponent()" style="display:none">Add Opponent</button>
       </div>
       <p id="rematch-message" class="rematch-message"></p>
       <p id="game-over-countdown" class="game-over-countdown"></p>
@@ -864,8 +860,8 @@
       <h2 id="resume-match-title">Unfinished Game</h2>
       <p>You have a game in progress vs <strong id="resume-match-opponent">Opponent</strong>. Resume it?</p>
       <div class="modal-buttons">
-        <button type="button" class="btn btn-primary" onclick="window.agsResumeActiveMatch && window.agsResumeActiveMatch()">Resume Game</button>
-        <button type="button" class="btn btn-secondary" onclick="window.agsDiscardActiveMatch && window.agsDiscardActiveMatch()">Discard</button>
+        <button type="button" class="btn btn-primary" data-click="window.agsResumeActiveMatch && window.agsResumeActiveMatch()">Resume Game</button>
+        <button type="button" class="btn btn-secondary" data-click="window.agsDiscardActiveMatch && window.agsDiscardActiveMatch()">Discard</button>
       </div>
     </div>
   </div>
@@ -875,12 +871,12 @@
       <h2 id="match-safety-title">Match Safety</h2>
       <p id="match-safety-opponent">Choose an action for this opponent.</p>
       <div class="safety-action-list">
-        <button type="button" class="btn btn-secondary" onclick="reportCurrentOpponent()">Report Player</button>
-        <button type="button" class="btn btn-danger" id="btn-block-current-opponent" onclick="blockCurrentOpponent()">Block Player</button>
+        <button type="button" class="btn btn-secondary" data-click="reportCurrentOpponent()">Report Player</button>
+        <button type="button" class="btn btn-danger" id="btn-block-current-opponent" data-click="blockCurrentOpponent()">Block Player</button>
       </div>
       <p id="match-safety-message" class="auth-message" aria-live="polite"></p>
       <div class="modal-buttons">
-        <button type="button" class="btn btn-secondary" onclick="closeModal('match-safety-modal')">Close</button>
+        <button type="button" class="btn btn-secondary" data-click="closeModal('match-safety-modal')">Close</button>
       </div>
     </div>
   </div>
@@ -905,8 +901,8 @@
       </label>
       <p id="report-player-message" class="auth-message" aria-live="polite"></p>
       <div class="modal-buttons">
-        <button type="button" class="btn btn-primary" id="btn-submit-player-report" onclick="submitSafetyReport()" disabled>Submit Report</button>
-        <button type="button" class="btn btn-secondary" onclick="closeSafetyReport()">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-submit-player-report" data-click="submitSafetyReport()" disabled>Submit Report</button>
+        <button type="button" class="btn btn-secondary" data-click="closeSafetyReport()">Cancel</button>
       </div>
     </div>
   </div>
@@ -918,12 +914,12 @@
       <p>Permanently deleting your account removes access to your profile, friends, stats, achievements, and match history. This cannot be undone.</p>
       <label class="safety-field">
         <span>Type <strong>DELETE</strong> to confirm</span>
-        <input id="delete-account-confirmation" type="text" autocomplete="off" autocapitalize="characters" oninput="window.agsUpdateDeleteConfirmation && window.agsUpdateDeleteConfirmation()" disabled />
+        <input id="delete-account-confirmation" type="text" autocomplete="off" autocapitalize="characters" data-input="window.agsUpdateDeleteConfirmation && window.agsUpdateDeleteConfirmation()" disabled />
       </label>
       <p id="delete-account-message" class="auth-message" aria-live="polite"></p>
       <div class="modal-buttons">
-        <button type="button" class="btn btn-danger" id="delete-account-submit" onclick="window.agsConfirmDeleteAccount && window.agsConfirmDeleteAccount()" disabled>Delete My Account</button>
-        <button type="button" class="btn btn-secondary" onclick="window.agsCloseDeleteAccount && window.agsCloseDeleteAccount()">Cancel</button>
+        <button type="button" class="btn btn-danger" id="delete-account-submit" data-click="window.agsConfirmDeleteAccount && window.agsConfirmDeleteAccount()" disabled>Delete My Account</button>
+        <button type="button" class="btn btn-secondary" data-click="window.agsCloseDeleteAccount && window.agsCloseDeleteAccount()">Cancel</button>
       </div>
     </div>
   </div>
@@ -934,7 +930,7 @@
       <h2>🏆 Achievements</h2>
       <div id="achievements-grid" class="achievements-grid"></div>
       <div class="modal-buttons">
-        <button class="btn btn-secondary" onclick="window.agsCloseAchievements && window.agsCloseAchievements()">Close</button>
+        <button class="btn btn-secondary" data-click="window.agsCloseAchievements && window.agsCloseAchievements()">Close</button>
       </div>
     </div>
   </div>
@@ -955,7 +951,7 @@
           <span class="lq-stat-label">Est. wait</span>
         </div>
       </div>
-      <button class="btn btn-secondary" id="login-queue-cancel" onclick="window.agsCancelLoginQueue && window.agsCancelLoginQueue()">Leave queue</button>
+      <button class="btn btn-secondary" id="login-queue-cancel" data-click="window.agsCancelLoginQueue && window.agsCancelLoginQueue()">Leave queue</button>
     </div>
   </div>
 
@@ -967,8 +963,8 @@
     <p class="vcn-title">🔄 Rematch</p>
     <p class="vcn-sub">Your opponent wants a rematch!</p>
     <div class="vcn-buttons">
-      <button class="btn btn-primary"   onclick="acceptRematch()">Accept</button>
-      <button class="btn btn-secondary" onclick="declineRematch()">Decline</button>
+      <button class="btn btn-primary" data-click="acceptRematch()">Accept</button>
+      <button class="btn btn-secondary" data-click="declineRematch()">Decline</button>
     </div>
   </div>
 
@@ -978,8 +974,8 @@
     <p class="vcn-sub" id="friend-match-invite-name">A friend invited you to play</p>
     <p class="vcn-sub muted" id="friend-match-invite-detail">Accept to join the match now.</p>
     <div class="vcn-buttons">
-      <button class="btn btn-primary" onclick="acceptFriendMatchInvite()">Accept</button>
-      <button class="btn btn-secondary" onclick="declineFriendMatchInvite()">Decline</button>
+      <button class="btn btn-primary" data-click="acceptFriendMatchInvite()">Accept</button>
+      <button class="btn btn-secondary" data-click="declineFriendMatchInvite()">Decline</button>
     </div>
   </div>
 
@@ -991,9 +987,9 @@
       <div class="video-status" id="video-status">Calling…</div>
     </div>
     <div class="video-controls">
-      <button class="video-ctrl-btn" id="btn-toggle-audio" onclick="toggleAudio()" title="Mute mic" aria-label="Mute mic">🎤</button>
-      <button class="video-ctrl-btn" id="btn-toggle-cam"   onclick="toggleVideoFeed()" title="Toggle camera" aria-label="Toggle camera">📹</button>
-      <button class="video-ctrl-btn danger" onclick="endVideoChat()" title="End call" aria-label="End call">📵</button>
+      <button class="video-ctrl-btn" id="btn-toggle-audio" data-click="toggleAudio()" title="Mute mic" aria-label="Mute mic">🎤</button>
+      <button class="video-ctrl-btn" id="btn-toggle-cam" data-click="toggleVideoFeed()" title="Toggle camera" aria-label="Toggle camera">📹</button>
+      <button class="video-ctrl-btn danger" data-click="endVideoChat()" title="End call" aria-label="End call">📵</button>
     </div>
   </div>
 
@@ -1002,14 +998,13 @@
     <p class="vcn-title">📹 Video Chat</p>
     <p class="vcn-sub">Your opponent wants to video chat</p>
     <div class="vcn-buttons">
-      <button class="btn btn-primary"   onclick="acceptVideoCall()">Accept</button>
-      <button class="btn btn-secondary" onclick="declineVideoCall()">Decline</button>
+      <button class="btn btn-primary" data-click="acceptVideoCall()">Accept</button>
+      <button class="btn btn-secondary" data-click="declineVideoCall()">Decline</button>
     </div>
   </div>
 
   <!-- ── Privacy, legal, and support center ─────────────────────────────────── -->
-  <button type="button" id="privacy-center-button" class="privacy-center-button"
-    onclick="window.agsOpenPrivacyChoices && window.agsOpenPrivacyChoices()">
+  <button type="button" id="privacy-center-button" class="privacy-center-button" data-click="window.agsOpenPrivacyChoices && window.agsOpenPrivacyChoices()">
     Privacy &amp; Support
   </button>
 
@@ -1019,9 +1014,9 @@
       <p>Help improve Ethan's Chess by sharing device, session, referral, and gameplay events with AccelByte. No advertising.</p>
     </div>
     <div class="privacy-consent-actions">
-      <button type="button" class="btn btn-primary" onclick="window.agsChooseAnalytics && window.agsChooseAnalytics(true)">Allow analytics</button>
-      <button type="button" class="btn btn-secondary" onclick="window.agsChooseAnalytics && window.agsChooseAnalytics(false)">No thanks</button>
-      <button type="button" class="privacy-text-button" onclick="window.agsOpenPolicy && window.agsOpenPolicy('privacy')">Privacy policy</button>
+      <button type="button" class="btn btn-primary" data-click="window.agsChooseAnalytics && window.agsChooseAnalytics(true)">Allow analytics</button>
+      <button type="button" class="btn btn-secondary" data-click="window.agsChooseAnalytics && window.agsChooseAnalytics(false)">No thanks</button>
+      <button type="button" class="privacy-text-button" data-click="window.agsOpenPolicy && window.agsOpenPolicy('privacy')">Privacy policy</button>
     </div>
   </aside>
 
@@ -1031,10 +1026,10 @@
       <h2 id="privacy-center-title">Your information, your choice</h2>
       <p class="privacy-center-copy">Review the documents that govern Ethan's Chess or change optional analytics at any time.</p>
       <div class="privacy-link-grid">
-        <button type="button" onclick="window.agsOpenPolicy && window.agsOpenPolicy('privacy')">Privacy Policy</button>
-        <button type="button" onclick="window.agsOpenPolicy && window.agsOpenPolicy('terms')">Terms of Use</button>
-        <button type="button" onclick="window.agsOpenPolicy && window.agsOpenPolicy('community')">Community Standards</button>
-        <button type="button" onclick="window.agsOpenPolicy && window.agsOpenPolicy('support')">Support &amp; Contact</button>
+        <button type="button" data-click="window.agsOpenPolicy && window.agsOpenPolicy('privacy')">Privacy Policy</button>
+        <button type="button" data-click="window.agsOpenPolicy && window.agsOpenPolicy('terms')">Terms of Use</button>
+        <button type="button" data-click="window.agsOpenPolicy && window.agsOpenPolicy('community')">Community Standards</button>
+        <button type="button" data-click="window.agsOpenPolicy && window.agsOpenPolicy('support')">Support &amp; Contact</button>
       </div>
       <section class="accepted-legal-card" aria-labelledby="accepted-legal-title">
         <h3 id="accepted-legal-title">AGS agreement history</h3>
@@ -1049,8 +1044,8 @@
       </label>
       <p id="privacy-choice-status" class="auth-message" aria-live="polite"></p>
       <div class="modal-buttons">
-        <button type="button" class="btn btn-primary" onclick="window.agsSavePrivacyChoices && window.agsSavePrivacyChoices()">Save Choice</button>
-        <button type="button" class="btn btn-secondary" onclick="window.agsClosePrivacyChoices && window.agsClosePrivacyChoices()">Cancel</button>
+        <button type="button" class="btn btn-primary" data-click="window.agsSavePrivacyChoices && window.agsSavePrivacyChoices()">Save Choice</button>
+        <button type="button" class="btn btn-secondary" data-click="window.agsClosePrivacyChoices && window.agsClosePrivacyChoices()">Cancel</button>
       </div>
     </div>
   </div>
@@ -1065,7 +1060,7 @@
     <div class="ijt-top">
       <span class="ijt-icon">🎉</span>
       <p class="ijt-title" id="invite-join-name">Someone signed up via your invite!</p>
-      <button class="ijt-close" aria-label="Dismiss" onclick="this.closest('#invite-join-toast').classList.remove('show')">✕</button>
+      <button class="ijt-close" aria-label="Dismiss" data-click="this.closest('#invite-join-toast').classList.remove('show')">✕</button>
     </div>
     <p class="ijt-sub">They're ready to play — check your Friends panel.</p>
   </div>

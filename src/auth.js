@@ -47,17 +47,24 @@ function setSession(tokenData) {
     refreshToken: tokenData.refresh_token || '',
   })
   if (tokenData.access_token) {
-    // Persist across app restarts so the player stays logged in. The refresh
-    // token lives in localStorage (app-sandboxed in the Capacitor WebView).
-    localStorage.setItem(SESSION_FLAG, '1')
+    // Keep refresh tokens out of localStorage. Browser sessions can refresh
+    // during the current tab/app session, but a full browser/app restart must
+    // reauthenticate unless the platform supplies HttpOnly auth cookies.
+    sessionStorage.setItem(SESSION_FLAG, '1')
     if (tokenData.refresh_token) {
-      localStorage.setItem(REFRESH_TOKEN_KEY, tokenData.refresh_token)
+      sessionStorage.setItem(REFRESH_TOKEN_KEY, tokenData.refresh_token)
     }
+    localStorage.removeItem(SESSION_FLAG)
+    localStorage.removeItem(REFRESH_TOKEN_KEY)
   }
 }
 
 export function hasStoredSession() {
-  return !!localStorage.getItem(SESSION_FLAG)
+  // Remove legacy persisted session markers opportunistically. Their presence
+  // should not keep a user signed in after this hardening change.
+  localStorage.removeItem(SESSION_FLAG)
+  localStorage.removeItem(REFRESH_TOKEN_KEY)
+  return !!sessionStorage.getItem(SESSION_FLAG)
 }
 
 export function clearStoredSession() {
@@ -68,7 +75,7 @@ export function clearStoredSession() {
 }
 
 function getRefreshToken() {
-  return sdk.getToken()?.refreshToken || localStorage.getItem(REFRESH_TOKEN_KEY) || ''
+  return sdk.getToken()?.refreshToken || sessionStorage.getItem(REFRESH_TOKEN_KEY) || ''
 }
 
 function extractErrorMessage(payload, fallback) {
@@ -114,7 +121,9 @@ const GOOGLE_WEB_STATE = 'ethanschess_web_google'
 const GOOGLE_NONCE_KEY = 'ags_google_nonce'
 
 function buildGoogleLoginUrl(state) {
-  const nonce = `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+  const nonce = globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : Array.from(globalThis.crypto.getRandomValues(new Uint8Array(24)), byte => byte.toString(16).padStart(2, '0')).join('')
   sessionStorage.setItem(GOOGLE_NONCE_KEY, nonce)
   const params = new URLSearchParams({
     client_id: import.meta.env.VITE_ACCELBYTE_GOOGLE_CLIENT_ID,
