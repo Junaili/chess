@@ -126,28 +126,53 @@ For each non-bot ticket older than `BOT_WAIT_SECONDS` (20):
 
 ### 4.3 Claiming a bot server from AMS
 
-Fleet IDs **change on every image rollout**, so never configure a fleet ID.
-The watcher resolves it at runtime:
+**Correction (2026-07-08):** an earlier version of this doc recommended
+resolving a fleet ID and claiming *by fleet ID*, on the theory that
+claim-by-keys was unreliable. That was wrong, and the wrongness was masked by
+testing against fleets that happened to already have a Ready server sitting
+in the buffer. Root-caused by tracing the call chain across three codebases
+(this repo, `fleet-commander`, `armada-watchdog`):
 
-1. `GET /ams/v1/admin/namespaces/{ns}/fleets` (list has no claim keys), then
-   `GET …/fleets/{id}` per fleet (details do) — match an **active** fleet whose
-   `claimKeys` contain `AMS_CLAIM_KEYS`. Cache 5 minutes; invalidate on any
-   claim 404 (covers mid-rollout replacement).
-   Requires `ADMIN:NAMESPACE:{ns}:ARMADA:FLEET [READ]`.
-2. Claim **by fleet ID**: `PUT /ams/v1/namespaces/{ns}/fleets/{id}/claim` with
-   camelCase body `{"region":"…","sessionId":"<unique>"}` (region required).
-   Requires `NAMESPACE:{ns}:AMS:SERVER:CLAIM [UPDATE]`.
+- Claim **by fleet ID** (`PUT /ams/v1/namespaces/{ns}/fleets/{id}/claim`)
+  reaches fleet-commander's `ServerClaimByFleetID`, which **never calls the
+  on-demand launch-signal logic** (`tryToSignalDSLaunch`). It can only claim a
+  DS that is *already* Ready. On a fleet scaled to zero — the normal state
+  between cold-start triggers — that's structurally impossible: this path
+  will 404 forever, no matter how long you retry.
+- Claim **by keys** (`PUT /ams/v1/namespaces/{ns}/servers/claim`) *does* run
+  the launch-signal logic and can wake a scaled-to-zero fleet — but the
+  request body must send the region as **`"regions": ["…"]`, an array**, not
+  `"region": "…"` as a singular string. The singular field is silently
+  ignored (no validation error), which produces an empty regions list
+  server-side, so fleet-commander's per-region matching/launch loop never
+  executes — every claim 404s, indistinguishable from the fleet-ID path's
+  failure. That's what "claim-by-keys is unreliable" actually was.
+
+So: **use claim-by-keys as the primary (only) path whenever `AMS_CLAIM_KEYS`
+is configured.** Claim-by-fleet-ID is kept only as a legacy fallback for a
+fixed, pre-known `AMS_FLEET_ID` with no claim keys at all — a mode that never
+needs an on-demand launch because you're not resolving anything at runtime.
+
+1. Claim **by keys**: `PUT /ams/v1/namespaces/{ns}/servers/claim` with
+   camelCase body `{"claimKeys":["…"],"regions":["…"],"sessionId":"<unique>"}`
+   — `regions` **must be an array**. Requires
+   `NAMESPACE:{ns}:AMS:SERVER:CLAIM [UPDATE]`.
    Response: `{"serverId","ip","ports":{"default":20000,"trigger":20001},"region"}`.
-
-   > Why not claim-by-keys (`PUT …/servers/claim`)? In our environment it
-   > persistently returned "no matching DS available" even against a ready,
-   > correctly-keyed server, while claim-by-ID always worked. The resolve-then-
-   > claim-by-ID pattern gets key-stability *and* reliability.
-3. Retry the claim every 2s for `AMS_CLAIM_RETRY_SECONDS` (20s) on 404 — the
-   buffer may be refilling.
-4. `POST http://{ip}:{ports[AMS_TRIGGER_PORT_NAME]}/trigger` with the shared
+2. Retry the claim every 2s for `AMS_CLAIM_RETRY_SECONDS` (20s) on 404 — the
+   buffer may be launching a fresh instance on demand.
+3. `POST http://{ip}:{ports[AMS_TRIGGER_PORT_NAME]}/trigger` with the shared
    secret header, **retrying 4×**: a claimed server that never receives its
    trigger has no other way to learn it was claimed and would idle forever.
+
+Fleet IDs still **change on every image rollout**, so if you do need
+claim-by-fleet-ID (the fixed-`AMS_FLEET_ID` legacy mode), never hardcode one —
+resolve it at runtime the same way this project used to for the primary path:
+`GET /ams/v1/admin/namespaces/{ns}/fleets` (list has no claim keys), then
+`GET …/fleets/{id}` per fleet (details do), matching an **active** fleet whose
+`claimKeys` contain the configured key (cache 5 minutes, invalidate on 404).
+Requires `ADMIN:NAMESPACE:{ns}:ARMADA:FLEET [READ]`. That endpoint's body is
+still the singular `{"region":"…","sessionId":"…"}` — it's a different
+endpoint from claim-by-keys and was never part of this bug.
 
 ### 4.4 Observability
 
@@ -419,8 +444,8 @@ Timeline for the human: ~20s gate + ~2s claim + ~2s trigger/login/queue +
 |---|---|---|
 | Watcher triggers on bot's own tickets | Endless trigger loop | Owner check on `Ticket.Players[].PlayerID` **and** bot ticket self-cancels at 10s |
 | Human's first bot lost | Human waits forever | Watcher re-triggers every 30s while the ticket waits |
-| Fleet ID churn on rollout | Claims 404 after every release | Resolve fleet by claim key at runtime; invalidate cache on 404 |
-| Buffer empty (refilling) | Claim 404 | Claim retry 2s×20s; retrigger later |
+| Fleet ID churn on rollout | Claims 404 after every release | Sidestepped by claiming by keys (no fleet ID involved); legacy fixed-ID mode still resolves fleet by claim key at runtime and invalidates the cache on 404 |
+| Buffer empty / scaled to zero | Claim 404 forever | Claim by keys (§4.3) — claim-by-fleet-ID cannot launch on demand and will 404 forever regardless of retries; claim-by-keys retries 2s×20s while the on-demand launch completes |
 | Trigger POST lost | Server claimed forever, buffer starved | POST retried 4×; DS idle self-recycle (60 min); AMS relaunch on exit |
 | Node/addon vs host glibc | `StartError -999`, no logs | glibc-217 node; lazy-import native addons; `run.sh` prints ldd diagnostics |
 | Watchdog protocol mismatch | `CreationTimeout` despite healthy process | `ams-dsid` header + dsid in ready payload; iterate against `amssim` locally |
@@ -517,6 +542,7 @@ two places (Extend secrets, DS bundle).
   max-shuffle-plies tuning field is plumbed but not yet acted on.
 - No resign: the client protocol has no bot-usable resign message; adding one
   would touch the client.
-- Claim-by-keys unreliability is worked around, not explained — revisit with
-  the AMS team.
+- ~~Claim-by-keys unreliability is worked around, not explained~~ — resolved,
+  see §4.3: it was a `region`-vs-`regions` field-name bug plus a fleet-ID
+  claim path that structurally can't launch on demand.
 - Extend Task Scheduler docs: https://docs.accelbyte.io/gaming-services/modules/foundations/extend/data-and-messaging/extend-task-scheduler/

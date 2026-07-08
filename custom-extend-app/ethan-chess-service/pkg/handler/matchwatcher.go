@@ -52,8 +52,8 @@ type MatchWatcher struct {
 	resolvedAt      time.Time
 
 	// dbg holds recent activity for the /debug/watcher endpoint.
-	dbgMu  sync.Mutex
-	dbg    map[string]any
+	dbgMu sync.Mutex
+	dbg   map[string]any
 }
 
 // NewMatchWatcherFromEnv builds the watcher when MATCH_WATCHER_ENABLED=true and a
@@ -426,9 +426,21 @@ func (w *MatchWatcher) claimServer() (string, error) {
 
 	deadline := time.Now().Add(time.Duration(w.amsClaimRetryS) * time.Second)
 	for attempt := 1; ; attempt++ {
-		fleetID, err := w.fleetIDForClaim(amsBase, namespace, token)
-		if err != nil {
-			return "", err
+		// Claim by keys whenever AMS_CLAIM_KEYS is configured — it's the only
+		// claim path capable of triggering an on-demand launch. Claim-by-
+		// fleet-ID (fleetIDForClaim + the fleetID!="" branch of claimOnce)
+		// hits fleet-commander's ServerClaimByFleetID, which never calls the
+		// launch-signal logic (tryToSignalDSLaunch); it can only claim a DS
+		// that's already Ready, which is structurally impossible on a
+		// scaled-to-zero on-demand fleet. Fall back to fleet-ID resolution
+		// only in the legacy fixed-fleet-ID mode (no claim keys at all).
+		fleetID := ""
+		var err error
+		if len(w.amsClaimKeys) == 0 {
+			fleetID, err = w.fleetIDForClaim(amsBase, namespace, token)
+			if err != nil {
+				return "", err
+			}
 		}
 		addr, notReady, err := w.claimOnce(amsBase, namespace, token, fleetID)
 		if err != nil {
@@ -552,12 +564,15 @@ func (w *MatchWatcher) claimOnce(amsBase, namespace, token, fleetID string) (add
 		reqURL = fmt.Sprintf("%s/ams/v1/namespaces/%s/fleets/%s/claim", amsBase, namespace, fleetID)
 		reqBody = map[string]any{"region": w.amsRegion, "sessionId": sessionID}
 	} else {
-		// Direct claim-by-keys (fallback when fleet listing is forbidden; proved
-		// unreliable in this environment — grant ARMADA:FLEET READ if possible).
+		// Claim by keys — the only path that can trigger an on-demand launch
+		// (see claimServer). The API requires "regions" as an array; sending
+		// singular "region" as a string silently produces an empty regions
+		// list server-side, so fleet-commander's per-region matching/launch
+		// loop never executes and every claim 404s regardless of fleet state.
 		reqURL = fmt.Sprintf("%s/ams/v1/namespaces/%s/servers/claim", amsBase, namespace)
 		reqBody = map[string]any{"claimKeys": w.amsClaimKeys, "sessionId": sessionID}
 		if w.amsRegion != "" {
-			reqBody["region"] = w.amsRegion
+			reqBody["regions"] = []string{w.amsRegion}
 		}
 	}
 	payload, _ := json.Marshal(reqBody)
