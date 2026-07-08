@@ -3456,10 +3456,13 @@ async function refreshFamilyUI(showLoading = true) {
 function renderFamilyPanel(loggedIn) {
   const panel = document.getElementById('ags-family-panel')
   if (!panel) return
-  // Hidden entirely where the Group transport can't work from the browser
-  // (production, pending the Extend proxy) — no half-working panel.
-  panel.style.display = loggedIn && familyTransportAvailable() ? '' : 'none'
-  if (!loggedIn || !familyTransportAvailable()) return
+  // Hidden entirely where the Group transport can't work: no transport at
+  // build time (familyTransportAvailable), or the deployed Extend service
+  // doesn't have the /family/group proxy yet (transportMissing) — no
+  // half-working panel either way.
+  const transportReady = familyTransportAvailable() && !familyState.transportMissing
+  panel.style.display = loggedIn && transportReady ? '' : 'none'
+  if (!loggedIn || !transportReady) return
 
   const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
   const membersSection = document.getElementById('ags-section-family-members')

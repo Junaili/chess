@@ -168,6 +168,14 @@ func main() {
 	mux.Handle(basePath+"/safety/reports",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(safety.reports))))
 
+	// Family: the AGS Group service omits CORS headers on its actual API
+	// responses (only the preflight carries them), so the browser can't call
+	// Group directly from junaili.github.io. Whitelisted passthrough with the
+	// player token — Group still enforces guardian/child roles server-side.
+	family := newFamilyGroupProxyFromEnv()
+	mux.Handle(basePath+"/family/group/",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(family.handle))))
+
 	// Bot self-learning: game intake from the AMS bot DS (shared-secret auth)
 	mux.HandleFunc(basePath+"/bot/games", handler.BotGamesHandler(os.Getenv("BOT_TRIGGER_SECRET"), botID))
 
@@ -291,7 +299,8 @@ func corsMiddleware(allowed map[string]struct{}, next http.Handler) http.Handler
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 		}
-		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		// DELETE covers family disband (DELETE /group/v1/.../groups/{id}).
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		if r.Method == http.MethodOptions {

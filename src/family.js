@@ -7,6 +7,7 @@
 // child-invite rejected 403 → disband).
 import { UsersV4Api } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
+import { extendFetch } from './extend-client.js'
 import { resolveDisplayNames, cacheDisplayName } from './leaderboard.js'
 import { fetchPresenceMap } from './presence.js'
 import { moderateIncomingDisplayName } from './content-moderation.mjs'
@@ -18,15 +19,16 @@ const CONFIGURATION_CODE = 'chess-family'
 // Access-Control-Allow-Origin) but its actual API responses omit that header
 // entirely — verified against production — so a browser can never read a
 // Group response cross-origin, unlike Leaderboard/Cloudsave whose real
-// responses do include it. In dev/e2e the Vite proxy makes /group same-origin
-// so it works; in the deployed build (junaili.github.io → seal-chessags…) it
-// can't. Until the Group calls are proxied through the Extend backend
-// (server-to-server, no browser CORS — same fix the CloudFront legal
-// attachments needed), the family feature is only wired up where the
-// same-origin proxy exists. import.meta.env.DEV is true under Vite dev + the
-// Playwright dev server, false in the production bundle.
+// responses do include it. Two transports work around that:
+//  - dev/e2e: the Vite proxy makes /group same-origin (direct calls below);
+//  - production: Group calls go through the Extend service's whitelisted
+//    /family/group proxy (cmd/family_group_proxy.go — server-to-server, no
+//    browser CORS, same fix the CloudFront legal attachments needed), reached
+//    at VITE_EXTEND_EMAIL_URL like every other Extend endpoint.
+// A production-style build without that URL (e.g. a local `vite build`) has
+// neither transport, so the Family panel stays hidden there.
 export function familyTransportAvailable() {
-  return !!import.meta.env.DEV
+  return !!import.meta.env.DEV || !!import.meta.env.VITE_EXTEND_EMAIL_URL
 }
 
 function getConfig() {
@@ -36,16 +38,30 @@ function getConfig() {
 
 async function groupFetch(method, path, body) {
   const { baseURL, namespace } = getConfig()
-  const accessToken = sdk.getToken()?.accessToken
-  if (!accessToken) return { status: 401, data: null }
-  const resp = await fetch(`${baseURL}/group/${path.replace('{ns}', encodeURIComponent(namespace))}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  const resolvedPath = path.replace('{ns}', encodeURIComponent(namespace))
+  let resp
+  if (import.meta.env.DEV) {
+    // Same-origin via the Vite /group proxy — keeps dev/e2e independent of a
+    // locally running Extend service.
+    const accessToken = sdk.getToken()?.accessToken
+    if (!accessToken) return { status: 401, data: null }
+    resp = await fetch(`${baseURL}/group/${resolvedPath}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  } else {
+    // extendFetch attaches the token (with the cookie fallback the deployed
+    // service boundary needs) and refresh-retries an expired session once.
+    resp = await extendFetch(`/family/group/${resolvedPath}`, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  }
   let data = null
   try { data = await resp.json() } catch {}
   return { status: resp.status, data }
@@ -138,6 +154,13 @@ export async function fetchFamilyState() {
       }
     }
 
+    // A 404 with no AGS errorCode is the deployed Extend service's generic
+    // Not Found — the running image predates the /family/group proxy. Report
+    // an empty state flagged transportMissing so the panel hides quietly
+    // instead of showing a spurious error; self-heals once the proxy ships.
+    if (mine.status === 404 && !mine.data?.errorCode) {
+      return { ok: true, group: null, members: [], incomingInvites: [], transportMissing: true }
+    }
     if (isNotInGroupResponse(mine.status, mine.data)) {
       return { ok: true, group: null, members: [], incomingInvites }
     }
