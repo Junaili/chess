@@ -207,6 +207,28 @@ let pendingCall  = null;
 let audioEnabled = true;
 let camEnabled   = true;
 
+// Video calls are friends-only (seeing/hearing a stranger from random
+// matchmaking is a child-safety issue). false until AGS confirms mutual
+// friendship with the current opponent; gates both the button and incoming
+// rings. Checks are tokened because the opponent can change mid-flight
+// (rematch, resume, late player_info).
+let videoChatAllowed    = false;
+let videoChatCheckToken = 0;
+
+function updateVideoChatAvailability() {
+  const token = ++videoChatCheckToken;
+  videoChatAllowed = false;
+  const btn = document.getElementById('btn-video-chat');
+  if (btn && !mediaCall) btn.style.display = 'none';
+  if (gameMode !== 'online' || !currentOpponent?.userId || currentOpponentBlocked) return;
+  if (typeof window.agsIsFriendWith !== 'function') return;
+  window.agsIsFriendWith(currentOpponent.userId).then(isFriend => {
+    if (token !== videoChatCheckToken || !isFriend) return;
+    videoChatAllowed = true;
+    if (btn && gameMode === 'online') btn.style.display = '';
+  }).catch(() => {});
+}
+
 // ─── Screen management ────────────────────────────────────────────────────────
 
 function showScreen(name) {
@@ -365,6 +387,10 @@ function setCurrentOpponent(name, userId) {
   currentOpponent = userId ? { name: name || 'Opponent', userId } : null;
   currentOpponentBlocked = !!(userId && window.agsIsBlockedPlayer?.(userId));
   window.agsLastOpponent = currentOpponent;
+  // Opponent identity drives the friends-only video chat gate; re-check on
+  // every change (the host learns who it's playing only when player_info
+  // arrives, after startGame()).
+  updateVideoChatAvailability();
 }
 
 function startGame() {
@@ -416,9 +442,12 @@ function startGame() {
     setPlayerInfo('black', 'Black', '');
   }
 
-  // Hide hint button during online games; show video chat button instead
+  // Hide hint button during online games. Video chat is friends-only: the
+  // button stays hidden until updateVideoChatAvailability() confirms mutual
+  // friendship with this opponent.
   document.getElementById('btn-hint').style.display = isOnline ? 'none' : '';
-  document.getElementById('btn-video-chat').style.display = isOnline ? '' : 'none';
+  document.getElementById('btn-video-chat').style.display = 'none';
+  updateVideoChatAvailability();
   // New Game + Resign apply to vs-computer play
   const showVsComputerControls = gameMode === 'computer';
   const ngBtn = document.getElementById('btn-new-game');
@@ -2150,8 +2179,29 @@ function handleConnectionLost() {
 function setupCallHandler() {
   peer.on('call', call => {
     if (pendingCall) { try { call.close(); } catch {} return; }
-    pendingCall = call;
-    document.getElementById('video-call-notification').style.display = 'flex';
+    const ring = () => {
+      pendingCall = call;
+      document.getElementById('video-call-notification').style.display = 'flex';
+    };
+    // Friends-only, enforced on the receiving side too: the caller's client
+    // hides its button, but a tampered client (or a stale friendship) can
+    // still dial — never surface a ring until AGS confirms the friendship.
+    if (videoChatAllowed) { ring(); return; }
+    const opponentId = currentOpponent?.userId;
+    if (!opponentId || currentOpponentBlocked || typeof window.agsIsFriendWith !== 'function') {
+      try { call.close(); } catch {}
+      return;
+    }
+    window.agsIsFriendWith(opponentId).then(isFriend => {
+      // Re-check state after the await: another ring may have landed, or the
+      // opponent may have changed while the status call was in flight.
+      if (!isFriend || pendingCall || opponentId !== currentOpponent?.userId) {
+        try { call.close(); } catch {}
+        return;
+      }
+      videoChatAllowed = true;
+      ring();
+    }).catch(() => { try { call.close(); } catch {} });
   });
 }
 
@@ -2803,6 +2853,12 @@ function backFromContacts() {
 
 async function startVideoChat() {
   if (mediaCall) { endVideoChat(); return; }
+  // Friends-only: the button is hidden for non-friends, but guard the entry
+  // point too (console/data-click invocation must not reach a stranger).
+  if (!videoChatAllowed) {
+    alert('Video chat is only available between friends. Add your opponent as a friend after the game!');
+    return;
+  }
   if (!navigator.mediaDevices?.getUserMedia) {
     alert('Video chat requires HTTPS.\n\nRestart the server using start_server.command — it now serves HTTPS automatically.');
     return;
