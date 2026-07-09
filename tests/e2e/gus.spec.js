@@ -82,17 +82,20 @@ test.describe('Gambit Gus profile', () => {
     await expect(page.locator('#gus-stat-brain')).toHaveText('v3');
 
     // Journal: date header, his own voice as a quote, game-id lines folded away
+    await page.evaluate(() => window.agsShowGusTab('journal'));
     await expect(page.locator('.gus-journal-entry')).toHaveCount(1);
     await expect(page.locator('.gus-journal-entry blockquote')).toContainText('keep the initiative');
     await expect(page.locator('#gus-journal-list')).not.toContainText('m1 vs Ethan');
 
     // Training section
+    await page.evaluate(() => window.agsShowGusTab('training'));
     await expect(page.locator('#gus-training-status')).toContainText('studied 2 games');
     await expect(page.locator('#gus-training-learned')).toHaveText('12');
     await expect(page.locator('#gus-lessons-list li')).toContainText('Stop sacrificing on f7');
     await expect(page.locator('.gus-opening-row')).toContainText('1.e4 e5 2.f4');
 
     // Matches: results shown from Gus's side; playable match offers replay
+    await page.evaluate(() => window.agsShowGusTab('matches'));
     const rows = page.locator('#gus-match-history .profile-history-row');
     await expect(rows).toHaveCount(2);
     await expect(rows.nth(0)).toContainText('Gus won');
@@ -108,6 +111,7 @@ test.describe('Gambit Gus profile', () => {
     await gotoApp(page);
     await stubGusProfile(page);
     await page.evaluate(() => window.agsOpenGusProfile());
+    await page.evaluate(() => window.agsShowGusTab('matches'));
 
     await page.locator('#gus-match-history .profile-history-row.replayable').click();
     await expect(page.locator('#screen-spectator')).toBeVisible();
@@ -149,8 +153,41 @@ test.describe('Gambit Gus profile', () => {
 
     await expect(page.locator('#gus-stat-record')).toHaveText('—');
     await expect(page.locator('#gus-stat-strength')).toHaveText('Still calibrating');
+    await page.evaluate(() => window.agsShowGusTab('journal'));
     await expect(page.locator('#gus-journal-list')).toContainText('No journal entries yet');
+    await page.evaluate(() => window.agsShowGusTab('matches'));
     await expect(page.locator('#gus-match-history')).toContainText('No matches yet');
+    await page.evaluate(() => window.agsShowGusTab('training'));
     await expect(page.locator('#gus-training-status')).toContainText('first training session');
+  });
+
+  test('fits the Meet Gus panels in an iPad viewport without page scrolling', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 720 });
+    await gotoApp(page);
+    await stubGusProfile(page);
+    await page.evaluate(() => window.agsOpenGusProfile());
+
+    for (const tab of ['overview', 'journal', 'training', 'matches']) {
+      await page.evaluate(name => window.agsShowGusTab(name), tab);
+      const geometry = await page.evaluate(name => {
+        const screen = document.getElementById('screen-gus');
+        const container = document.querySelector('.gus-profile-container').getBoundingClientRect();
+        const panel = document.querySelector(`[data-gus-panel="${name}"]`).getBoundingClientRect();
+        return {
+          viewport: { width: innerWidth, height: innerHeight },
+          screen: { scrollHeight: screen.scrollHeight, clientHeight: screen.clientHeight },
+          container: { top: container.top, right: container.right, bottom: container.bottom, left: container.left },
+          panel: { top: panel.top, right: panel.right, bottom: panel.bottom, left: panel.left },
+        };
+      }, tab);
+
+      expect(geometry.screen.scrollHeight).toBeLessThanOrEqual(geometry.screen.clientHeight);
+      for (const region of [geometry.container, geometry.panel]) {
+        expect(region.top).toBeGreaterThanOrEqual(0);
+        expect(region.left).toBeGreaterThanOrEqual(0);
+        expect(region.right).toBeLessThanOrEqual(geometry.viewport.width);
+        expect(region.bottom).toBeLessThanOrEqual(geometry.viewport.height);
+      }
+    }
   });
 });

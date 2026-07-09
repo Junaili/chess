@@ -309,6 +309,7 @@ input[type="checkbox"] {
 .move-history,
 .online-chat,
 .signedin-card,
+.player-summary-card,
 .friends-panel,
 .contacts-list,
 .modal-content,
@@ -533,6 +534,17 @@ input[type="checkbox"] {
   overflow: hidden;
 }
 
+#screen-home.signed-in .menu-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+#screen-home.signed-in .menu-buttons .btn {
+  min-height: 46px;
+  padding: 11px 14px;
+}
+
 /* Friends panel absorbs the leftover height in the left column and scrolls. */
 #screen-home.signed-in .friends-panel {
   flex: 1 1 auto;
@@ -540,6 +552,11 @@ input[type="checkbox"] {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+#screen-home.signed-in .gus-panel {
+  flex: 0 0 auto;
+  overflow: visible;
 }
 
 /* Leaderboard fills its column; its list scrolls instead of the page. */
@@ -681,6 +698,40 @@ input[type="checkbox"] {
   border-radius: 18px;
   padding: 16px 18px;
   gap: 6px;
+}
+
+.player-summary-card {
+  display: none;
+  grid-template-columns: minmax(0, 1.25fr) minmax(160px, 0.75fr);
+  gap: 10px;
+  align-items: stretch;
+  border-radius: 18px;
+  padding: 10px;
+}
+
+#screen-home.signed-in .player-summary-card {
+  display: grid;
+}
+
+.player-summary-card .signedin-card {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.player-summary-meta {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.player-summary-card #name-edit-form {
+  grid-column: 1 / -1;
 }
 
 .friends-panel {
@@ -1306,7 +1357,7 @@ input[type="checkbox"] {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .signedin-userid,
@@ -1329,6 +1380,16 @@ input[type="checkbox"] {
   color: var(--text-dim);
   font-size: 0.84rem;
   line-height: 1.7;
+}
+
+.player-summary-meta .ags-stats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 8px 10px;
+  text-align: center;
+  line-height: 1.35;
 }
 
 .btn-signout {
@@ -4634,7 +4695,8 @@ input[type="checkbox"] {
   }
 
   #screen-home.signed-in,
-  #screen-profile {
+  #screen-profile,
+  #screen-gus {
     padding:
       max(10px, env(safe-area-inset-top))
       max(12px, env(safe-area-inset-right))
@@ -4642,7 +4704,8 @@ input[type="checkbox"] {
       max(12px, env(safe-area-inset-left));
   }
 
-  #screen-profile.active {
+  #screen-profile.active,
+  #screen-gus.active {
     align-items: stretch;
     overflow: hidden;
   }
@@ -4681,6 +4744,11 @@ input[type="checkbox"] {
     border-radius: 15px;
   }
 
+  #screen-home.signed-in .player-summary-card .signedin-card {
+    padding: 0;
+    border-radius: 0;
+  }
+
   #screen-home.signed-in .ags-stats {
     padding: 8px 12px;
   }
@@ -4696,6 +4764,10 @@ input[type="checkbox"] {
     overflow: hidden;
     padding: 18px;
     border-radius: 20px;
+  }
+
+  #screen-gus .profile-container {
+    width: min(1040px, 100%);
   }
 
   .profile-header {
@@ -5397,7 +5469,9 @@ input[type="checkbox"] {
 /* ─── Achievements ────────────────────────────────────────────────────────── */
 .btn-achievements {
   width: 100%;
-  margin-bottom: 12px;
+  margin-bottom: 0;
+  padding: 9px 12px;
+  font-size: 0.82rem;
   color: #2d1a0f;
   background: linear-gradient(135deg, #f0c37a, #e0a857);
   box-shadow: 0 10px 24px rgba(194, 106, 61, 0.18);
@@ -5715,6 +5789,13 @@ input[type="checkbox"] {
 
 .gus-panel {
   border-color: rgba(138, 95, 201, 0.35);
+  background:
+    linear-gradient(135deg, rgba(91, 61, 143, 0.16), rgba(240, 195, 122, 0.06)),
+    var(--surface);
+}
+
+.gus-panel .friends-header {
+  margin-bottom: 6px;
 }
 
 .gus-home-tagline {
@@ -5725,16 +5806,20 @@ input[type="checkbox"] {
 }
 
 .gus-home-record {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   color: var(--text);
   font-size: 0.9rem;
 }
 
 .gus-home-blurb {
-  margin: 6px 0 10px;
+  display: -webkit-box;
+  margin: 5px 0 8px;
+  overflow: hidden;
   color: var(--text-dim);
   font-size: 0.85rem;
   line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .gus-hero-actions {
@@ -5744,10 +5829,106 @@ input[type="checkbox"] {
   margin: 6px 0 14px;
 }
 
+#screen-gus {
+  padding:
+    max(16px, env(safe-area-inset-top))
+    max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 22%),
+    radial-gradient(circle at top center, rgba(138, 95, 201, 0.18), transparent 30%);
+}
+
+#screen-gus.active {
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.gus-profile-container {
+  width: min(1040px, calc(100vw - 32px));
+  height: calc(100dvh - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+}
+
+.gus-profile-container .profile-header {
+  margin-bottom: 12px;
+}
+
+.gus-profile-container .profile-header h2 {
+  font-size: clamp(1.55rem, 3vw, 2rem);
+}
+
+.gus-profile-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  flex: 0 0 auto;
+  margin: 4px 0 12px;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.gus-profile-panels {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.gus-profile-panel {
+  display: none;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gus-profile-panel.active {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gus-profile-card {
+  min-width: 0;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.gus-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.9fr) minmax(0, 1.35fr);
+  gap: 12px;
+}
+
+.gus-personality-card h3,
+.gus-profile-card h4 {
+  margin: 0 0 8px;
+  color: #fff8f1;
+}
+
 .gus-personality {
   color: var(--text-dim);
   line-height: 1.55;
-  margin: 0 0 16px;
+  margin: 0;
+}
+
+.gus-stats-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gus-stats-grid .profile-stat,
+.gus-training-grid .profile-stat {
+  padding: 12px;
+}
+
+.gus-stats-grid .profile-stat strong,
+.gus-training-grid .profile-stat strong {
+  margin-top: 5px;
+  font-size: 1.05rem;
 }
 
 .gus-about-you {
@@ -5768,8 +5949,10 @@ input[type="checkbox"] {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-height: 420px;
+  min-height: 0;
+  max-height: none;
   overflow-y: auto;
+  padding-right: 4px;
 }
 
 .gus-journal-entry {
@@ -5830,9 +6013,32 @@ input[type="checkbox"] {
 }
 
 .gus-subhead {
-  margin: 18px 0 8px;
+  margin: 0 0 8px;
   color: var(--text);
   font-size: 0.95rem;
+}
+
+.gus-training-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gus-training-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gus-training-detail-grid .gus-profile-card {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+#screen-gus .profile-match-history {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .gus-lessons-list {

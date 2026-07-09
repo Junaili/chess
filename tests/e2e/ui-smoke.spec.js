@@ -193,6 +193,9 @@ test.describe('UI smoke (signed out)', () => {
       document.getElementById('ags-account-entry').style.display = 'none';
       document.getElementById('ags-guest-entry').style.display = 'none';
       document.getElementById('ags-signedin-info').style.display = '';
+      document.getElementById('ags-stats').style.display = '';
+      document.getElementById('ags-stats').textContent = 'W 10 · L 4 · ⭐ 1230';
+      document.getElementById('btn-achievements').style.display = '';
       document.getElementById('ags-member-play-actions').style.display = '';
       document.getElementById('ags-friends-panel').style.display = '';
       document.getElementById('home-leaderboard-panel').style.display = '';
@@ -208,18 +211,21 @@ test.describe('UI smoke (signed out)', () => {
         viewport: { width: innerWidth, height: innerHeight },
         screen: { scrollHeight: screen.scrollHeight, clientHeight: screen.clientHeight },
         home: bounds('.home-container'),
+        summary: bounds('#ags-player-summary'),
         left: bounds('.home-left'),
         leaderboard: bounds('#home-leaderboard-panel'),
       };
     });
 
     expect(homeGeometry.screen.scrollHeight).toBeLessThanOrEqual(homeGeometry.screen.clientHeight);
-    for (const region of [homeGeometry.home, homeGeometry.left, homeGeometry.leaderboard]) {
+    for (const region of [homeGeometry.home, homeGeometry.summary, homeGeometry.left, homeGeometry.leaderboard]) {
       expect(region.top).toBeGreaterThanOrEqual(0);
       expect(region.left).toBeGreaterThanOrEqual(0);
       expect(region.right).toBeLessThanOrEqual(homeGeometry.viewport.width);
       expect(region.bottom).toBeLessThanOrEqual(homeGeometry.viewport.height);
     }
+
+    await expect(page.getByRole('button', { name: 'Invite Outside Friend' })).toBeVisible();
 
     await page.evaluate(() => {
       window.showColorSelect('computer');
@@ -263,6 +269,9 @@ test.describe('UI smoke (signed out)', () => {
       document.getElementById('ags-account-entry').style.display = 'none';
       document.getElementById('ags-guest-entry').style.display = 'none';
       document.getElementById('ags-signedin-info').style.display = '';
+      document.getElementById('ags-stats').style.display = '';
+      document.getElementById('ags-stats').textContent = 'W 10 · L 4 · ⭐ 1230';
+      document.getElementById('btn-achievements').style.display = '';
       document.getElementById('ags-member-play-actions').style.display = '';
       document.getElementById('ags-friends-panel').style.display = '';
       document.getElementById('home-leaderboard-panel').style.display = '';

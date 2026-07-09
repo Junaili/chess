@@ -93,11 +93,20 @@
             <button class="btn btn-register" data-click="window.agsOpenRegister && window.agsOpenRegister()">Create Free Account</button>
             <button class="auth-login-link" data-click="window.agsOpenLogin && window.agsOpenLogin()">Already have an account? <strong>Sign in</strong></button>
           </div>
-          <div id="ags-signedin-info" class="signedin-card" style="display:none">
-            <span class="signedin-greeting">Signed in as</span>
-            <div class="signedin-name-row">
-              <span id="ags-signedin-name" class="signedin-name"></span>
-              <button class="btn-edit-name" id="btn-edit-name" title="Edit display name" aria-label="Edit display name" data-click="window.agsEditName && window.agsEditName()">✏</button>
+          <div id="ags-player-summary" class="player-summary-card">
+            <div id="ags-signedin-info" class="signedin-card" style="display:none">
+              <span class="signedin-greeting">Signed in as</span>
+              <div class="signedin-name-row">
+                <span id="ags-signedin-name" class="signedin-name"></span>
+                <button class="btn-edit-name" id="btn-edit-name" title="Edit display name" aria-label="Edit display name" data-click="window.agsEditName && window.agsEditName()">✏</button>
+              </div>
+              <div class="signedin-footer">
+                <button class="btn-signout" data-click="window.agsLogout && window.agsLogout()">Log out</button>
+              </div>
+            </div>
+            <div class="player-summary-meta">
+              <div id="ags-stats" class="ags-stats" style="display:none"></div>
+              <button id="btn-achievements" class="btn btn-achievements" style="display:none" data-click="window.agsOpenAchievements && window.agsOpenAchievements()">🏆 Achievements</button>
             </div>
             <div id="name-edit-form" style="display:none">
               <input type="text" id="name-edit-input" class="name-edit-input" maxlength="48" placeholder="New display name" data-keydown="if(event.key==='Enter') window.agsSaveName && window.agsSaveName(); if(event.key==='Escape') window.agsCancelEdit && window.agsCancelEdit()" />
@@ -107,15 +116,10 @@
               </div>
               <p id="name-edit-message" class="auth-message" aria-live="polite"></p>
             </div>
-            <div class="signedin-footer">
-              <button class="btn-signout" data-click="window.agsLogout && window.agsLogout()">Log out</button>
-            </div>
           </div>
-          <div id="ags-stats" class="ags-stats" style="display:none"></div>
-          <button id="btn-achievements" class="btn btn-achievements" style="display:none" data-click="window.agsOpenAchievements && window.agsOpenAchievements()">🏆 Achievements</button>
           <div id="ags-member-play-actions" class="menu-buttons">
             <button class="btn btn-primary" data-click="showColorSelect('computer')">Play vs Computer</button>
-            <button class="btn btn-secondary" data-click="showColorSelect('online')">Invite Friend</button>
+            <button class="btn btn-secondary" data-click="showColorSelect('online')">Invite Outside Friend</button>
             <button class="btn btn-matchmake" id="btn-play-random" style="display:none" data-click="startRandomMatchmaking()">Play vs Random</button>
             <button class="btn btn-gus" id="btn-play-gus" style="display:none" data-click="startGusMatchmaking()">Play Gambit Gus ♞</button>
           </div>
@@ -434,7 +438,7 @@
        and his recent matches with replays. Rendered by src/gus.js from the
        Extend /bot/profile endpoint. -->
   <div id="screen-gus" class="screen">
-    <div class="profile-container">
+    <div class="profile-container gus-profile-container">
       <div class="profile-header">
         <div>
           <p class="auth-eyebrow">Resident Bot</p>
@@ -452,60 +456,81 @@
         <button class="btn-mini" data-click="window.agsRefreshGusProfile && window.agsRefreshGusProfile()">Refresh</button>
       </div>
       <p id="gus-offline-note" class="auth-message" style="display:none">Gus’s table is closed right now — check back soon.</p>
-      <p id="gus-personality" class="gus-personality"></p>
-
-      <div class="profile-stats-grid">
-        <div class="profile-stat"><span>Record</span><strong id="gus-stat-record">—</strong></div>
-        <div class="profile-stat"><span>Win rate</span><strong id="gus-stat-winrate">—</strong></div>
-        <div class="profile-stat"><span>Games this week</span><strong id="gus-stat-week">—</strong></div>
-        <div class="profile-stat"><span>Current strength</span><strong id="gus-stat-strength">—</strong></div>
-        <div class="profile-stat"><span>Form</span><strong id="gus-stat-form">—</strong></div>
-        <div class="profile-stat"><span>Brain version</span><strong id="gus-stat-brain">—</strong></div>
+      <div class="gus-profile-tabs" role="tablist" aria-label="Gambit Gus details">
+        <button type="button" class="profile-tab active" data-gus-tab="overview">Overview</button>
+        <button type="button" class="profile-tab" data-gus-tab="journal">Journal</button>
+        <button type="button" class="profile-tab" data-gus-tab="training">Training</button>
+        <button type="button" class="profile-tab" data-gus-tab="matches">Matches</button>
       </div>
 
-      <section id="gus-about-you" class="profile-history-card gus-about-you" style="display:none">
-        <div class="profile-history-head">
-          <h3>What Gus knows about you</h3>
-        </div>
-        <p id="gus-about-you-record"></p>
-        <p id="gus-about-you-note" class="gus-dossier-note" style="display:none"></p>
-      </section>
+      <div class="gus-profile-panels">
+        <section class="gus-profile-panel active" data-gus-panel="overview">
+          <div class="gus-overview-grid">
+            <div class="gus-profile-card gus-personality-card">
+              <h3>How Gus plays</h3>
+              <p id="gus-personality" class="gus-personality"></p>
+            </div>
+            <div class="profile-stats-grid gus-stats-grid">
+              <div class="profile-stat"><span>Record</span><strong id="gus-stat-record">—</strong></div>
+              <div class="profile-stat"><span>Win rate</span><strong id="gus-stat-winrate">—</strong></div>
+              <div class="profile-stat"><span>This week</span><strong id="gus-stat-week">—</strong></div>
+              <div class="profile-stat"><span>Strength</span><strong id="gus-stat-strength">—</strong></div>
+              <div class="profile-stat"><span>Form</span><strong id="gus-stat-form">—</strong></div>
+              <div class="profile-stat"><span>Brain</span><strong id="gus-stat-brain">—</strong></div>
+            </div>
+          </div>
 
-      <section class="profile-history-card">
-        <div class="profile-history-head">
-          <h3>Gus’s Training Journal</h3>
-          <span>he writes it himself, nightly</span>
-        </div>
-        <div id="gus-journal-list" class="gus-journal-list"></div>
-      </section>
+          <section id="gus-about-you" class="gus-profile-card gus-about-you" style="display:none">
+            <div class="profile-history-head">
+              <h3>What Gus knows about you</h3>
+            </div>
+            <p id="gus-about-you-record"></p>
+            <p id="gus-about-you-note" class="gus-dossier-note" style="display:none"></p>
+          </section>
+        </section>
 
-      <section class="profile-history-card">
-        <div class="profile-history-head">
-          <h3>How Gus Trains</h3>
-        </div>
-        <p class="gus-training-copy">Every night Gus replays his games from the day, reflects on what worked,
-          updates his opening book, and re-calibrates his strength toward a fair fight (~50% win rate).
-          No canned difficulty — he genuinely learns from the games you play against him.</p>
-        <p id="gus-training-status" class="gus-training-status"></p>
-        <div class="profile-stats-grid">
-          <div class="profile-stat"><span>Games studied</span><strong id="gus-training-learned">0</strong></div>
-          <div class="profile-stat"><span>Opening lines in book</span><strong id="gus-training-book">0</strong></div>
-          <div class="profile-stat"><span>Opponents scouted</span><strong id="gus-training-opponents">0</strong></div>
-        </div>
-        <p id="gus-training-pace" class="gus-training-pace" style="display:none"></p>
-        <h4 class="gus-subhead">Lessons he’s learned</h4>
-        <ul id="gus-lessons-list" class="gus-lessons-list"></ul>
-        <h4 class="gus-subhead">Opening repertoire</h4>
-        <div id="gus-openings-list" class="gus-openings-list"></div>
-      </section>
+        <section class="gus-profile-panel" data-gus-panel="journal">
+          <div class="profile-history-head">
+            <h3>Gus’s Training Journal</h3>
+            <span>nightly notes</span>
+          </div>
+          <div id="gus-journal-list" class="gus-journal-list"></div>
+        </section>
 
-      <section class="profile-history-card">
-        <div class="profile-history-head">
-          <h3>Recent Matches</h3>
-          <span id="gus-match-count"></span>
-        </div>
-        <div id="gus-match-history" class="profile-match-history"></div>
-      </section>
+        <section class="gus-profile-panel" data-gus-panel="training">
+          <div class="gus-profile-card">
+            <div class="profile-history-head">
+              <h3>How Gus Trains</h3>
+            </div>
+            <p class="gus-training-copy">Every night Gus replays his games, updates his opening book, and re-calibrates toward a fair fight.</p>
+            <p id="gus-training-status" class="gus-training-status"></p>
+            <div class="profile-stats-grid gus-training-grid">
+              <div class="profile-stat"><span>Games studied</span><strong id="gus-training-learned">0</strong></div>
+              <div class="profile-stat"><span>Book lines</span><strong id="gus-training-book">0</strong></div>
+              <div class="profile-stat"><span>Scouted</span><strong id="gus-training-opponents">0</strong></div>
+            </div>
+            <p id="gus-training-pace" class="gus-training-pace" style="display:none"></p>
+          </div>
+          <div class="gus-training-detail-grid">
+            <div class="gus-profile-card">
+              <h4 class="gus-subhead">Lessons learned</h4>
+              <ul id="gus-lessons-list" class="gus-lessons-list"></ul>
+            </div>
+            <div class="gus-profile-card">
+              <h4 class="gus-subhead">Opening repertoire</h4>
+              <div id="gus-openings-list" class="gus-openings-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="gus-profile-panel" data-gus-panel="matches">
+          <div class="profile-history-head">
+            <h3>Recent Matches</h3>
+            <span id="gus-match-count"></span>
+          </div>
+          <div id="gus-match-history" class="profile-match-history"></div>
+        </section>
+      </div>
     </div>
   </div>
 

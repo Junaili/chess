@@ -18,7 +18,7 @@ import { deriveMatchRoles, computeDeadline, isPastDeadline, isResumable, pickAut
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
 import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite, rejectFamilyInvite, removeFamilyMember, leaveFamily, familyTransportAvailable } from './family.js'
-import { initGusPanel, resetGusPanel, openGusProfile, refreshGusProfile, startGusMatchmaking as startGusMatchmakingFlow } from './gus.js'
+import { initGusPanel, resetGusPanel, openGusProfile, refreshGusProfile, showGusTab, startGusMatchmaking as startGusMatchmakingFlow } from './gus.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
 import {
@@ -171,6 +171,7 @@ const STATIC_ACTIONS = new Set([
   'agsSaveName',
   'agsSavePrivacyChoices',
   'agsShowProfileTab',
+  'agsShowGusTab',
   'agsSpectatorFirst',
   'agsSpectatorLast',
   'agsSpectatorNext',
@@ -1634,6 +1635,7 @@ async function initAuth() {
   window.agsStartGusMatchmaking = startGusMatchmakingFlow
   window.agsOpenGusProfile = openGusProfile
   window.agsRefreshGusProfile = refreshGusProfile
+  window.agsShowGusTab = showGusTab
   window.agsRefreshFriends = refreshFriendsUI
   window.agsInviteFriend = friendId => {
     ensureNotificationPermission()  // user gesture — ask now so they can be notified of the reply

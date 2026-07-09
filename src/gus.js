@@ -118,7 +118,30 @@ export async function refreshGusProfile() {
 
 let gusRecentMatches = []
 
+export function showGusTab(name = 'overview') {
+  const allowed = new Set(['overview', 'journal', 'training', 'matches'])
+  const active = allowed.has(name) ? name : 'overview'
+  document.querySelectorAll('[data-gus-tab]').forEach(tab => {
+    const selected = tab.dataset.gusTab === active
+    tab.classList.toggle('active', selected)
+    tab.setAttribute('aria-selected', selected ? 'true' : 'false')
+  })
+  document.querySelectorAll('[data-gus-panel]').forEach(panel => {
+    panel.classList.toggle('active', panel.dataset.gusPanel === active)
+  })
+}
+
+function initGusTabs() {
+  document.querySelectorAll('[data-gus-tab]').forEach(tab => {
+    if (tab.dataset.gusTabBound === '1') return
+    tab.dataset.gusTabBound = '1'
+    tab.addEventListener('click', () => showGusTab(tab.dataset.gusTab))
+  })
+}
+
 function renderGusScreen(profile) {
+  initGusTabs()
+  showGusTab('overview')
   const { bot, stats, brain, aboutYou, journal, training, recentMatches, playable } = profile
 
   setText('gus-profile-name', bot.name)
