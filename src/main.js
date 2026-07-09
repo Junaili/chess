@@ -771,6 +771,11 @@ function showInviteScreen(inviterName, { live = false } = {}) {
 async function hydrateAuthenticatedUser(profile) {
   currentUserId = profile.userId
   window.agsCurrentUserId = currentUserId
+  const userEmail = profile.emailAddress || ''
+  if (userEmail) {
+    localStorage.setItem('chess_user_email', userEmail)
+    window.agsCurrentUserEmail = userEmail
+  }
   void refreshAcceptedLegalDocuments()
   connectAuthenticatedChat().catch(error => {
     console.warn('[Chat] connection unavailable:', error?.message || error)
@@ -3679,6 +3684,15 @@ async function updatePostMatchFriendAction(opponent) {
 }
 
 window.agsUpdateMatchFriendAction = updatePostMatchFriendAction
+
+// Friendship probe for gated features (video chat is friends-only). AGS
+// friendship is mutual, so status '3' on our side means both players are
+// friends. Fails closed: any error, guest session, or self-check → false.
+window.agsIsFriendWith = async userId => {
+  if (!userId || !currentUserId || userId === currentUserId) return false
+  const status = await getFriendshipStatus(userId)
+  return !!(status.ok && status.status === '3')
+}
 
 // Replay state — index of the move currently shown (-1 = live / not in replay)
 let spectatorReplayIndex = -1
