@@ -5685,3 +5685,213 @@ input[type="checkbox"] {
 #login-queue-cancel {
   width: 100%;
 }
+
+/* ── Gambit Gus (resident bot): home card + profile screen ─────────────────── */
+
+.btn-gus {
+  color: #f6efff;
+  background: linear-gradient(135deg, #5b3d8f, #8a5fc9);
+}
+
+.gus-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #5b3d8f, #8a5fc9);
+  color: #f6efff;
+  font-size: 16px;
+  vertical-align: middle;
+}
+
+.gus-avatar-lg {
+  width: 42px;
+  height: 42px;
+  font-size: 26px;
+  flex-shrink: 0;
+}
+
+.gus-panel {
+  border-color: rgba(138, 95, 201, 0.35);
+}
+
+.gus-home-tagline {
+  margin: 4px 0 0;
+  color: var(--accent-2);
+  font-style: italic;
+  font-size: 0.92rem;
+}
+
+.gus-home-record {
+  margin: 8px 0 0;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.gus-home-blurb {
+  margin: 6px 0 10px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.gus-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 14px;
+}
+
+.gus-personality {
+  color: var(--text-dim);
+  line-height: 1.55;
+  margin: 0 0 16px;
+}
+
+.gus-about-you {
+  border-color: rgba(138, 95, 201, 0.4);
+}
+
+.gus-about-you p {
+  margin: 6px 0;
+  color: var(--text);
+}
+
+.gus-dossier-note {
+  color: var(--accent-2);
+  font-style: italic;
+}
+
+.gus-journal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.gus-journal-entry {
+  background: var(--surface-soft);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+
+.gus-journal-entry header {
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.gus-journal-body p,
+.gus-journal-body li {
+  margin: 4px 0;
+  color: var(--text-dim);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.gus-journal-body li {
+  margin-left: 18px;
+}
+
+.gus-journal-body blockquote {
+  margin: 6px 0;
+  padding: 6px 12px;
+  border-left: 3px solid #8a5fc9;
+  color: var(--text);
+  font-style: italic;
+}
+
+.gus-journal-label {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.gus-training-copy,
+.gus-training-status,
+.gus-training-pace {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 6px 0 12px;
+}
+
+.gus-training-status {
+  color: var(--text);
+}
+
+.gus-subhead {
+  margin: 18px 0 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.gus-lessons-list {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gus-lessons-list li {
+  color: var(--text-dim);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.gus-lesson-date {
+  margin-left: 8px;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+}
+
+.gus-openings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gus-opening-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  background: var(--surface-soft);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+.gus-opening-line {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.gus-opening-record {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
+.gus-opening-note {
+  flex-basis: 100%;
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.gus-empty-line {
+  color: var(--text-soft);
+  font-size: 0.85rem;
+  list-style: none;
+  margin-left: -20px;
+}

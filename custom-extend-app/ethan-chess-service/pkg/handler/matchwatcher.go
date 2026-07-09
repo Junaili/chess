@@ -310,6 +310,19 @@ func (w *MatchWatcher) isBotTicket(t poolTicket) bool {
 	return false
 }
 
+// TriggerNow claims + wakes a bot DS immediately, bypassing the 20s wait gate.
+// Used by the player-initiated "Play with Gus" challenge: the caller has (or is
+// about to have) a ticket in the pool, so the bot queues right away. Spurious
+// triggers stay harmless — the bot's ticket self-cancels after 10s unmatched.
+func (w *MatchWatcher) TriggerNow() bool {
+	if w == nil {
+		return false
+	}
+	w.dbgSet(map[string]any{"lastChallengeAt": time.Now().Format(time.RFC3339)})
+	w.trigger()
+	return true
+}
+
 func (w *MatchWatcher) trigger() {
 	go func() {
 		url := w.triggerURL

@@ -39,12 +39,14 @@ func NewTrainJob(botID, botDir string) *TrainJob {
 func BotBrainKey(botID string) string   { return "chess-bot-" + botID + "-brain" }
 func BotJournalKey(botID string) string { return "chess-bot-" + botID + "-journal" }
 
-type journalEntry struct {
+// JournalEntry is one dated note in the bot's training journal (exported for
+// the player-facing Gus profile endpoint in cmd).
+type JournalEntry struct {
 	Date string `json:"date"`
 	Text string `json:"text"`
 }
 type journalValue struct {
-	Entries   []journalEntry `json:"entries"`
+	Entries   []JournalEntry `json:"entries"`
 	UpdatedAt string         `json:"updatedAt"`
 }
 
@@ -124,6 +126,39 @@ func putAdminValue(key string, val any) error {
 	return nil
 }
 
+// FetchBotBrain loads the bot's learned brain from its CloudSave admin record.
+// found=false (with nil error) means the bot has never trained yet.
+func FetchBotBrain(botID string) (*botbrain.Brain, bool, error) {
+	var brain botbrain.Brain
+	found, err := fetchAdminValue(BotBrainKey(botID), &brain)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	return &brain, true, nil
+}
+
+// FetchBotJournal loads the bot's training-journal entries (oldest first, as
+// stored). A missing record returns an empty slice.
+func FetchBotJournal(botID string) ([]JournalEntry, error) {
+	var jv journalValue
+	if _, err := fetchAdminValue(BotJournalKey(botID), &jv); err != nil {
+		return nil, err
+	}
+	return jv.Entries, nil
+}
+
+// Status reports whether a training run is in flight plus a copy of the last
+// run's summary (for the player-facing Gus profile endpoint).
+func (j *TrainJob) Status() (running bool, last map[string]any) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	last = make(map[string]any, len(j.last))
+	for k, v := range j.last {
+		last[k] = v
+	}
+	return j.running, last
+}
+
 // ── the training run ──────────────────────────────────────────────────────────
 
 // RunTraining executes one pass: load brain (CloudSave, seeded from the baked
@@ -199,7 +234,7 @@ func (j *TrainJob) RunTraining(ctx context.Context) (map[string]any, error) {
 	}
 	var jv journalValue
 	_, _ = fetchAdminValue(BotJournalKey(j.botID), &jv)
-	jv.Entries = append(jv.Entries, journalEntry{Date: time.Now().UTC().Format("2006-01-02"), Text: outcome.JournalText})
+	jv.Entries = append(jv.Entries, JournalEntry{Date: time.Now().UTC().Format("2006-01-02"), Text: outcome.JournalText})
 	if len(jv.Entries) > journalCap {
 		jv.Entries = jv.Entries[len(jv.Entries)-journalCap:]
 	}

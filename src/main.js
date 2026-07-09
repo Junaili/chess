@@ -18,6 +18,7 @@ import { deriveMatchRoles, computeDeadline, isPastDeadline, isResumable, pickAut
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
 import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite, rejectFamilyInvite, removeFamilyMember, leaveFamily, familyTransportAvailable } from './family.js'
+import { initGusPanel, resetGusPanel, openGusProfile, refreshGusProfile, startGusMatchmaking as startGusMatchmakingFlow } from './gus.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
 import {
@@ -113,6 +114,7 @@ const STATIC_ACTIONS = new Set([
   'showHint',
   'showMatchTab',
   'showScreen',
+  'startGusMatchmaking',
   'startNewGame',
   'startRandomMatchmaking',
   'startVideoChat',
@@ -146,6 +148,7 @@ const STATIC_ACTIONS = new Set([
   'agsOpenAchievements',
   'agsOpenForgotPassword',
   'agsOpenGuestPlay',
+  'agsOpenGusProfile',
   'agsOpenLegalDocument',
   'agsOpenLogin',
   'agsOpenOfflineFriends',
@@ -160,6 +163,7 @@ const STATIC_ACTIONS = new Set([
   'agsProfileSaveName',
   'agsRefreshFamily',
   'agsRefreshFriends',
+  'agsRefreshGusProfile',
   'agsRegister',
   'agsRequestLastOpponent',
   'agsRequestPasswordReset',
@@ -813,6 +817,9 @@ async function hydrateAuthenticatedUser(profile) {
   sendEvent('leaderboard_viewed', { trigger: 'session_start' })
   const randomBtn = document.getElementById('btn-play-random')
   if (randomBtn) randomBtn.style.display = ''
+  // Gus's home card + play button (fire-and-forget: a slow/absent Extend
+  // service must not delay session hydration — Gus just stays hidden).
+  void initGusPanel()
   window.agsCheckResumableMatch?.()  // any unfinished online match from before a disconnect/reload?
 }
 
@@ -1354,6 +1361,7 @@ async function initAuth() {
     seenIncomingRequestIds = null
     currentStreak = 0
     clearUnlockedCache()
+    resetGusPanel()
     chatClient.disconnect()
     await signOutPresence()
     await logout()
@@ -1623,6 +1631,9 @@ async function initAuth() {
   }
   window.agsStartMatchmaking = startMatchmaking
   window.agsCancelMatchmaking = cancelMatchmaking
+  window.agsStartGusMatchmaking = startGusMatchmakingFlow
+  window.agsOpenGusProfile = openGusProfile
+  window.agsRefreshGusProfile = refreshGusProfile
   window.agsRefreshFriends = refreshFriendsUI
   window.agsInviteFriend = friendId => {
     ensureNotificationPermission()  // user gesture — ask now so they can be notified of the reply
@@ -3651,11 +3662,12 @@ function setSpectatorReplayControls(visible) {
   if (analysis && !visible) analysis.style.display = 'none'
 }
 
-function replayMatchHistoryAt(index) {
-  const match = profileMatchHistoryRows[index]
+// replayMatchData opens any recorded match (own history, a friend's, or Gus's)
+// on the spectator board in replay mode; prevScreen is where Back returns to.
+function replayMatchData(match, prevScreen = 'profile') {
   if (!match || !Array.isArray(match.moves) || !match.moves.length) return
 
-  spectatorPrevScreen = 'profile'
+  spectatorPrevScreen = prevScreen
   spectatorReplayIndex = match.moves.length - 1
   const finalGame = buildReplayPosition(match.moves, match.moves.length - 1)
   spectatorLastMatchData = {
@@ -3672,7 +3684,12 @@ function replayMatchHistoryAt(index) {
   setSpectatorReplayControls(true)
 }
 
+function replayMatchHistoryAt(index) {
+  replayMatchData(profileMatchHistoryRows[index], 'profile')
+}
+
 window.agsReplayMatchHistory = replayMatchHistoryAt
+window.agsReplayMatchData = replayMatchData
 
 function addSpectatorCoordinateLabels(squareEl, r, c) {
   if (c === 0) {

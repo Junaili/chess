@@ -408,6 +408,35 @@ connects to a browser that no longer exists. Two fixes:
 This is a bug fix that helps human-vs-human matchmaking too, not bot logic in
 the client.
 
+### 7.5 Player-facing surface — "Play with Gus"
+
+Once the bot has a memory, it's a feature, not just plumbing. Two additional
+endpoints (in `cmd/gus_profile.go`, behind the same CORS + player-token auth
+as the other player endpoints) turn the learning loop into a visible character:
+
+- `GET {basePath}/bot/profile` — the bot's public card: persona (parsed from
+  the baked `persona.md`) and style knobs, lifetime stats computed from the
+  history record, the last 10 matches with move lists (client replays them on
+  the spectator board), a summary of the learned brain (lessons, opening
+  repertoire with per-line records, difficulty/think-time tuning), the last 14
+  journal entries, trainer status, and — because the caller is authenticated —
+  the bot's opponent dossier *about the caller only*. CloudSave reads are
+  cached 30s.
+- `POST {basePath}/bot/challenge` — player-initiated match vs the bot: calls
+  the watcher's `TriggerNow()` (same claim/trigger machinery) so the player
+  doesn't sit through the 20s humans-first gate they'd otherwise hit on
+  purpose. Rate-limited per player (3/min) and globally (10/min) to protect
+  the fleet buffer. If the call fails, nothing breaks: the player's ticket is
+  already queued and the regular watcher gate summons the bot as a fallback.
+  Humans still come first — if another human is in the pool, AGS matchmaking
+  pairs the humans and the bot's ticket self-cancels (§5.4).
+
+Client side (`src/gus.js` + `#screen-gus` in `index.html`): a home-screen card
+and "Play Gambit Gus" button appear after sign-in when the profile endpoint
+answers; the profile screen shows stats, journal, "how he trains", and
+replayable matches. Everything degrades to hidden/empty states when Extend is
+unreachable or the bot is brand new.
+
 ---
 
 ## 8. End-to-end sequence

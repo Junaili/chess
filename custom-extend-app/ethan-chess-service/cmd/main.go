@@ -176,6 +176,28 @@ func main() {
 	mux.Handle(basePath+"/family/group/",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(family.handle))))
 
+	// Cold-start bot gate: watch the match pool and trigger the bot to queue when
+	// a human has waited longer than the threshold (enabled via MATCH_WATCHER_*).
+	// Created before the routes so the player-facing challenge endpoint can
+	// summon Gus through the same claim/trigger machinery.
+	watcher, watcherEnabled := handler.NewMatchWatcherFromEnv()
+	if !watcherEnabled {
+		watcher = nil
+	}
+
+	// "Play with Gus": public bot profile (stats, journal, learned brain,
+	// caller dossier) + player-initiated challenge (auth required on both).
+	gus := newGusHandlers(botID, botDir, os.Getenv("BOT_USER_ID"), trainJob, watcher)
+	mux.Handle(basePath+"/bot/profile",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(gus.profile))))
+	mux.Handle(basePath+"/bot/challenge",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(gus.challenge))))
+
+	if watcher != nil {
+		// Debug endpoint: GET {basePath}/debug/watcher?key=<BOT_TRIGGER_SECRET>
+		mux.HandleFunc(basePath+"/debug/watcher", watcher.DebugHandler(os.Getenv("BOT_TRIGGER_SECRET")))
+	}
+
 	// Bot self-learning: game intake from the AMS bot DS (shared-secret auth)
 	mux.HandleFunc(basePath+"/bot/games", handler.BotGamesHandler(os.Getenv("BOT_TRIGGER_SECRET"), botID))
 
@@ -205,12 +227,8 @@ func main() {
 		}
 	}()
 
-	// Cold-start bot gate: watch the match pool and trigger the bot to queue when
-	// a human has waited longer than the threshold (enabled via MATCH_WATCHER_*).
-	if w, ok := handler.NewMatchWatcherFromEnv(); ok {
-		// Debug endpoint: GET {basePath}/debug/watcher?key=<BOT_TRIGGER_SECRET>
-		mux.HandleFunc(basePath+"/debug/watcher", w.DebugHandler(os.Getenv("BOT_TRIGGER_SECRET")))
-		go w.Start(ctx)
+	if watcher != nil {
+		go watcher.Start(ctx)
 	}
 
 	<-ctx.Done()
