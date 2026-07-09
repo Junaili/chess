@@ -2537,6 +2537,7 @@ function showWaitingScreen(role) {
     'host':               ['🎮', 'Invite your friend',      'Share the link below. The game starts when they open it.'],
     'joiner':             ['⏳', 'Joining game…',           'Connecting to your friend. Please wait.'],
     'matchmaking':        ['🔍', 'Finding opponent…',       'Searching for a random opponent. This may take a moment.'],
+    'gus-matchmaking':    ['♞', 'Summoning Gambit Gus…',    'Gus is grabbing his board — the game usually starts within a minute.'],
     'matchmaking-host':   ['⚡', 'Match found!',            'Setting up the connection — you play as White.'],
     'matchmaking-joiner': ['⚡', 'Match found!',            'Connecting to opponent — you play as Black.'],
   };
@@ -2568,18 +2569,32 @@ function cancelWaiting() {
 }
 
 function startRandomMatchmaking() {
-  if (typeof window.agsStartMatchmaking !== 'function') {
-    alert('Sign in to play against random players.');
+  startQueueMatchmaking('random');
+}
+
+// "Play with Gus": the same real-matchmaking + P2P flow as Play vs Random —
+// src/gus.js additionally asks the backend to summon the bot immediately
+// instead of leaving the player to wait out the 20s humans-first gate.
+function startGusMatchmaking() {
+  startQueueMatchmaking('gus');
+}
+
+function startQueueMatchmaking(opponentKind) {
+  const startFn = opponentKind === 'gus' ? window.agsStartGusMatchmaking : window.agsStartMatchmaking;
+  if (typeof startFn !== 'function') {
+    alert(opponentKind === 'gus'
+      ? 'Sign in to challenge Gambit Gus.'
+      : 'Sign in to play against random players.');
     return;
   }
   matchmakingActive = true;
   gameMode = 'online';
   const queueStartedAt = Date.now();
-  showWaitingScreen('matchmaking');
+  showWaitingScreen(opponentKind === 'gus' ? 'gus-matchmaking' : 'matchmaking');
   startMatchmakingWaitTimer(queueStartedAt);
   if (typeof window.agsPrepareSessionChat === 'function') window.agsPrepareSessionChat();
-  if (typeof window.agsSendEvent === 'function') window.agsSendEvent('matchmaking_started', {});
-  window.agsStartMatchmaking(
+  if (typeof window.agsSendEvent === 'function') window.agsSendEvent('matchmaking_started', { opponent: opponentKind });
+  startFn(
     function onFound(match) {
       if (!matchmakingActive) return;
       const memberUserIds = Array.isArray(match) ? match : match?.memberUserIds;
@@ -2593,7 +2608,7 @@ function startRandomMatchmaking() {
         return;
       }
       if (typeof window.agsSendEvent === 'function') {
-        window.agsSendEvent('matchmaking_matched', { wait_time_ms: Date.now() - queueStartedAt });
+        window.agsSendEvent('matchmaking_matched', { wait_time_ms: Date.now() - queueStartedAt, opponent: opponentKind });
       }
       const sorted = memberUserIds.slice().sort();
       const myId   = window.agsCurrentUserId;
@@ -2645,11 +2660,13 @@ function startRandomMatchmaking() {
       matchmakingActive = false;
       stopMatchmakingWaitTimer();
       if (typeof window.agsSendEvent === 'function') {
-        window.agsSendEvent('matchmaking_timeout', { wait_time_ms: Date.now() - queueStartedAt });
+        window.agsSendEvent('matchmaking_timeout', { wait_time_ms: Date.now() - queueStartedAt, opponent: opponentKind });
       }
       destroyPeer();
       showScreen('home');
-      alert('No opponent found. Try again in a moment.');
+      alert(opponentKind === 'gus'
+        ? "Gus couldn't make it to the board this time. Try again in a moment."
+        : 'No opponent found. Try again in a moment.');
     },
     function onError(msg) {
       if (!matchmakingActive) return;
