@@ -11,6 +11,20 @@ export { normalizeFriendsError } from './friend-feedback.mjs'
 
 const PAGE = { limit: 50, offset: 0 }
 
+function isGambitGusIdentity(userId, displayName = '') {
+  const normalizedUserId = String(userId || '').trim().toLowerCase()
+  const normalizedDisplayName = String(displayName || '').trim().toLowerCase()
+  const knownUserId = String(window.agsGambitGusUserId || '').trim().toLowerCase()
+  const knownName = String(window.agsGambitGusName || 'Gambit Gus').trim().toLowerCase()
+  return normalizedUserId === 'gambit-gus'
+    || (knownUserId && normalizedUserId === knownUserId)
+    || normalizedDisplayName === knownName
+}
+
+function gusFriendBlock() {
+  return { ok: false, reason: 'bot', error: 'Gambit Gus cannot be added to Friends.' }
+}
+
 function friendsApi() {
   const { coreConfig } = sdk.assembly()
   return FriendsApi(sdk, {
@@ -115,6 +129,7 @@ export async function fetchFriendState() {
 }
 
 export async function requestFriend(friendId) {
+  if (isGambitGusIdentity(friendId)) return gusFriendBlock()
   try {
     await friendsApi().createFriendMeRequest({ friendId })
     return { ok: true }
@@ -200,6 +215,7 @@ export async function addFriendByEmail(email, myUserId, relationshipState = {}) 
   const lookup = await lookupUserByEmail(email)
   if (!lookup.ok) return lookup
   if (!lookup.found) return { ok: true, found: false }
+  if (isGambitGusIdentity(lookup.userId, lookup.displayName)) return gusFriendBlock()
   if (lookup.userId === myUserId) {
     return { ok: false, reason: 'self', error: 'That email belongs to your account. Try your friend’s email instead.' }
   }

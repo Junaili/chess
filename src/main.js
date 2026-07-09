@@ -316,6 +316,18 @@ let profileMatchHistoryRows = []
 let blockedPlayers = []
 let deletionRequirements = null
 
+function isGambitGusIdentity(userId, displayName = '') {
+  const normalizedUserId = String(userId || '').trim().toLowerCase()
+  const normalizedDisplayName = String(displayName || '').trim().toLowerCase()
+  const knownUserId = String(window.agsGambitGusUserId || '').trim().toLowerCase()
+  const knownName = String(window.agsGambitGusName || 'Gambit Gus').trim().toLowerCase()
+  return normalizedUserId === 'gambit-gus'
+    || (knownUserId && normalizedUserId === knownUserId)
+    || normalizedDisplayName === knownName
+}
+
+window.isGambitGusIdentity = isGambitGusIdentity
+
 async function openExternalURL(url) {
   if (!url) return false
   if (window.Capacitor?.isNativePlatform?.()) {
@@ -603,6 +615,10 @@ function mountShareRow(containerEl, url, opts = {}) {
     shareEvent = 'invite_sent',
     sharePayload = {},
     emailSubject = 'Chess challenge!',
+    hideX = false,
+    nativeLabel = '📤 More…',
+    title = '',
+    description = '',
   } = opts
   const enc = s => encodeURIComponent(s)
   const linkUrl      = addUtm(url, 'link', campaign)
@@ -617,6 +633,24 @@ function mountShareRow(containerEl, url, opts = {}) {
     : (fromName ? `${fromName} challenged you to chess! Join here: ${u}` : `Let's play chess! Join my game: ${u}`)
   const xText = opts.xText
     || (fromName ? `${fromName} challenged me to chess 🎯 — think you can beat them?` : 'Think you can beat me? 🎯 Play chess now')
+
+  if (title || description) {
+    const intro = document.createElement('div')
+    intro.className = 'share-row-intro'
+    if (title) {
+      const heading = document.createElement('strong')
+      heading.className = 'share-row-title'
+      heading.textContent = title
+      intro.appendChild(heading)
+    }
+    if (description) {
+      const copy = document.createElement('p')
+      copy.className = 'share-row-copy'
+      copy.textContent = description
+      intro.appendChild(copy)
+    }
+    containerEl.appendChild(intro)
+  }
 
   const row = document.createElement('div')
   row.className = 'share-row'
@@ -642,14 +676,16 @@ function mountShareRow(containerEl, url, opts = {}) {
   wa.addEventListener('click', () => fire('whatsapp'))
   row.appendChild(wa)
 
-  const tw = document.createElement('a')
-  tw.className = 'share-chip share-chip-x'
-  tw.href = `https://x.com/intent/tweet?text=${enc(xText)}&url=${enc(twitterUrl)}`
-  tw.target = '_blank'
-  tw.rel = 'noopener'
-  tw.textContent = '𝕏 Post'
-  tw.addEventListener('click', () => fire('twitter'))
-  row.appendChild(tw)
+  if (!hideX) {
+    const tw = document.createElement('a')
+    tw.className = 'share-chip share-chip-x'
+    tw.href = `https://x.com/intent/tweet?text=${enc(xText)}&url=${enc(twitterUrl)}`
+    tw.target = '_blank'
+    tw.rel = 'noopener'
+    tw.textContent = '𝕏 Post'
+    tw.addEventListener('click', () => fire('twitter'))
+    row.appendChild(tw)
+  }
 
   if (emailTo) {
     const emailBtn = document.createElement('button')
@@ -686,7 +722,7 @@ function mountShareRow(containerEl, url, opts = {}) {
   if (navigator.share) {
     const nativeBtn = document.createElement('button')
     nativeBtn.className = 'share-chip share-chip-native'
-    nativeBtn.textContent = '📤 More…'
+    nativeBtn.textContent = nativeLabel
     nativeBtn.addEventListener('click', () => {
       const nativeUrl = addUtm(url, 'native', campaign)
       navigator.share({ title: "Ethan's Chess", text: gameTextFor(nativeUrl), url: nativeUrl }).catch(() => {})
@@ -1867,23 +1903,17 @@ async function initAuth() {
   window.agsCopyInviteLink = () => {
     const link = getShareableAppURL(currentUserId ? { invitedBy: currentUserId } : {})
     const container = document.getElementById('ags-invite-share-row')
-    if (navigator.share) {
-      const fromName = document.getElementById('ags-signedin-name')?.textContent || undefined
-      const nativeLink = addUtm(link, 'native')
-      navigator.share({
-        title: "Ethan's Chess",
-        text: fromName ? `${fromName} challenged you to chess! Join here: ${nativeLink}` : `Let's play chess! Join my game: ${nativeLink}`,
-        url: nativeLink,
-      }).catch(() => {})
-      sendEvent('invite_sent', { medium: 'native_share' })
-      return
-    }
     if (!container) return
     if (container.querySelector('.share-row')) {
       container.innerHTML = ''
       return
     }
-    mountShareRow(container, link)
+    mountShareRow(container, link, {
+      hideX: true,
+      nativeLabel: '📤 More',
+      title: 'Invite outside friends',
+      description: 'Share a link, WhatsApp, email, or More so people outside your Friends list can join.',
+    })
   }
   window.agsRequestLastOpponent = async () => {
     const opponent = window.agsLastOpponent
@@ -2416,6 +2446,7 @@ async function openPublicProfile(userId, displayName = '') {
   const friend = friendsState.friends.find(item => item.userId === userId)
   const incoming = friendsState.incoming.find(item => item.userId === userId)
   const outgoing = friendsState.outgoing.find(item => item.userId === userId)
+  const isGus = isGambitGusIdentity(userId, displayName)
 
   if (userId === currentUserId) {
     if (statusEl) statusEl.textContent = 'This is your profile.'
@@ -2429,6 +2460,12 @@ async function openPublicProfile(userId, displayName = '') {
   if (friend) {
     const presence = friend.presence?.label || 'Offline'
     if (statusEl) statusEl.textContent = `Already friends · ${presence}`
+    return
+  }
+
+  if (isGus) {
+    if (statusEl) statusEl.textContent = 'Gambit Gus cannot be added as a friend.'
+    if (addBtn) addBtn.style.display = 'none'
     return
   }
 
@@ -3613,6 +3650,11 @@ async function updatePostMatchFriendAction(opponent) {
   if (blockedPlayers.some(item => item.userId === opponent.userId)) {
     btn.style.display = 'none'
     note.textContent = ''
+    return
+  }
+  if (isGambitGusIdentity(opponent.userId, opponent.name)) {
+    btn.style.display = 'none'
+    note.textContent = 'Gambit Gus cannot be added as a friend.'
     return
   }
 

@@ -22,6 +22,7 @@ test.describe('Live match resume after reload', () => {
     try {
       await gotoApp(pageA, { offline: false });
       await gotoApp(pageB, { offline: false });
+      pageA.on('dialog', dialog => dialog.accept().catch(() => {}));
       await loginWithPassword(pageA, creds.user1.identifier, creds.user1.password);
       await loginWithPassword(pageB, creds.user2.identifier, creds.user2.password);
 
@@ -84,6 +85,48 @@ test.describe('Live match resume after reload', () => {
       await squareLocator(pageB, 'e7').click();
       await squareLocator(pageB, 'e5').click();
       await expect(pageA.locator('[data-r="3"][data-c="4"] .piece')).toHaveCount(1, { timeout: 30_000 });
+    } finally {
+      await ctxA.close();
+      await ctxB.close();
+    }
+  });
+
+  test('leaving an online match marks it lost locally and does not leave a resumable session', async ({ browser }) => {
+    test.setTimeout(180_000);
+
+    const ctxA = await browser.newContext({ ignoreHTTPSErrors: true });
+    const ctxB = await browser.newContext({ ignoreHTTPSErrors: true });
+    let pageA = await ctxA.newPage();
+    const pageB = await ctxB.newPage();
+
+    try {
+      await gotoApp(pageA, { offline: false });
+      await gotoApp(pageB, { offline: false });
+      pageA.on('dialog', dialog => dialog.accept().catch(() => {}));
+      await loginWithPassword(pageA, creds.user1.identifier, creds.user1.password);
+      await loginWithPassword(pageB, creds.user2.identifier, creds.user2.password);
+
+      await pageA.locator('#btn-play-random').click();
+      await pageB.locator('#btn-play-random').click();
+
+      await expect(pageA.locator('#screen-game')).toBeVisible({ timeout: 120_000 });
+      await expect(pageB.locator('#screen-game')).toBeVisible({ timeout: 120_000 });
+
+      await squareLocator(pageA, 'e2').click();
+      await squareLocator(pageA, 'e4').click();
+      const movedOnA = await squareLocator(pageA, 'e4').locator('.piece').count();
+      if (!movedOnA) {
+        await squareLocator(pageB, 'e2').click();
+        await squareLocator(pageB, 'e4').click();
+      }
+
+      await pageA.getByRole('tab', { name: 'More' }).click();
+      await pageA.getByRole('button', { name: 'Leave game' }).click();
+      await expect(pageA.locator('#screen-home')).toBeVisible({ timeout: 30_000 });
+      await expect.poll(async () => pageA.evaluate(() => localStorage.getItem('chess-active-match'))).toBeNull();
+
+      await pageA.reload();
+      await expect(pageA.locator('#resume-match-modal')).toBeHidden({ timeout: 30_000 });
     } finally {
       await ctxA.close();
       await ctxB.close();

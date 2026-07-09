@@ -225,7 +225,15 @@ test.describe('UI smoke (signed out)', () => {
       expect(region.bottom).toBeLessThanOrEqual(homeGeometry.viewport.height);
     }
 
-    await expect(page.getByRole('button', { name: 'Invite Outside Friend' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Invite Outside Friend' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Share Invite Link' }).click();
+    await expect(page.locator('#ags-invite-share-row .share-row-title')).toContainText('Invite outside friends');
+    await expect(page.locator('#ags-invite-share-row .share-row-copy')).toContainText('Share a link');
+    await expect(page.locator('#ags-invite-share-row')).toContainText('Copy');
+    await expect(page.locator('#ags-invite-share-row')).toContainText('WhatsApp');
+    await expect(page.locator('#ags-invite-share-row')).toContainText('Email');
+    await expect(page.locator('#ags-invite-share-row')).toContainText('More');
+    await expect(page.locator('#ags-invite-share-row')).not.toContainText('𝕏');
 
     await page.evaluate(() => {
       window.showColorSelect('computer');

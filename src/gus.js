@@ -51,6 +51,8 @@ export async function initGusPanel() {
     return
   }
   gusAvailable = true
+  window.agsGambitGusUserId = profile.bot.userId || profile.bot.id || 'gambit-gus'
+  window.agsGambitGusName = profile.bot.name || 'Gambit Gus'
   renderHomePanel(profile)
 }
 
@@ -58,6 +60,8 @@ export function resetGusPanel() {
   gusAvailable = false
   cachedProfile = null
   cachedAt = 0
+  window.agsGambitGusUserId = ''
+  window.agsGambitGusName = 'Gambit Gus'
   const panel = document.getElementById('ags-gus-panel')
   if (panel) panel.style.display = 'none'
   const playBtn = document.getElementById('btn-play-gus')

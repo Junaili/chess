@@ -1069,11 +1069,19 @@ function showGameOver() {
   setRematchMessage('');
 
   const addFriendBtn = document.getElementById('btn-add-match-friend');
-  if (addFriendBtn) addFriendBtn.style.display = isOnline && currentOpponent?.userId && !currentOpponentBlocked ? '' : 'none';
+  const isGusOpponent = currentOpponent?.userId
+    && (
+      currentOpponent.userId === window.agsGambitGusUserId
+      || currentOpponent.userId === 'gambit-gus'
+      || String(currentOpponent.name || '').trim().toLowerCase() === String(window.agsGambitGusName || 'Gambit Gus').trim().toLowerCase()
+    );
+  if (addFriendBtn) addFriendBtn.style.display = isOnline && currentOpponent?.userId && !currentOpponentBlocked && !isGusOpponent ? '' : 'none';
   const matchFriendMessage = document.getElementById('match-friend-message');
   if (matchFriendMessage) matchFriendMessage.textContent = '';
-  if (isOnline && currentOpponent?.userId && typeof window.agsUpdateMatchFriendAction === 'function') {
+  if (isOnline && currentOpponent?.userId && !isGusOpponent && typeof window.agsUpdateMatchFriendAction === 'function') {
     window.agsUpdateMatchFriendAction(currentOpponent);
+  } else if (matchFriendMessage && isGusOpponent) {
+    matchFriendMessage.textContent = 'Gambit Gus cannot be added as a friend.'
   }
 
   // Contextual invite prompt
@@ -1304,6 +1312,61 @@ function endOnlineAndGoHome() {
   closeModal('game-over-modal');
   destroyPeer();
   showScreen('home');
+}
+
+async function forfeitOnlineMatchAndGoHome() {
+  if (gameMode !== 'online' || !game || isGameOverStatus(game.status) || !game.moveHistory.length) {
+    return false;
+  }
+
+  const endedAt = new Date();
+  const startedAt = matchStartedAt || endedAt;
+  const myName = getCurrentPlayerDisplayName();
+  const opponentName = currentOpponent?.name || 'Opponent';
+  const opponentUserId = currentOpponent?.userId || '';
+  const moves = game.moveHistory.map(m => ({ fr: m.fr, fc: m.fc, toR: m.toR, toC: m.toC, promType: m.promType || 'queen' }));
+  const capturedByWhite = game.capturedByWhite.map(p => p.type);
+  const capturedByBlack = game.capturedByBlack.map(p => p.type);
+  const historyEntry = {
+    id: 'match-' + endedAt.getTime() + '-' + Math.random().toString(36).slice(2, 8),
+    mode: 'online',
+    opponentName,
+    opponentUserId,
+    result: 'loss',
+    endReason: 'forfeit',
+    myColor: playerColor,
+    startedAt: startedAt.toISOString(),
+    endedAt: endedAt.toISOString(),
+    durationMs: endedAt.getTime() - startedAt.getTime(),
+    moves,
+    whiteName: playerColor === 'white' ? myName : opponentName,
+    blackName: playerColor === 'black' ? myName : opponentName,
+    capturedByWhite,
+    capturedByBlack,
+  };
+
+  // Clear the resumable record first so a peer-close event can't re-save it as
+  // a disconnect window after the user already chose to leave.
+  clearActiveMatch();
+
+  try { await window.agsIncrementLoss?.(); } catch {}
+  try { await window.agsIncrementGamePlayed?.('online'); } catch {}
+  try { await window.agsUpdateStreak?.(); } catch {}
+  try {
+    if (typeof window.agsGetPendingOpponentRating === 'function') {
+      const rating = window.agsGetPendingOpponentRating();
+      if (typeof rating === 'number') {
+        window.agsSetOpponentRating?.(rating);
+        await window.agsRecordEloResult?.(0);
+      }
+    }
+  } catch {}
+  try { await window.agsRecordMatchHistory?.(historyEntry); } catch {}
+
+  destroyPeer();
+  showScreen('home');
+  showConnBanner('You left the match. Recorded as a loss.', 'error');
+  return true;
 }
 
 // ─── PeerJS — Online Multiplayer ──────────────────────────────────────────────
@@ -2538,8 +2601,8 @@ function showWaitingScreen(role) {
     'joiner':             ['⏳', 'Joining game…',           'Connecting to your friend. Please wait.'],
     'matchmaking':        ['🔍', 'Finding opponent…',       'Searching for a random opponent. This may take a moment.'],
     'gus-matchmaking':    ['♞', 'Summoning Gambit Gus…',    'Gus is grabbing his board — the game usually starts within a minute.'],
-    'matchmaking-host':   ['⚡', 'Match found!',            'Setting up the connection — you play as White.'],
-    'matchmaking-joiner': ['⚡', 'Match found!',            'Connecting to opponent — you play as Black.'],
+    'matchmaking-host':   ['⚡', 'Match found!',            'Setting up the board.'],
+    'matchmaking-joiner': ['⚡', 'Match found!',            'Setting up the board.'],
   };
   const [icon, title, sub] = messages[role] || messages['joiner'];
   document.getElementById('waiting-icon').textContent = icon;
@@ -2549,7 +2612,23 @@ function showWaitingScreen(role) {
   document.getElementById('waiting-spinner').style.display = 'block';
 }
 
+function pickWhiteUserId(memberUserIds = [], sessionId = '') {
+  const sorted = memberUserIds.slice().sort()
+  if (sorted.length < 2) return sorted[0] || ''
+  const seed = `${sessionId || ''}|${sorted.join('|')}`
+  let hash = 2166136261
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0) % 2 === 0 ? sorted[0] : sorted[1]
+}
+
 function cancelOnlineGame() {
+  if (gameMode === 'online' && game && isGameActiveStatus(game.status)) {
+    void forfeitOnlineMatchAndGoHome();
+    return;
+  }
   destroyPeer();
   showScreen('home');
 }
@@ -2615,10 +2694,12 @@ function startQueueMatchmaking(opponentKind) {
       const isHost = myId === sorted[0];
       const hostId = sorted[0];
       const peerId = hostId.replace(/-/g, '');
+      const whiteUserId = pickWhiteUserId(memberUserIds, sessionId);
 
-      playerColor = isHost ? 'white' : 'black';
+      playerColor = myId === whiteUserId ? 'white' : 'black';
       matchmakingActive = false;
       showWaitingScreen(isHost ? 'matchmaking-host' : 'matchmaking-joiner');
+      document.getElementById('waiting-sub').textContent = `Setting up the board — you are ${playerColor === 'white' ? 'White' : 'Black'}.`;
 
       destroyPeer();
       pendingChatContext = sessionId
@@ -2702,7 +2783,7 @@ function shareInviteLink() {
       url: currentInviteLink
     }).catch(() => {});
   }
-  // Desktop fallback: the share-row buttons below already cover Copy/WhatsApp/X/Email
+  // Desktop fallback: the share-row buttons below already cover Copy/WhatsApp/Email/More
 }
 
 function showContactsForInvite() {
@@ -2927,6 +3008,11 @@ async function sendInviteToContact(name, address, link) {
 // ─── Misc ─────────────────────────────────────────────────────────────────────
 
 function confirmGoHome() {
+  if (gameMode === 'online' && game && isGameActiveStatus(game.status) && game.moveHistory.length > 0) {
+    if (!confirm('Leave this online game? It will count as a loss.')) return;
+    void forfeitOnlineMatchAndGoHome();
+    return;
+  }
   if (isGameActiveStatus(game?.status) && game.moveHistory.length > 0) {
     if (!confirm('Leave this game? The current game will be lost.')) return;
   }

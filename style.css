@@ -5172,6 +5172,26 @@ input[type="checkbox"] {
   margin-top: 10px;
 }
 
+.share-row-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.share-row-title {
+  color: #fff8f1;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.share-row-copy {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
 .share-chip {
   display: inline-flex;
   align-items: center;
