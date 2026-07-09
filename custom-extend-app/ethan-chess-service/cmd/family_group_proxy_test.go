@@ -61,6 +61,38 @@ func TestFamilyGroupProxyForwardsMyGroupsWithPlayerToken(t *testing.T) {
 	}
 }
 
+func TestFamilyGroupProxyNormalizesNoJoinedGroup(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/group/v2/public/namespaces/seal-chessags/users/me/groups" {
+			t.Errorf("path: got %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"errorCode":73034,"message":"user has not joined a group"}`)
+	}))
+	defer upstream.Close()
+
+	proxy := &familyGroupProxy{
+		baseURL:    upstream.URL,
+		namespace:  "seal-chessags",
+		httpClient: upstream.Client(),
+	}
+	req := newFamilyProxyRequest(http.MethodGet,
+		"/family/group/v2/public/namespaces/seal-chessags/users/me/groups?limit=10", "")
+	rec := httptest.NewRecorder()
+
+	proxy.handle(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if strings.TrimSpace(rec.Body.String()) != `{"data":[]}` {
+		t.Fatalf("unexpected response: %s", rec.Body.String())
+	}
+}
+
 func TestFamilyGroupProxyForwardsValidatedCreate(t *testing.T) {
 	t.Parallel()
 

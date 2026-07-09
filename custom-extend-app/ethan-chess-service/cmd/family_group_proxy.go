@@ -49,6 +49,7 @@ const familyIDSegment = `[a-zA-Z0-9_-]{1,64}`
 // request body, which gets validated so this proxy can't be used to mint
 // arbitrary (non-family) groups.
 var createFamilyGroupPattern = regexp.MustCompile(`^v2/public/namespaces/([^/]+)/groups$`)
+var myGroupsPattern = regexp.MustCompile(`^v2/public/namespaces/([^/]+)/users/me/groups$`)
 
 var familyGroupRoutes = []struct {
 	method  string
@@ -69,6 +70,10 @@ var familyGroupRoutes = []struct {
 
 func isCreateGroupPath(method, rest string) bool {
 	return method == http.MethodPost && createFamilyGroupPattern.MatchString(rest)
+}
+
+func isMyGroupsPath(method, rest string) bool {
+	return method == http.MethodGet && myGroupsPattern.MatchString(rest)
 }
 
 func matchFamilyGroupRoute(method, rest string) (namespace string, ok bool) {
@@ -131,7 +136,7 @@ func (h *familyGroupProxy) handle(w http.ResponseWriter, r *http.Request) {
 		endpoint += "?" + query.Encode()
 	}
 
-	h.forward(w, r, r.Method, endpoint, body)
+	h.forward(w, r, r.Method, endpoint, body, isMyGroupsPath(r.Method, rest))
 }
 
 func validateCreateFamilyGroupBody(raw []byte) error {
@@ -159,6 +164,7 @@ func (h *familyGroupProxy) forward(
 	method string,
 	endpoint string,
 	body io.Reader,
+	normalizeNotJoined bool,
 ) {
 	req, err := http.NewRequestWithContext(incoming.Context(), method, endpoint, body)
 	if err != nil {
@@ -200,6 +206,11 @@ func (h *familyGroupProxy) forward(
 		contentType = "application/json"
 	}
 	w.Header().Set("Content-Type", contentType)
+	if normalizeNotJoined && resp.StatusCode == http.StatusNotFound {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[]}`))
+		return
+	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(raw)
 }
