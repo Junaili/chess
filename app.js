@@ -2600,7 +2600,7 @@ function showWaitingScreen(role) {
     'host':               ['🎮', 'Invite your friend',      'Share the link below. The game starts when they open it.'],
     'joiner':             ['⏳', 'Joining game…',           'Connecting to your friend. Please wait.'],
     'matchmaking':        ['🔍', 'Finding opponent…',       'Searching for a random opponent. This may take a moment.'],
-    'gus-matchmaking':    ['♞', 'Summoning Gambit Gus…',    'Gus is grabbing his board — the game usually starts within a minute.'],
+    'gus-matchmaking':    ['♞', 'Summoning Gambit Gus…',    'Gus is grabbing his board — the game usually starts within 2 minutes.'],
     'matchmaking-host':   ['⚡', 'Match found!',            'Setting up the board.'],
     'matchmaking-joiner': ['⚡', 'Match found!',            'Setting up the board.'],
   };
@@ -2653,7 +2653,7 @@ function startRandomMatchmaking() {
 
 // "Play with Gus": the same real-matchmaking + P2P flow as Play vs Random —
 // src/gus.js additionally asks the backend to summon the bot immediately
-// instead of leaving the player to wait out the 20s humans-first gate.
+// instead of leaving the player to wait out the humans-first gate.
 function startGusMatchmaking() {
   startQueueMatchmaking('gus');
 }
@@ -2746,7 +2746,7 @@ function startQueueMatchmaking(opponentKind) {
       destroyPeer();
       showScreen('home');
       alert(opponentKind === 'gus'
-        ? "Gus couldn't make it to the board this time. Try again in a moment."
+        ? "Gus couldn't make it to the board this time. Please try again in up to 2 minutes."
         : 'No opponent found. Try again in a moment.');
     },
     function onError(msg) {

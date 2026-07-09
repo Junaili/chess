@@ -1,7 +1,7 @@
 // "Play with Gus" — the client face of the self-learning cold-start bot
 // (Gambit Gus). Talks to the Extend service's player-facing endpoints:
 //   GET  /bot/profile    — persona, stats, matches, journal, brain, training
-//   POST /bot/challenge  — summon Gus to the queue right now (skips the 20s gate)
+//   POST /bot/challenge  — summon Gus to the queue right now (skips the queue gate)
 // DOM: the #ags-gus-panel home card and the #screen-gus profile screen.
 import { extendFetch } from './extend-client.js'
 import { startMatchmaking } from './matchmaking.js'
@@ -296,7 +296,7 @@ function renderMatches(matches, bot) {
 // ── challenge (matchmake with Gus) ────────────────────────────────────────────
 
 // agsStartGusMatchmaking queues a normal matchmaking ticket, then asks Extend
-// to summon Gus immediately (bypassing the 20s humans-first gate — the player
+// to summon Gus immediately (bypassing the humans-first gate — the player
 // explicitly chose the bot). If the summon call fails, the ticket stays queued:
 // the match watcher's regular gate is the fallback, so the player still gets a
 // game. Note AGS matchmaking does the pairing — if another human is waiting in
