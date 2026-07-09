@@ -887,6 +887,59 @@ input[type="checkbox"] {
   margin-top: 6px;
 }
 
+.add-child-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+}
+
+.add-child-intro {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.add-child-form .legal-confirm-row span {
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.child-handoff {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid rgba(120, 220, 150, 0.35);
+  border-radius: 14px;
+  background: rgba(120, 220, 150, 0.07);
+}
+
+.child-handoff h4 {
+  margin: 0 0 8px;
+  color: #fff8f1;
+}
+
+.child-handoff p {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0 0 8px;
+}
+
+.child-handoff-cred {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  word-break: break-all;
+}
+
+.child-handoff-warn {
+  color: #ffb0a0;
+}
+
 .family-invite-picker .friends-empty {
   color: var(--text-soft);
   font-size: 0.8rem;
@@ -2254,6 +2307,39 @@ input[type="checkbox"] {
 #screen-register .auth-form-actions,
 #screen-forgot-password .auth-form-actions {
   display: block;
+}
+
+/* Under-13 "ask a parent" panel on the register screen */
+.ask-parent-panel {
+  text-align: center;
+}
+
+.ask-parent-mark {
+  font-size: 2.4rem;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.ask-parent-panel h3 {
+  margin: 0 0 8px;
+  color: #fff8f1;
+}
+
+.ask-parent-panel p {
+  margin: 0 0 10px;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.ask-parent-steps {
+  text-align: left;
+  margin: 0 auto 12px;
+  padding-left: 22px;
+  max-width: 320px;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+  line-height: 1.7;
 }
 
 #screen-register .auth-form-actions .btn,

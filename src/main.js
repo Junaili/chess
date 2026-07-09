@@ -1,6 +1,7 @@
 import { Peer } from 'peerjs'
 import { ConfigApi as ChatConfigApi, TopicApi as ChatTopicApi } from '@accelbyte/sdk-chat'
-import { loginWithGoogle, loginWithApple, loginWithPassword, requestPasswordReset, resetPassword, registerWithPassword, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession, clearLocalAccountData } from './auth.js'
+import { loginWithGoogle, loginWithApple, loginWithPassword, requestPasswordReset, resetPassword, registerWithPassword, registerChildAccount, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession, clearLocalAccountData } from './auth.js'
+import { validateBirthYear, isBirthYearUnder13, isChildSession, buildConsentRecord } from './family-safety.mjs'
 import { setQueueUIHandler, cancelLoginQueue } from './login-queue.js'
 import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
@@ -17,7 +18,7 @@ import { computeMatchStats, summarizeCoachingGrades, combineCoachingSummaries } 
 import { deriveMatchRoles, computeDeadline, isPastDeadline, isResumable, pickAuthoritativeMoves } from './match-resume.mjs'
 import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
-import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite, rejectFamilyInvite, removeFamilyMember, leaveFamily, familyTransportAvailable } from './family.js'
+import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite, rejectFamilyInvite, removeFamilyMember, leaveFamily, familyTransportAvailable, recordParentalConsent } from './family.js'
 import { initGusPanel, resetGusPanel, openGusProfile, refreshGusProfile, showGusTab, startGusMatchmaking as startGusMatchmakingFlow } from './gus.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
@@ -73,8 +74,25 @@ subscribeAccessTokenRefresh(accessToken => {
 })
 
 window.agsPrepareSessionChat = () => chatClient.prepareSessionChat()
-window.agsActivateSessionChat = sessionId => chatClient.activateSessionChat(sessionId)
-window.agsActivatePersonalChat = otherUserId => chatClient.activatePersonalChat(otherUserId)
+// Child sessions chat with family members only (COPPA: no open communication
+// with strangers). Peers whose identity can't be established count as
+// strangers. The rejection message surfaces through app.js's normal
+// chat-unavailable path; the match itself is unaffected.
+function childChatGuardError(otherUserId) {
+  if (!isProtectedChildSession()) return null
+  const isFamilyMember = !!otherUserId && familyState.members.some(m => m.userId === otherUserId)
+  return isFamilyMember ? null : new Error('Chat on this account works with family members only.')
+}
+window.agsActivateSessionChat = (sessionId, opponentUserId) => {
+  const guardError = childChatGuardError(opponentUserId)
+  if (guardError) return Promise.reject(guardError)
+  return chatClient.activateSessionChat(sessionId)
+}
+window.agsActivatePersonalChat = otherUserId => {
+  const guardError = childChatGuardError(otherUserId)
+  if (guardError) return Promise.reject(guardError)
+  return chatClient.activatePersonalChat(otherUserId)
+}
 window.agsSendChatMessage = message => chatClient.send(message)
 window.agsDeactivateChat = () => chatClient.deactivateTopic()
 window.agsGetChatState = () => chatClient.snapshot()
@@ -135,6 +153,7 @@ const STATIC_ACTIONS = new Set([
   'agsConfirmDeleteAccount',
   'agsContinueAsGuestFromInvite',
   'agsCopyInviteLink',
+  'agsCreateChildAccount',
   'agsCreateFamily',
   'agsDeclineLegal',
   'agsDiscardActiveMatch',
@@ -178,6 +197,7 @@ const STATIC_ACTIONS = new Set([
   'agsSpectatorPrev',
   'agsStopWatching',
   'agsSwitchLeaderboardView',
+  'agsToggleAddChild',
   'agsToggleAddFriend',
   'agsToggleFamilyInvite',
   'agsUpdateDeleteConfirmation',
@@ -283,6 +303,7 @@ function getShareableAppURL(params = {}) {
 }
 
 let currentUserId = null
+let currentProfile = null  // hydrated IAM profile — needed for child-session (COPPA) checks
 let currentUserWins = 0
 let currentStreak = 0
 let currentUserRating = 1200
@@ -471,16 +492,27 @@ function renderPrivacyChoices() {
   const toggle = document.getElementById('privacy-analytics-toggle')
   const status = document.getElementById('privacy-choice-status')
   const banner = document.getElementById('privacy-consent-banner')
-  if (toggle) toggle.checked = preferences.analytics
-  if (status) {
-    status.textContent = preferences.decided
-      ? `Optional analytics are ${preferences.analytics ? 'enabled' : 'disabled'}.`
-      : 'You have not made a privacy choice yet.'
+  const childSession = isProtectedChildSession()
+  if (toggle) {
+    toggle.checked = childSession ? false : preferences.analytics
+    toggle.disabled = childSession
   }
-  if (banner) banner.hidden = preferences.decided
+  if (status) {
+    status.textContent = childSession
+      ? 'Analytics stays off on this protected account.'
+      : preferences.decided
+        ? `Optional analytics are ${preferences.analytics ? 'enabled' : 'disabled'}.`
+        : 'You have not made a privacy choice yet.'
+  }
+  // A child session never sees the consent banner — there is nothing to opt
+  // in to.
+  if (banner) banner.hidden = preferences.decided || childSession
 }
 
 async function saveAnalyticsPreference(analytics) {
+  // Protected child sessions can never opt in to analytics (COPPA) — the
+  // preference is pinned off no matter which UI path tries to set it.
+  if (analytics && isProtectedChildSession()) analytics = false
   writePrivacyPreferences({ analytics })
   if (analytics) {
     captureUtm()
@@ -770,9 +802,12 @@ function showInviteScreen(inviterName, { live = false } = {}) {
 
 async function hydrateAuthenticatedUser(profile) {
   currentUserId = profile.userId
+  currentProfile = profile
   window.agsCurrentUserId = currentUserId
+  // Child sessions never store an email (COPPA data minimization — the
+  // address on a parent-created account is the parent's mailbox anyway).
   const userEmail = profile.emailAddress || ''
-  if (userEmail) {
+  if (userEmail && !isChildSession({ profile })) {
     localStorage.setItem('chess_user_email', userEmail)
     window.agsCurrentUserEmail = userEmail
   }
@@ -1319,6 +1354,7 @@ async function initAuth() {
       stopInviteJoinUpdates()
     stopFriendsChangeUpdates()
       currentUserId = null
+      currentProfile = null
       window.agsCurrentUserId = null
       chatClient.disconnect()
       updateAuthUI(false, null, null)
@@ -1332,6 +1368,7 @@ async function initAuth() {
     stopInviteJoinUpdates()
     stopFriendsChangeUpdates()
     currentUserId = null
+    currentProfile = null
     window.agsCurrentUserId = null
     chatClient.disconnect()
     updateAuthUI(false, null, null)
@@ -1422,9 +1459,28 @@ async function initAuth() {
     if (typeof window.showScreen === 'function') window.showScreen('forgot-password')
     window.requestAnimationFrame(() => emailField?.focus())
   }
+  // Swap the register form for the kid-friendly "ask a parent" panel and drop
+  // everything the child typed — none of it is sent or kept.
+  function showRegisterAskParent() {
+    for (const id of ['ags-register-birth-year', 'ags-register-email', 'ags-register-display-name', 'ags-register-password']) {
+      const field = document.getElementById(id)
+      if (field) field.value = ''
+    }
+    const form = document.getElementById('ags-register-form')
+    const askParent = document.getElementById('ags-register-ask-parent')
+    if (form) form.style.display = 'none'
+    if (askParent) askParent.style.display = ''
+  }
+
   window.agsOpenRegister = () => {
     clearAuthMessages()
     if (typeof window.showScreen === 'function') window.showScreen('register')
+    // Once the neutral age gate has said "under 13" this session, re-opening
+    // the form doesn't offer a second try with a different year.
+    if (sessionStorage.getItem('chess_age_gate') === '1') {
+      showRegisterAskParent()
+      return
+    }
     if (prefilledEmail) {
       const emailField = document.getElementById('ags-register-email')
       if (emailField && !emailField.value) emailField.value = prefilledEmail
@@ -1542,20 +1598,33 @@ async function initAuth() {
     }, 900)
   }
   window.agsRegister = async () => {
+    // Age gate first — nothing else typed into the form is read, sent, or
+    // kept until the year says the player can self-register. Under 13 the
+    // whole form is cleared and the parent-managed path is shown instead
+    // (COPPA: no personal information collected from the child).
+    const birthYearCheck = validateBirthYear(document.getElementById('ags-register-birth-year')?.value)
+    if (!birthYearCheck.ok) {
+      setAuthMessage('register', birthYearCheck.error, 'error')
+      return
+    }
+    if (isBirthYearUnder13(birthYearCheck.year)) {
+      sessionStorage.setItem('chess_age_gate', '1')
+      showRegisterAskParent()
+      return
+    }
     const emailAddress = document.getElementById('ags-register-email')?.value.trim() || ''
     const displayName = document.getElementById('ags-register-display-name')?.value.trim() || ''
     const passwordInput = document.getElementById('ags-register-password')
     const password = passwordInput?.value || ''
-    const reachMinimumAge = document.getElementById('ags-register-minimum-age')?.checked === true
     const button = document.getElementById('ags-register-submit')
-    if (!emailAddress || !displayName || !password || !reachMinimumAge) {
-      setAuthMessage('register', 'Enter your details and confirm the minimum age requirement.', 'error')
+    if (!emailAddress || !displayName || !password) {
+      setAuthMessage('register', 'Enter your email, display name, and a password.', 'error')
       return
     }
     if (button) button.disabled = true
     setAuthMessage('register', 'Creating account…')
     if (passwordInput) passwordInput.value = ''
-    const created = await registerWithPassword({ emailAddress, displayName, password, reachMinimumAge })
+    const created = await registerWithPassword({ emailAddress, displayName, password, reachMinimumAge: true })
     if (!created.ok) {
       if (button) button.disabled = false
       setAuthMessage('register', created.error, 'error')
@@ -1790,6 +1859,118 @@ async function initAuth() {
     const result = await leaveFamily(familyState.group.groupId)
     setFamilyMessage(result.ok ? 'You left the family.' : result.error, result.ok ? '' : 'error')
     if (result.ok) await refreshFamilyUI(false)
+  }
+  window.agsToggleAddChild = forceOpen => {
+    const form = document.getElementById('ags-add-child-form')
+    if (!form) return
+    const open = forceOpen === true || form.style.display === 'none'
+    form.style.display = open ? '' : 'none'
+    const handoff = document.getElementById('ags-child-handoff')
+    if (handoff && open) handoff.style.display = 'none'
+    if (open) {
+      // Prefill the consenting parent's own address (saved at sign-in).
+      const emailField = document.getElementById('ags-child-parent-email')
+      if (emailField && !emailField.value) {
+        emailField.value = window.agsCurrentUserEmail || localStorage.getItem('chess_user_email') || ''
+      }
+      document.getElementById('ags-child-nickname')?.focus()
+    }
+  }
+  // Parent-managed child account (COPPA): the guardian's signed-in session is
+  // the consent act — recorded before the family invite goes out. Order
+  // matters: account → consent record → invite, so there is never an invited
+  // child without a stored consent.
+  window.agsCreateChildAccount = async () => {
+    const setMessage = (text, tone = '') => {
+      const el = document.getElementById('ags-add-child-message')
+      if (el) {
+        el.className = `auth-message${tone ? ' ' + tone : ''}`
+        el.textContent = text || ''
+      }
+    }
+    if (!familyState.group) {
+      setMessage('Create your family first, then add your child.', 'error')
+      return
+    }
+    const nickname = document.getElementById('ags-child-nickname')?.value.trim() || ''
+    const birthYearCheck = validateBirthYear(document.getElementById('ags-child-birth-year')?.value)
+    const parentEmail = document.getElementById('ags-child-parent-email')?.value.trim() || ''
+    const password = document.getElementById('ags-child-password')?.value || ''
+    const consented = document.getElementById('ags-child-consent')?.checked === true
+    if (!nickname || !parentEmail || !password) {
+      setMessage('Fill in the nickname, your email, and a password.', 'error')
+      return
+    }
+    if (!birthYearCheck.ok) {
+      setMessage(birthYearCheck.error, 'error')
+      return
+    }
+    if (password.length < 8) {
+      setMessage('Pick a password of at least 8 characters.', 'error')
+      return
+    }
+    if (!consented) {
+      setMessage('Please confirm you are the parent or guardian and consent.', 'error')
+      return
+    }
+    const button = document.getElementById('btn-add-child-submit')
+    if (button) button.disabled = true
+    setMessage('Creating the child account…')
+
+    const created = await registerChildAccount({
+      parentEmail,
+      nickname,
+      birthYear: birthYearCheck.year,
+      password,
+    })
+    if (!created.ok) {
+      if (button) button.disabled = false
+      setMessage(created.error, 'error')
+      return
+    }
+
+    const consent = buildConsentRecord({
+      parentUserId: currentUserId,
+      childUserId: created.userId,
+      childName: created.displayName,
+      birthYear: birthYearCheck.year,
+    })
+    const consentSaved = await recordParentalConsent(currentUserId, consent)
+
+    const invited = await inviteToFamily(created.userId, familyState.group.groupId)
+    if (button) button.disabled = false
+    setMessage('')
+    window.agsToggleAddChild(false)
+
+    const handoff = document.getElementById('ags-child-handoff')
+    if (handoff) {
+      const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
+      const inviteNote = invited.ok
+        ? 'A family invite is waiting — it appears the moment they sign in.'
+        : 'The family invite could not be sent automatically; use “Invite to Family” once they appear in your friends.'
+      const consentNote = consentSaved.ok ? '' : `<p class="child-handoff-warn">${esc(consentSaved.error)}</p>`
+      handoff.innerHTML = `
+        <h4>♟️ ${esc(created.displayName)} is ready to play!</h4>
+        <p>Have them sign in on their device with:</p>
+        <p class="child-handoff-cred"><strong>Email:</strong> ${esc(created.emailAddress)}<br /><strong>Password:</strong> the one you just chose</p>
+        <p>${inviteNote}</p>
+        <p>Their account is protected: analytics stays off, chat works with family only, and password resets come to your email.</p>
+        ${consentNote}
+        <button class="btn-mini" type="button">Done</button>`
+      // Inserted after bindStaticActions ran, so wire the click directly.
+      handoff.querySelector('button')?.addEventListener('click', () => {
+        handoff.style.display = 'none'
+      })
+      handoff.style.display = ''
+    }
+    for (const id of ['ags-child-nickname', 'ags-child-birth-year', 'ags-child-password']) {
+      const field = document.getElementById(id)
+      if (field) field.value = ''
+    }
+    const consentBox = document.getElementById('ags-child-consent')
+    if (consentBox) consentBox.checked = false
+    sendEvent('family_child_account_created', {})
+    await refreshFamilyUI(false)
   }
   window.agsInviteFamilyMember = userId => {
     ensureNotificationPermission()
@@ -2626,6 +2807,7 @@ async function confirmAccountDeletion() {
     } catch {}
     clearLocalAccountData()
     currentUserId = null
+    currentProfile = null
     window.agsCurrentUserId = null
     window.setTimeout(() => {
       window.history.replaceState({}, '', window.location.pathname)
@@ -3491,6 +3673,33 @@ function currentUserIsGuardian() {
   return familyState.members.some(m => m.userId === currentUserId && m.role === 'guardian')
 }
 
+function myFamilyRole() {
+  return familyState.members.find(m => m.userId === currentUserId)?.role || ''
+}
+
+// A protected child session (COPPA): under-13 by IAM dateOfBirth, or holding
+// the guardian-assigned 'child' family role (covers accounts that predate DOB
+// collection). Protections: analytics forced off, no stored email, no
+// add-friend-by-email, chat with family members only.
+function isProtectedChildSession() {
+  return isChildSession({ profile: currentProfile, familyRole: myFamilyRole() })
+}
+
+// Idempotent — runs after hydration and after every family refresh, because
+// the role-based signal only becomes known once the family state loads.
+function applyChildSessionRestrictions() {
+  if (!isProtectedChildSession()) return
+  if (readPrivacyPreferences().analytics) {
+    writePrivacyPreferences({ analytics: false })
+  }
+  localStorage.removeItem('chess_user_email')
+  delete window.agsCurrentUserEmail
+  for (const id of ['btn-add-friend-expand', 'ags-add-friend-form']) {
+    const element = document.getElementById(id)
+    if (element) element.style.display = 'none'
+  }
+}
+
 async function refreshFamilyUI(showLoading = true) {
   if (!currentUserId) {
     renderFamilyPanel(false)
@@ -3506,6 +3715,9 @@ async function refreshFamilyUI(showLoading = true) {
   familyState = state
   if (showLoading) setFamilyMessage('')
   renderFamilyPanel(true)
+  // The 'child' family role is a protection signal — re-check every time the
+  // family state (and with it, this player's role) refreshes.
+  applyChildSessionRestrictions()
 }
 
 function renderFamilyPanel(loggedIn) {
@@ -3536,8 +3748,15 @@ function renderFamilyPanel(loggedIn) {
     if (emptyEl) emptyEl.style.display = 'none'
     if (actionsEl) actionsEl.style.display = ''
     // Only guardians hold GROUP:INVITE — the button gate is cosmetic, the
-    // group service enforces it server-side either way.
+    // group service enforces it server-side either way. Add Child is
+    // guardian-only for real: it's the parental-consent act.
     if (inviteBtn) inviteBtn.style.display = isGuardian ? '' : 'none'
+    const addChildBtn = document.getElementById('btn-family-add-child')
+    if (addChildBtn) addChildBtn.style.display = isGuardian ? '' : 'none'
+    if (!isGuardian) {
+      const addChildForm = document.getElementById('ags-add-child-form')
+      if (addChildForm) addChildForm.style.display = 'none'
+    }
     if (nameEl) nameEl.textContent = familyState.group.groupName
     if (countEl) countEl.textContent = familyState.members.length
 

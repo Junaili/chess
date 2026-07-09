@@ -113,10 +113,10 @@ test.describe('UI smoke (signed out)', () => {
   test('registration and chat filters reject inappropriate language locally', async ({ page }) => {
     await gotoApp(page);
     await page.getByRole('button', { name: 'Create Free Account' }).click();
+    await page.locator('#ags-register-birth-year').fill('1990');
     await page.locator('#ags-register-email').fill('test@example.com');
     await page.locator('#ags-register-display-name').fill('f.u.c.k');
     await page.locator('#ags-register-password').fill('not-a-real-password');
-    await page.locator('#ags-register-minimum-age').check();
     await page.locator('#ags-register-submit').click();
 
     await expect(page.locator('#ags-register-message')).toContainText(/inappropriate language/i);
@@ -127,6 +127,29 @@ test.describe('UI smoke (signed out)', () => {
     );
     expect(chatResult.ok).toBe(false);
     expect(chatResult.error).toMatch(/not sent/i);
+  });
+
+  test('under-13 registration shows the ask-a-parent panel and keeps nothing', async ({ page }) => {
+    await gotoApp(page);
+    await page.getByRole('button', { name: 'Create Free Account' }).click();
+    const underThirteenYear = String(new Date().getFullYear() - 8);
+    await page.locator('#ags-register-birth-year').fill(underThirteenYear);
+    await page.locator('#ags-register-email').fill('kid@example.com');
+    await page.locator('#ags-register-display-name').fill('Ethan');
+    await page.locator('#ags-register-password').fill('some-password');
+    await page.locator('#ags-register-submit').click();
+
+    // The form is replaced by the parent-managed path, nothing typed survives.
+    await expect(page.locator('#ags-register-ask-parent')).toBeVisible();
+    await expect(page.locator('#ags-register-form')).toBeHidden();
+    expect(await page.locator('#ags-register-email').inputValue()).toBe('');
+    expect(await page.locator('#ags-register-password').inputValue()).toBe('');
+
+    // Re-opening the register screen does not offer a second try this session.
+    await page.locator('#ags-register-ask-parent').getByRole('button', { name: 'Got it' }).click();
+    await page.getByRole('button', { name: 'Create Free Account' }).click();
+    await expect(page.locator('#ags-register-ask-parent')).toBeVisible();
+    await expect(page.locator('#ags-register-form')).toBeHidden();
   });
 
   test('board renders 32 pieces when a guest game starts', async ({ page }) => {

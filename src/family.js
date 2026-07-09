@@ -6,6 +6,7 @@
 // seal shared-cloud tier 2026-07-07 (create → invite → accept → role checks →
 // child-invite rejected 403 → disband).
 import { UsersV4Api } from '@accelbyte/sdk-iam'
+import { PublicPlayerRecordApi } from '@accelbyte/sdk-cloudsave'
 import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
 import { resolveDisplayNames, cacheDisplayName } from './leaderboard.js'
@@ -278,4 +279,56 @@ export async function disbandFamily(groupId) {
     return { ok: false, ...normalizeFamilyError(res.status, res.data, 'Could not disband the family. Please try again.') }
   }
   return { ok: true }
+}
+
+// ── Parental consent records (COPPA) ────────────────────────────────────────
+// Kept on the PARENT's own CloudSave record — private (no is_public META),
+// written from the parent's session at the moment they create the child
+// account. One entry per child; re-consent for the same child replaces the
+// earlier entry.
+
+const CONSENT_RECORD_KEY = 'chess-family-consents'
+
+function consentApi() {
+  const { coreConfig } = sdk.assembly()
+  return PublicPlayerRecordApi(sdk, {
+    coreConfig: { ...coreConfig, useSchemaValidation: false },
+  })
+}
+
+export async function recordParentalConsent(parentUserId, consent) {
+  try {
+    const api = consentApi()
+    let existing = []
+    try {
+      const res = await api.getRecord_ByUserId_ByKey(parentUserId, CONSENT_RECORD_KEY)
+      existing = Array.isArray(res.data?.value?.consents) ? res.data.value.consents : []
+    } catch (e) {
+      if (e?.response?.status !== 404) throw e
+    }
+    const record = {
+      consents: [...existing.filter(entry => entry.childUserId !== consent.childUserId), consent],
+      updatedAt: new Date().toISOString(),
+    }
+    try {
+      await api.updateRecord_ByUserId_ByKey(parentUserId, CONSENT_RECORD_KEY, record)
+    } catch (e) {
+      if (e?.response?.status !== 404) throw e
+      await api.createRecord_ByUserId_ByKey(parentUserId, CONSENT_RECORD_KEY, record)
+    }
+    return { ok: true }
+  } catch (e) {
+    console.warn('[AGS family] recordParentalConsent:', e?.response?.status || '', e?.response?.data || e?.message || e)
+    return { ok: false, error: 'The account was created but the consent note could not be saved.' }
+  }
+}
+
+export async function fetchParentalConsents(parentUserId) {
+  try {
+    const res = await consentApi().getRecord_ByUserId_ByKey(parentUserId, CONSENT_RECORD_KEY)
+    return { ok: true, consents: Array.isArray(res.data?.value?.consents) ? res.data.value.consents : [] }
+  } catch (e) {
+    if (e?.response?.status === 404) return { ok: true, consents: [] }
+    return { ok: false, consents: [] }
+  }
 }

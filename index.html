@@ -204,14 +204,48 @@
               <div id="ags-family-invites" class="friends-list"></div>
             </div>
             <div id="ags-family-empty" class="family-empty" style="display:none">
-              <p>Bring your family to the board — create a family, invite your kids or parents, and play together.</p>
+              <p>Bring your family to the board — create a family, add your kids with parent-managed accounts, and play together.</p>
               <button class="btn-mini success" data-click="window.agsCreateFamily && window.agsCreateFamily()">Create Family</button>
             </div>
             <div class="friends-add-row" id="ags-family-actions" style="display:none">
               <button class="btn-mini" id="btn-family-invite-expand" data-click="window.agsToggleFamilyInvite && window.agsToggleFamilyInvite()">+ Invite to Family</button>
+              <button class="btn-mini success" id="btn-family-add-child" data-click="window.agsToggleAddChild && window.agsToggleAddChild()">+ Add Child Account</button>
               <button class="btn-mini" id="btn-family-leave" data-click="window.agsLeaveFamily && window.agsLeaveFamily()">Leave Family</button>
             </div>
             <div id="ags-family-invite-picker" class="family-invite-picker" style="display:none"></div>
+            <!-- Parent-managed child account creation (COPPA flow): the guardian
+                 creates the account from their own session, the child's sign-in
+                 email is an alias of the guardian's mailbox, and the consent is
+                 recorded before the family invite goes out. -->
+            <form id="ags-add-child-form" class="add-child-form" style="display:none" onsubmit="return false">
+              <p class="add-child-intro">Create a protected account for your child. You keep the sign-in details; password resets go to <strong>your</strong> email.</p>
+              <label class="auth-field" for="ags-child-nickname">
+                <span>Player nickname</span>
+                <input type="text" id="ags-child-nickname" class="name-input" placeholder="A fun name — not their real full name" maxlength="48" autocomplete="off" />
+              </label>
+              <label class="auth-field" for="ags-child-birth-year">
+                <span>Child's birth year</span>
+                <input type="text" id="ags-child-birth-year" class="name-input" placeholder="YYYY" inputmode="numeric" maxlength="4" autocomplete="off" />
+              </label>
+              <label class="auth-field" for="ags-child-parent-email">
+                <span>Your (parent) email</span>
+                <input type="email" id="ags-child-parent-email" class="name-input" placeholder="you@example.com" autocomplete="email" />
+              </label>
+              <label class="auth-field" for="ags-child-password">
+                <span>Password for your child</span>
+                <input type="text" id="ags-child-password" class="name-input" placeholder="Pick something you can share with them" autocomplete="off" />
+              </label>
+              <label class="legal-confirm-row">
+                <input type="checkbox" id="ags-child-consent" />
+                <span>I am this child's parent or guardian and I consent to this account. Their play is protected: no analytics, chat with family only, and I can delete the account any time.</span>
+              </label>
+              <p id="ags-add-child-message" class="auth-message" aria-live="polite"></p>
+              <div class="friends-add-row">
+                <button class="btn-mini success" id="btn-add-child-submit" data-click="window.agsCreateChildAccount && window.agsCreateChildAccount()">Create Child Account</button>
+                <button class="btn-mini" data-click="window.agsToggleAddChild && window.agsToggleAddChild()">Cancel</button>
+              </div>
+            </form>
+            <div id="ags-child-handoff" class="child-handoff" style="display:none" aria-live="polite"></div>
           </section>
           <!-- ── Gambit Gus card: the resident bot's home-screen presence.
                Revealed by src/gus.js once signed in and the Extend profile
@@ -677,7 +711,13 @@
       <p class="auth-eyebrow">Join Ethan's Chess</p>
       <h2>Create your chess account</h2>
       <p class="auth-subtitle">Save your progress, invite friends, and join the leaderboard.</p>
-      <div class="auth-form">
+      <div class="auth-form" id="ags-register-form">
+        <!-- Neutral age gate: birth year is asked plainly, with no hint about a
+             cutoff, and is validated before anything else is looked at. -->
+        <label class="auth-field" for="ags-register-birth-year">
+          <span>Year you were born</span>
+          <input type="text" id="ags-register-birth-year" class="name-input" placeholder="YYYY" inputmode="numeric" maxlength="4" autocomplete="bday-year" />
+        </label>
         <label class="auth-field" for="ags-register-email">
           <span>Email address</span>
           <input type="email" id="ags-register-email" class="name-input" placeholder="you@example.com" autocomplete="email" />
@@ -694,15 +734,27 @@
           </div>
           <small>Use a password you don't use elsewhere.</small>
         </div>
-        <label class="legal-confirm-row">
-          <input type="checkbox" id="ags-register-minimum-age" />
-          <span>I meet the minimum age requirement for my country.</span>
-        </label>
         <p id="ags-register-message" class="auth-message"></p>
         <div class="auth-form-actions">
           <button class="btn btn-primary" id="ags-register-submit" data-click="window.agsRegister && window.agsRegister()">Create Free Account</button>
         </div>
         <button class="auth-login-link" data-click="showScreen('login')">Already have an account? <strong>Sign in</strong></button>
+      </div>
+      <!-- Under-13 path: nothing was created or kept; a parent sets them up
+           through Family → Add Child Account instead. -->
+      <div class="auth-form ask-parent-panel" id="ags-register-ask-parent" style="display:none">
+        <div class="ask-parent-mark" aria-hidden="true">♟️🛡️</div>
+        <h3>Ask a grown-up to set you up!</h3>
+        <p>Players your age get their chess account from a parent or guardian. Here's what they do:</p>
+        <ol class="ask-parent-steps">
+          <li>Sign in — or create their own free account</li>
+          <li>Open <strong>Family</strong> on the home screen</li>
+          <li>Tap <strong>Add Child Account</strong> and pick your player name together</li>
+        </ol>
+        <p>Then you sign in and the whole family can play!</p>
+        <div class="auth-form-actions">
+          <button class="btn btn-primary" data-click="showScreen('home')">Got it</button>
+        </div>
       </div>
       <button class="btn btn-back" data-click="showScreen('home')">← Back</button>
     </div>

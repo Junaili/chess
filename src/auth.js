@@ -4,6 +4,7 @@ import { isQueueTicket, runLoginQueue } from './login-queue.js'
 import { getDeviceId } from './anon-id.js'
 import { moderateIncomingDisplayName, validateDisplayNameLocally } from './content-moderation.mjs'
 import { buildUsername } from './auth-data.mjs'
+import { buildChildEmailAlias, childDateOfBirth } from './family-safety.mjs'
 
 // True when running inside the Capacitor native shell (iOS app), where the
 // app is served from capacitor://localhost and in-WebView OAuth redirects are
@@ -488,6 +489,60 @@ export async function registerWithPassword({ emailAddress, displayName, password
     return { ok: true, data: body }
   } catch (e) {
     return { ok: false, error: e?.message || 'Could not create your account.' }
+  }
+}
+
+// Parent-managed child account creation (COPPA flow). Called from the
+// guardian's OWN signed-in session — registration is a plain unauthenticated
+// POST, so the parent's session is untouched; the child signs in later on
+// their own device. Three deliberate properties:
+//  - the child's sign-in address is a plus-tag of the PARENT's mailbox, so
+//    password resets and account mail always reach the consenting parent;
+//  - dateOfBirth is Dec 31 of the birth year (family-safety.mjs), so any
+//    age-based restriction lifts late, never early;
+//  - the caller records a consent record on the parent's cloud record —
+//    the parent performing this creation is the verifiable consent act.
+export async function registerChildAccount({ parentEmail, nickname, birthYear, password }) {
+  const emailAddress = buildChildEmailAlias(parentEmail, nickname)
+  if (!emailAddress) {
+    return { ok: false, error: 'Enter a valid parent email address for the child account.' }
+  }
+  const displayNameValidation = await validateDisplayName(nickname)
+  if (!displayNameValidation.ok) return displayNameValidation
+  const displayName = displayNameValidation.value
+  const { baseURL, namespace } = getAuthConfig()
+  const payload = {
+    authType: 'EMAILPASSWD',
+    country: inferCountryCode(),
+    emailAddress,
+    displayName,
+    uniqueDisplayName: displayName,
+    password,
+    dateOfBirth: childDateOfBirth(birthYear),
+    // Met through verifiable parental consent: the guardian creates the
+    // account from their own session and holds the recovery mailbox.
+    reachMinimumAge: true,
+    username: buildUsername(displayName, emailAddress),
+  }
+
+  try {
+    // No credentials on this request — it must not disturb the parent's
+    // signed-in session cookies.
+    const resp = await fetch(`${baseURL}/iam/v4/public/namespaces/${namespace}/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const body = await resp.json().catch(() => ({}))
+    if (!resp.ok) {
+      return { ok: false, error: extractErrorMessage(body, 'Could not create the child account.') }
+    }
+    if (!body.userId) {
+      return { ok: false, error: 'The child account was created but no player ID came back. Try refreshing.' }
+    }
+    return { ok: true, userId: body.userId, emailAddress, displayName }
+  } catch (e) {
+    return { ok: false, error: e?.message || 'Could not create the child account.' }
   }
 }
 

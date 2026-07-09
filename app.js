@@ -2113,7 +2113,9 @@ async function activateChatForCurrentMatch() {
   let activation = null;
   if (pendingChatContext?.type === 'session' && pendingChatContext.sessionId) {
     key = `session:${pendingChatContext.sessionId}`;
-    activation = () => window.agsActivateSessionChat?.(pendingChatContext.sessionId);
+    // Opponent id rides along so protected child accounts can verify the
+    // peer is family before chat opens (main.js childChatGuardError).
+    activation = () => window.agsActivateSessionChat?.(pendingChatContext.sessionId, currentOpponent?.userId);
   } else if (pendingChatContext?.type === 'personal' &&
              window.agsCurrentUserId &&
              pendingChatContext.otherUserId) {

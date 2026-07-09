@@ -1,6 +1,6 @@
 # Ethan's Chess Privacy Policy
 
-Effective July 3, 2026 — Version 1.0
+Effective July 9, 2026 — Version 1.1
 
 Ethan's Chess uses personal information only to operate, secure, support, and improve the game. It does not sell personal information or use game activity for targeted advertising.
 
@@ -34,7 +34,17 @@ You may disable optional analytics at any time from **Privacy & Support** inside
 
 ## Children
 
-Ethan's Chess is not directed to children under 13. Players must meet the minimum digital-consent age applicable in their country. Parents or guardians who believe a child provided information improperly should contact support.
+Children under 13 play Ethan's Chess only through a **parent-managed account** created by their parent or guardian from the guardian's own signed-in session (Family → Add Child Account). Children cannot create accounts themselves: registration asks for a birth year, and players under 13 are directed to the parent-managed flow without any of their information being collected or kept.
+
+**Parental consent.** Creating a child account is the parent's verifiable consent. The parent chooses the child's nickname and password, the account's email address is an alias of the parent's own mailbox (so password resets and account mail go to the parent), and a consent record — which child, which parent, when, and what was consented to — is stored on the parent's account.
+
+**What is collected from a child account.** Only what gameplay needs: the parent-chosen nickname, a birth year (stored as a date of birth used solely to keep protections on), game and social activity within the family, and chat messages with family members. Child accounts have no analytics — the optional-analytics setting is permanently off and cannot be enabled — and no email address of the child is requested or stored.
+
+**Protections while playing.** On a child account, chat works only with family members (never with other players), adding friends by email address is disabled, and display names are nicknames chosen with the parent.
+
+**Parental rights.** The parent can review the child's activity through the family Coaching view, remove the child from the family, and permanently delete the child's account and its data by signing in to the child's account (**Player Profile → Account & Safety → Delete Account**) or by contacting support. Parents or guardians who believe a child provided information outside this flow should contact support and it will be deleted.
+
+Players 13 and older must meet the minimum digital-consent age applicable in their country.
 
 ## Contact
 
