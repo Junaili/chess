@@ -48,8 +48,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-B4MoblXF.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-BCQC0tS9.css">
+  <script type="module" crossorigin src="/chess/assets/index-j8D_ni67.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-BQwrsQBZ.css">
 </head>
 <body>
 
@@ -140,112 +140,119 @@
               <button class="btn btn-secondary" data-click="showColorSelect('computer')">Continue to Game Setup</button>
             </div>
           </div>
+          <!-- ── People: friends + family live in one card so the two never read as
+               separate apps stapled together. Family collapses to a single compact
+               nudge row when the player hasn't set one up (the common case) instead
+               of a full empty-state card competing with friends for space. ── -->
           <section id="ags-friends-panel" class="friends-panel" style="display:none">
             <div class="friends-header">
-              <h3>Friends</h3>
+              <h3>People</h3>
               <button class="btn-mini" data-click="window.agsRefreshFriends && window.agsRefreshFriends()">Refresh</button>
             </div>
             <p id="ags-friends-message" class="auth-message"></p>
-            <div class="friends-section" id="ags-section-friends">
-              <div class="friends-section-header">
-                <span class="friends-section-label">Friends</span>
+
+            <div class="people-group">
+              <div class="people-group-label">
+                <span>Friends</span>
                 <span class="friends-section-count" id="ags-count-friends"></span>
               </div>
               <div id="ags-friends-list" class="friends-list"></div>
-            </div>
-            <div class="friends-section" id="ags-section-incoming" style="display:none">
-              <div class="friends-section-header">
-                <span class="friends-section-label">Pending</span>
-                <span class="friends-section-count pending" id="ags-count-incoming"></span>
+              <div class="friends-section" id="ags-section-incoming" style="display:none">
+                <div class="friends-section-header">
+                  <span class="friends-section-label">Pending</span>
+                  <span class="friends-section-count pending" id="ags-count-incoming"></span>
+                </div>
+                <div id="ags-friends-incoming" class="friends-list"></div>
               </div>
-              <div id="ags-friends-incoming" class="friends-list"></div>
-            </div>
-            <div class="friends-section" id="ags-section-outgoing" style="display:none">
-              <div class="friends-section-header">
-                <span class="friends-section-label">Sent</span>
-                <span class="friends-section-count" id="ags-count-outgoing"></span>
+              <div class="friends-section" id="ags-section-outgoing" style="display:none">
+                <div class="friends-section-header">
+                  <span class="friends-section-label">Sent</span>
+                  <span class="friends-section-count" id="ags-count-outgoing"></span>
+                </div>
+                <div id="ags-friends-outgoing" class="friends-list"></div>
               </div>
-              <div id="ags-friends-outgoing" class="friends-list"></div>
-            </div>
-            <div class="friends-add-row">
-              <button class="btn-mini" id="btn-add-friend-expand" data-click="window.agsToggleAddFriend && window.agsToggleAddFriend()">+ Add Friend</button>
-              <button class="btn-mini" id="btn-copy-invite-link" data-click="window.agsCopyInviteLink && window.agsCopyInviteLink()">Share Invite Link</button>
-            </div>
-            <div id="ags-invite-share-row" style="margin-top:6px"></div>
-            <form id="ags-add-friend-form" class="add-friend-form" style="display:none" data-submit="event.preventDefault();window.agsAddFriendByEmail&&window.agsAddFriendByEmail()">
-              <label for="ags-add-friend-email">Add by email</label>
-              <div class="add-friend-controls">
-                <input type="email" id="ags-add-friend-email" class="name-input" placeholder="friend@example.com"
-                  autocomplete="email" required aria-describedby="ags-add-friend-hint ags-add-friend-result" />
-                <button type="submit" id="ags-add-friend-submit" class="btn-mini success">Send request</button>
-              </div>
-              <p id="ags-add-friend-hint" class="add-friend-hint">We will find their player account. They must accept before you become friends.</p>
-            </form>
-            <div id="ags-add-friend-result" class="add-friend-result" aria-live="polite"></div>
-          </section>
-          <section id="ags-family-panel" class="friends-panel" style="display:none">
-            <div class="friends-header">
-              <h3>Family</h3>
-              <button class="btn-mini" data-click="window.agsRefreshFamily && window.agsRefreshFamily()">Refresh</button>
-            </div>
-            <p id="ags-family-message" class="auth-message" aria-live="polite"></p>
-            <div class="friends-section" id="ags-section-family-members" style="display:none">
-              <div class="friends-section-header">
-                <span class="friends-section-label" id="ags-family-name">Family</span>
-                <span class="friends-section-count" id="ags-count-family"></span>
-              </div>
-              <div id="ags-family-list" class="friends-list"></div>
-            </div>
-            <div class="friends-section" id="ags-section-family-invites" style="display:none">
-              <div class="friends-section-header">
-                <span class="friends-section-label">Family invites</span>
-                <span class="friends-section-count pending" id="ags-count-family-invites"></span>
-              </div>
-              <div id="ags-family-invites" class="friends-list"></div>
-            </div>
-            <div id="ags-family-empty" class="family-empty" style="display:none">
-              <p>Bring your family to the board — create a family, add your kids with parent-managed accounts, and play together.</p>
-              <button class="btn-mini success" data-click="window.agsCreateFamily && window.agsCreateFamily()">Create Family</button>
-            </div>
-            <div class="friends-add-row" id="ags-family-actions" style="display:none">
-              <button class="btn-mini" id="btn-family-invite-expand" data-click="window.agsToggleFamilyInvite && window.agsToggleFamilyInvite()">+ Invite to Family</button>
-              <button class="btn-mini success" id="btn-family-add-child" data-click="window.agsToggleAddChild && window.agsToggleAddChild()">+ Add Child Account</button>
-              <button class="btn-mini" id="btn-family-leave" data-click="window.agsLeaveFamily && window.agsLeaveFamily()">Leave Family</button>
-            </div>
-            <div id="ags-family-invite-picker" class="family-invite-picker" style="display:none"></div>
-            <!-- Parent-managed child account creation (COPPA flow): the guardian
-                 creates the account from their own session, the child's sign-in
-                 email is an alias of the guardian's mailbox, and the consent is
-                 recorded before the family invite goes out. -->
-            <form id="ags-add-child-form" class="add-child-form" style="display:none" onsubmit="return false">
-              <p class="add-child-intro">Create a protected account for your child. You keep the sign-in details; password resets go to <strong>your</strong> email.</p>
-              <label class="auth-field" for="ags-child-nickname">
-                <span>Player nickname</span>
-                <input type="text" id="ags-child-nickname" class="name-input" placeholder="A fun name — not their real full name" maxlength="48" autocomplete="off" />
-              </label>
-              <label class="auth-field" for="ags-child-birth-year">
-                <span>Child's birth year</span>
-                <input type="text" id="ags-child-birth-year" class="name-input" placeholder="YYYY" inputmode="numeric" maxlength="4" autocomplete="off" />
-              </label>
-              <label class="auth-field" for="ags-child-parent-email">
-                <span>Your (parent) email</span>
-                <input type="email" id="ags-child-parent-email" class="name-input" placeholder="you@example.com" autocomplete="email" />
-              </label>
-              <label class="auth-field" for="ags-child-password">
-                <span>Password for your child</span>
-                <input type="text" id="ags-child-password" class="name-input" placeholder="Pick something you can share with them" autocomplete="off" />
-              </label>
-              <label class="legal-confirm-row">
-                <input type="checkbox" id="ags-child-consent" />
-                <span>I am this child's parent or guardian and I consent to this account. Their play is protected: no analytics, chat with family only, and I can delete the account any time.</span>
-              </label>
-              <p id="ags-add-child-message" class="auth-message" aria-live="polite"></p>
               <div class="friends-add-row">
-                <button class="btn-mini success" id="btn-add-child-submit" data-click="window.agsCreateChildAccount && window.agsCreateChildAccount()">Create Child Account</button>
-                <button class="btn-mini" data-click="window.agsToggleAddChild && window.agsToggleAddChild()">Cancel</button>
+                <button class="btn-mini" id="btn-add-friend-expand" data-click="window.agsToggleAddFriend && window.agsToggleAddFriend()">+ Add Friend</button>
+                <button class="btn-mini" id="btn-copy-invite-link" data-click="window.agsCopyInviteLink && window.agsCopyInviteLink()">Share Invite Link</button>
               </div>
-            </form>
-            <div id="ags-child-handoff" class="child-handoff" style="display:none" aria-live="polite"></div>
+              <div id="ags-invite-share-row" style="margin-top:6px"></div>
+              <form id="ags-add-friend-form" class="add-friend-form" style="display:none" data-submit="event.preventDefault();window.agsAddFriendByEmail&&window.agsAddFriendByEmail()">
+                <label for="ags-add-friend-email">Add by email</label>
+                <div class="add-friend-controls">
+                  <input type="email" id="ags-add-friend-email" class="name-input" placeholder="friend@example.com"
+                    autocomplete="email" required aria-describedby="ags-add-friend-hint ags-add-friend-result" />
+                  <button type="submit" id="ags-add-friend-submit" class="btn-mini success">Send request</button>
+                </div>
+                <p id="ags-add-friend-hint" class="add-friend-hint">We will find their player account. They must accept before you become friends.</p>
+              </form>
+              <div id="ags-add-friend-result" class="add-friend-result" aria-live="polite"></div>
+            </div>
+
+            <div class="people-divider" role="separator" aria-hidden="true"></div>
+
+            <div id="ags-family-panel" class="people-group" style="display:none">
+              <div class="people-group-label">
+                <span>Family</span>
+              </div>
+              <p id="ags-family-message" class="auth-message" aria-live="polite"></p>
+              <div class="friends-section" id="ags-section-family-members" style="display:none">
+                <div class="friends-section-header">
+                  <span class="friends-section-label" id="ags-family-name">Family</span>
+                  <span class="friends-section-count" id="ags-count-family"></span>
+                </div>
+                <div id="ags-family-list" class="friends-list"></div>
+              </div>
+              <div class="friends-section" id="ags-section-family-invites" style="display:none">
+                <div class="friends-section-header">
+                  <span class="friends-section-label">Family invites</span>
+                  <span class="friends-section-count pending" id="ags-count-family-invites"></span>
+                </div>
+                <div id="ags-family-invites" class="friends-list"></div>
+              </div>
+              <div id="ags-family-empty" class="family-empty" style="display:none">
+                <span class="family-empty-copy">Play together — create a family and add your kids.</span>
+                <button class="btn-mini success" data-click="window.agsCreateFamily && window.agsCreateFamily()">+ Family</button>
+              </div>
+              <div class="friends-add-row" id="ags-family-actions" style="display:none">
+                <button class="btn-mini" id="btn-family-invite-expand" data-click="window.agsToggleFamilyInvite && window.agsToggleFamilyInvite()">+ Invite to Family</button>
+                <button class="btn-mini success" id="btn-family-add-child" data-click="window.agsToggleAddChild && window.agsToggleAddChild()">+ Add Child Account</button>
+                <button class="btn-mini" id="btn-family-leave" data-click="window.agsLeaveFamily && window.agsLeaveFamily()">Leave Family</button>
+              </div>
+              <div id="ags-family-invite-picker" class="family-invite-picker" style="display:none"></div>
+              <!-- Parent-managed child account creation (COPPA flow): the guardian
+                   creates the account from their own session, the child's sign-in
+                   email is an alias of the guardian's mailbox, and the consent is
+                   recorded before the family invite goes out. -->
+              <form id="ags-add-child-form" class="add-child-form" style="display:none" onsubmit="return false">
+                <p class="add-child-intro">Create a protected account for your child. You keep the sign-in details; password resets go to <strong>your</strong> email.</p>
+                <label class="auth-field" for="ags-child-nickname">
+                  <span>Player nickname</span>
+                  <input type="text" id="ags-child-nickname" class="name-input" placeholder="A fun name — not their real full name" maxlength="48" autocomplete="off" />
+                </label>
+                <label class="auth-field" for="ags-child-birth-year">
+                  <span>Child's birth year</span>
+                  <input type="text" id="ags-child-birth-year" class="name-input" placeholder="YYYY" inputmode="numeric" maxlength="4" autocomplete="off" />
+                </label>
+                <label class="auth-field" for="ags-child-parent-email">
+                  <span>Your (parent) email</span>
+                  <input type="email" id="ags-child-parent-email" class="name-input" placeholder="you@example.com" autocomplete="email" />
+                </label>
+                <label class="auth-field" for="ags-child-password">
+                  <span>Password for your child</span>
+                  <input type="text" id="ags-child-password" class="name-input" placeholder="Pick something you can share with them" autocomplete="off" />
+                </label>
+                <label class="legal-confirm-row">
+                  <input type="checkbox" id="ags-child-consent" />
+                  <span>I am this child's parent or guardian and I consent to this account. Their play is protected: no analytics, chat with family only, and I can delete the account any time.</span>
+                </label>
+                <p id="ags-add-child-message" class="auth-message" aria-live="polite"></p>
+                <div class="friends-add-row">
+                  <button class="btn-mini success" id="btn-add-child-submit" data-click="window.agsCreateChildAccount && window.agsCreateChildAccount()">Create Child Account</button>
+                  <button class="btn-mini" data-click="window.agsToggleAddChild && window.agsToggleAddChild()">Cancel</button>
+                </div>
+              </form>
+              <div id="ags-child-handoff" class="child-handoff" style="display:none" aria-live="polite"></div>
+            </div>
           </section>
           <!-- ── Gambit Gus card: the resident bot's home-screen presence.
                Revealed by src/gus.js once signed in and the Extend profile
@@ -271,11 +278,42 @@
             <button type="button" class="lb-view-btn" data-lb-view="weekly" data-click="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('weekly')" role="tab" aria-selected="false">This Week</button>
           </div>
           <div class="lb-list" id="lb-list"></div>
+          <div id="lb-your-rank" class="lb-your-rank" style="display:none"></div>
+          <!-- Bound directly in main.js (not data-click): the overlay controller
+               needs the actual clicked element as its focus-return trigger, and
+               some engines (WebKit) don't reliably set document.activeElement
+               on a plain click the way the generic data-click dispatch assumes. -->
+          <button type="button" id="lb-view-more" class="lb-view-more" style="display:none">
+            <span>View full leaderboard</span>
+            <span aria-hidden="true">→</span>
+          </button>
           <p class="lb-signin-cta" id="lb-signin-cta" role="button" tabindex="0" data-click="window.agsLogin && window.agsLogin()" data-keydown="if(event.key==='Enter'||event.key===' ')window.agsLogin&&window.agsLogin()">Sign in to appear on the leaderboard →</p>
           <button class="btn-lb-reset" data-click="resetLeaderboard()">Reset</button>
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ── Full Leaderboard Overlay ──────────────────────────────────────────
+       Opened from "View full leaderboard" when the top-10 list on the home
+       screen doesn't hold everyone. Same overlay chrome as offline friends. -->
+  <div id="leaderboard-overlay" class="offline-friends-overlay leaderboard-overlay" hidden>
+    <section class="offline-friends-dialog leaderboard-dialog" role="dialog" aria-modal="true"
+      aria-labelledby="leaderboard-overlay-title" aria-describedby="leaderboard-overlay-description">
+      <header class="offline-friends-header">
+        <div>
+          <p class="auth-eyebrow">Leaderboard</p>
+          <h2 id="leaderboard-overlay-title">Full Leaderboard</h2>
+          <p id="leaderboard-overlay-description">Every ranked player, best to still-climbing.</p>
+        </div>
+        <button type="button" id="leaderboard-overlay-close" class="offline-friends-close" data-click="window.agsCloseLeaderboardOverlay && window.agsCloseLeaderboardOverlay()">Close</button>
+      </header>
+      <div class="lb-view-toggle leaderboard-overlay-toggle" role="tablist" aria-label="Leaderboard time range">
+        <button type="button" class="lb-view-btn active" data-lb-overlay-view="rating" data-click="window.agsSwitchLeaderboardOverlayView && window.agsSwitchLeaderboardOverlayView('rating')" role="tab" aria-selected="true">All Time</button>
+        <button type="button" class="lb-view-btn" data-lb-overlay-view="weekly" data-click="window.agsSwitchLeaderboardOverlayView && window.agsSwitchLeaderboardOverlayView('weekly')" role="tab" aria-selected="false">This Week</button>
+      </div>
+      <div id="leaderboard-overlay-list" class="offline-friends-list lb-overlay-list"></div>
+    </section>
   </div>
 
   <!-- ── Public Profile Screen ─────────────────────────────────────────────── -->
