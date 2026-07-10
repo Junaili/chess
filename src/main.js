@@ -8,7 +8,7 @@ import { extendFetch } from './extend-client.js'
 import { installSessionKeepAlive, scheduleProactiveRefresh, subscribeAccessTokenRefresh } from './session.js'
 import { fetchPendingLegalDocuments, fetchAcceptedLegalDocuments, fetchLegalAttachment, acceptLegalDocuments } from './legal.js'
 import { parseLegalMarkdown } from './legal-markdown.mjs'
-import { initStats, fetchStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave, recordEloResult } from './stats.js'
+import { initStats, fetchStats, fetchLeaderboardPlayerStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave, recordEloResult } from './stats.js'
 import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache, fetchMergedAchievements } from './achievements.js'
 import { sendEvent, flushPendingEvents, captureUtm, clearPendingEvents } from './telemetry.js'
 import { readPrivacyPreferences, writePrivacyPreferences } from './privacy-preferences.mjs'
@@ -2446,9 +2446,13 @@ async function refreshLeaderboard() {
   if (rankings === null) return  // hard failure — keep local leaderboard visible
   const hasMore = rankings.length > 10
   const top10 = rankings.slice(0, 10)
+  const leaderboardStatsPromise = fetchLeaderboardPlayerStats([
+    ...top10.map(entry => entry.userId),
+    ...(userRankData && currentUserId ? [currentUserId] : []),
+  ])
   try { await enrichDisplayNames(top10) } catch (e) { console.warn('[lb] enrichDisplayNames:', e) }
   const nameMap = resolveDisplayNames(top10)
-  renderAGSLeaderboard(top10, nameMap, userRankData, hasMore)
+  renderAGSLeaderboard(top10, nameMap, userRankData, hasMore, await leaderboardStatsPromise)
 }
 
 function switchLeaderboardView(view) {
@@ -2465,7 +2469,27 @@ function switchLeaderboardView(view) {
 }
 window.agsSwitchLeaderboardView = switchLeaderboardView
 
-function renderAGSLeaderboard(rankings, nameMap, userRankData, hasMore = false) {
+function leaderboardStatValue(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : 0
+}
+
+function leaderboardPlayerStatsMarkup(stats) {
+  if (!stats) return ''
+  const wins = leaderboardStatValue(stats.wins)
+  const losses = leaderboardStatValue(stats.losses)
+  const streak = leaderboardStatValue(stats.streak)
+  const streakDays = streak === 1 ? 'day' : 'days'
+  const description = `${wins} wins, ${losses} losses, current streak ${streak} ${streakDays}`
+  return `<span class="lb-player-stats" title="${description}" aria-label="${description}">W ${wins} · L ${losses} · 🔥 ${streak}</span>`
+}
+
+function leaderboardPlayerDetailsMarkup(name, isYou, stats) {
+  const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
+  return `<span class="lb-name">${esc(name)}${isYou ? ' (you)' : ''}</span>${leaderboardPlayerStatsMarkup(stats)}`
+}
+
+function renderAGSLeaderboard(rankings, nameMap, userRankData, hasMore = false, statsByUserId = {}) {
   const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
   const listEl = document.getElementById('lb-list')
   const resetBtn = document.querySelector('.btn-lb-reset')
@@ -2492,7 +2516,7 @@ function renderAGSLeaderboard(rankings, nameMap, userRankData, hasMore = false) 
     const safeName = esc(name)
     return `<div class="lb-entry${isYou ? ' lb-you' : ''}">
       <span class="lb-rank">${i + 1}</span>
-      <button class="lb-name lb-name-button" data-profile-user-id="${esc(entry.userId)}" data-profile-name="${safeName}">${safeName}${isYou ? ' (you)' : ''}</button>
+      <button class="lb-name-button" data-profile-user-id="${esc(entry.userId)}" data-profile-name="${safeName}">${leaderboardPlayerDetailsMarkup(name, isYou, statsByUserId?.[entry.userId])}</button>
       <span class="lb-wins">${entry.point}</span>
     </div>`
   }).join('')
@@ -2507,7 +2531,7 @@ function renderAGSLeaderboard(rankings, nameMap, userRankData, hasMore = false) 
       rankCard.innerHTML = `<span class="lb-your-rank-label">Your rank</span>
         <div class="lb-entry lb-you">
           <span class="lb-rank">#${userRankData.rank}</span>
-          <span class="lb-name">${esc(myName)} (you)</span>
+          <span class="lb-name-with-stats">${leaderboardPlayerDetailsMarkup(myName, true, statsByUserId?.[currentUserId])}</span>
           <span class="lb-wins">${userRankData.point}</span>
         </div>`
     } else {
@@ -2563,8 +2587,10 @@ async function loadFullLeaderboard() {
     listEl.innerHTML = '<p class="lb-empty">No entries yet — win a game!</p>'
     return
   }
+  const leaderboardStatsPromise = fetchLeaderboardPlayerStats(rankings.map(entry => entry.userId))
   try { await enrichDisplayNames(rankings) } catch (e) { console.warn('[lb] enrichDisplayNames:', e) }
   const nameMap = resolveDisplayNames(rankings)
+  const statsByUserId = await leaderboardStatsPromise
   listEl.innerHTML = rankings.map((entry, i) => {
     const isYou = entry.userId === currentUserId
     const name = isYou
@@ -2573,7 +2599,7 @@ async function loadFullLeaderboard() {
     const safeName = esc(name)
     return `<div class="lb-entry${isYou ? ' lb-you' : ''}">
       <span class="lb-rank">${i + 1}</span>
-      <button class="lb-name lb-name-button" data-profile-user-id="${esc(entry.userId)}" data-profile-name="${safeName}">${safeName}${isYou ? ' (you)' : ''}</button>
+      <button class="lb-name-button" data-profile-user-id="${esc(entry.userId)}" data-profile-name="${safeName}">${leaderboardPlayerDetailsMarkup(name, isYou, statsByUserId?.[entry.userId])}</button>
       <span class="lb-wins">${entry.point}</span>
     </div>`
   }).join('')

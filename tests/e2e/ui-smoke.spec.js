@@ -10,7 +10,19 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.getByRole('heading', { name: /Ethan's Chess/i })).toBeVisible();
     await expect(page.locator('#ags-signin-btn')).toBeVisible();              // Continue with Google
     await expect(page.getByRole('button', { name: 'Create Free Account' })).toBeVisible();
-    await expect(page.locator('#ags-open-guest')).toBeVisible();              // Play vs Computer as Guest
+    await expect(page.getByRole('button', { name: 'Single Player as Guest' })).toBeVisible();
+  });
+
+  test('signed-in home uses the updated play labels', async ({ page }) => {
+    await gotoApp(page);
+    await page.evaluate(() => {
+      document.getElementById('screen-home').classList.add('signed-in');
+      document.getElementById('ags-member-play-actions').style.display = '';
+      document.getElementById('btn-play-random').style.display = '';
+    });
+
+    await expect(page.getByRole('button', { name: 'Single Player', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Find a Chess Buddy', exact: true })).toBeVisible();
   });
 
   test('loads without uncaught page errors', async ({ page }) => {

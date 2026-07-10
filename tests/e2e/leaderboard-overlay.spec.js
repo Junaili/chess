@@ -56,6 +56,18 @@ test.describe('Leaderboard: top 10 + view full overlay', () => {
     await expect(viewMore).toContainText('View full leaderboard');
   });
 
+  test('shows each player\'s win, loss, and current streak beside their name', async ({ page }) => {
+    await page.evaluate(data => {
+      window.agsRenderLeaderboardForTesting(data, {}, null, false, {
+        'player-0': { wins: 18, losses: 6, streak: 4 },
+      });
+    }, rankings(1));
+
+    const playerStats = page.locator('#lb-list .lb-player-stats');
+    await expect(playerStats).toHaveText('W 18 · L 6 · 🔥 4');
+    await expect(playerStats).toHaveAttribute('aria-label', '18 wins, 6 losses, current streak 4 days');
+  });
+
   test('shows a "your rank" callout when the player is outside the top 10', async ({ page }) => {
     await page.evaluate(data => {
       window.currentUserId = 'me';

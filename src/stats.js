@@ -9,6 +9,11 @@ const STREAK_LONGEST = 'chess-longest-streak'
 const STREAK_LAST_DAY = 'chess-last-play-day'
 const RATING = 'chess-rating'
 const RATING_DEFAULT = 1200
+const LEADERBOARD_STAT_CODES = {
+  wins: 'chess-wins',
+  losses: 'chess-losses',
+  streak: STREAK_CURRENT,
+}
 const STAT_CODES = [
   'chess-wins', 'chess-losses', 'chess-games-played', 'chess-draws', 'chess-online-games',
   STREAK_CURRENT, STREAK_LONGEST, STREAK_LAST_DAY, RATING,
@@ -50,6 +55,45 @@ export async function fetchStats(userId) {
     }
   } catch (e) {
     console.warn('[AGS stats] fetchStats:', e?.response?.data || e?.message)
+    return null
+  }
+}
+
+// The public Statistics bulk endpoint accepts one stat code and many users.
+// Fetch the three compact leaderboard stats in parallel instead of issuing a
+// separate request for every leaderboard row.
+export async function fetchLeaderboardPlayerStats(rawUserIds) {
+  const userIds = [...new Set(
+    (rawUserIds || []).filter(userId => typeof userId === 'string' && userId),
+  )]
+  if (!userIds.length) return {}
+
+  try {
+    const statsByUserId = Object.fromEntries(
+      userIds.map(userId => [userId, { wins: 0, losses: 0, streak: 0 }]),
+    )
+    const api = UserStatisticApi(sdk)
+    const rowsByStat = await Promise.all(
+      Object.entries(LEADERBOARD_STAT_CODES).map(async ([field, statCode]) => {
+        const response = await api.getStatitemsBulk({
+          statCode,
+          userIds: userIds.join(','),
+        })
+        return [field, response.data || []]
+      }),
+    )
+
+    for (const [field, rows] of rowsByStat) {
+      for (const row of rows) {
+        const value = Number(row?.value)
+        if (statsByUserId[row?.userId] && Number.isFinite(value)) {
+          statsByUserId[row.userId][field] = value
+        }
+      }
+    }
+    return statsByUserId
+  } catch (e) {
+    console.warn('[AGS stats] fetchLeaderboardPlayerStats:', e?.response?.data || e?.message)
     return null
   }
 }
