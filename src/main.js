@@ -1904,6 +1904,7 @@ async function initAuth() {
     setMessage('Creating the child account…')
 
     const created = await registerChildAccount({
+      groupId: familyState.group.groupId,
       parentEmail,
       nickname,
       birthYear: birthYearCheck.year,

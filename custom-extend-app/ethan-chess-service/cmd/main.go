@@ -175,6 +175,9 @@ func main() {
 	family := newFamilyGroupProxyFromEnv()
 	mux.Handle(basePath+"/family/group/",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(family.handle))))
+	childAccounts := newChildAccountHandlerFromEnv()
+	mux.Handle(basePath+"/family/child-account",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(childAccounts.create))))
 
 	// Cold-start bot gate: watch the match pool and trigger the bot to queue when
 	// a human has waited longer than the threshold (enabled via MATCH_WATCHER_*).
@@ -399,6 +402,7 @@ type authMiddleware struct {
 	emailLimiter    *emailRateLimiter
 	referralLimiter *emailRateLimiter
 	lookupLimiter   *emailRateLimiter
+	childLimiter    *emailRateLimiter
 }
 
 func newAuthMiddleware(baseURL, clientID, clientSecret, namespace string) *authMiddleware {
@@ -411,6 +415,7 @@ func newAuthMiddleware(baseURL, clientID, clientSecret, namespace string) *authM
 		emailLimiter:    newEmailRateLimiter(5, time.Hour),
 		referralLimiter: newEmailRateLimiter(3, time.Hour),
 		lookupLimiter:   newEmailRateLimiter(10, time.Hour),
+		childLimiter:    newEmailRateLimiter(3, time.Hour),
 	}
 }
 
@@ -452,6 +457,15 @@ func (a *authMiddleware) wrap(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/lookup/email") {
 			if !a.lookupLimiter.allow(sub) {
 				http.Error(w, `{"error":"too many account lookups, try again later"}`, http.StatusTooManyRequests)
+				return
+			}
+		}
+
+		// Child account creation is parent-authorized and rate-limited to avoid
+		// accidental or automated account bursts from one guardian session.
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/family/child-account") {
+			if !a.childLimiter.allow(sub) {
+				http.Error(w, `{"error":"too many child accounts, try again later"}`, http.StatusTooManyRequests)
 				return
 			}
 		}
