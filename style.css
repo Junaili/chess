@@ -532,6 +532,7 @@ input[type="checkbox"] {
 #screen-home.signed-in .home-left {
   min-height: 0;
   overflow: hidden;
+  container: home-left / inline-size;
 }
 
 #screen-home.signed-in .menu-buttons {
@@ -574,6 +575,25 @@ input[type="checkbox"] {
   min-height: 0;
   max-height: min(52vh, 480px);
   overflow-y: auto;
+}
+
+/* The dashboard can be narrow even on a tablet or a split desktop window.
+   Let the summary respond to its panel width instead of the viewport width. */
+@container home-left (max-width: 500px) {
+  #screen-home.signed-in .player-summary-card {
+    grid-template-columns: 1fr;
+  }
+
+  #screen-home.signed-in .player-summary-meta {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 1fr;
+    align-items: stretch;
+  }
+
+  #screen-home.signed-in .btn-achievements {
+    width: auto;
+    white-space: nowrap;
+  }
 }
 
 .auth-actions {
@@ -707,11 +727,11 @@ input[type="checkbox"] {
 
 .player-summary-card {
   display: none;
-  grid-template-columns: minmax(0, 1.25fr) minmax(160px, 0.75fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(178px, 0.78fr);
+  gap: 14px;
   align-items: stretch;
   border-radius: 18px;
-  padding: 10px;
+  padding: 12px;
 }
 
 #screen-home.signed-in .player-summary-card {
@@ -719,6 +739,11 @@ input[type="checkbox"] {
 }
 
 .player-summary-card .signedin-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -731,7 +756,7 @@ input[type="checkbox"] {
 .player-summary-meta {
   display: grid;
   grid-template-rows: 1fr auto;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
 }
 
@@ -1397,6 +1422,10 @@ input[type="checkbox"] {
   font-weight: 800;
 }
 
+.signedin-greeting {
+  white-space: nowrap;
+}
+
 .lb-view-toggle {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -1430,7 +1459,37 @@ input[type="checkbox"] {
   gap: 8px;
 }
 
+.signedin-identity {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.signedin-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(240, 195, 122, 0.3);
+  border-radius: 11px;
+  background: rgba(240, 195, 122, 0.1);
+  color: var(--accent-2);
+  font-size: 1.32rem;
+  line-height: 1;
+}
+
+.signedin-copy {
+  min-width: 0;
+}
+
 .signedin-name {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 1.12rem;
   font-weight: 800;
   color: #fff8f1;
@@ -1465,9 +1524,8 @@ input[type="checkbox"] {
 .signedin-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  margin-top: 4px;
+  flex: 0 0 auto;
 }
 
 .signedin-userid,
@@ -1498,6 +1556,7 @@ input[type="checkbox"] {
   justify-content: center;
   min-height: 0;
   padding: 8px 10px;
+  white-space: nowrap;
   text-align: center;
   line-height: 1.35;
 }
@@ -1507,8 +1566,9 @@ input[type="checkbox"] {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.03);
   color: var(--text-dim);
-  padding: 7px 12px;
+  padding: 8px 12px;
   font-size: 0.78rem;
+  font-weight: 700;
   cursor: pointer;
   transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
 }
@@ -4709,6 +4769,21 @@ input[type="checkbox"] {
 
   #screen-home.signed-in .home-body {
     grid-template-columns: 1fr;
+  }
+
+  #screen-home.signed-in .player-summary-card {
+    grid-template-columns: 1fr;
+  }
+
+  #screen-home.signed-in .player-summary-meta {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 1fr;
+    align-items: stretch;
+  }
+
+  #screen-home.signed-in .btn-achievements {
+    width: auto;
+    white-space: nowrap;
   }
 
   #screen-home.signed-in .friends-panel,
