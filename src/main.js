@@ -821,9 +821,7 @@ async function hydrateAuthenticatedUser(profile) {
     console.warn('[Chat] connection unavailable:', error?.message || error)
   })
   // Flush any events queued before authentication (invite_link_clicked, etc.)
-  // and expose the send function to non-module scripts (app.js).
   await flushPendingEvents()
-  window.agsSendEvent = (name, payload) => sendEvent(name, payload)
   const name = getDisplayName(profile)
   cacheDisplayName(currentUserId, name)
   syncBasicProfile(name)
@@ -1289,6 +1287,11 @@ async function initAuth() {
   // Install the reactive 401->refresh->retry interceptor + resume hooks before
   // any AGS SDK call, so an expired token is renewed transparently.
   installSessionKeepAlive()
+  // Expose the send function to non-module scripts (app.js) up front, not just
+  // after login — sendEvent() already gates on consent and queues pre-auth
+  // events, so guest play (which never authenticates) still needs this to
+  // fire game_started/game_completed/matchmaking_* events.
+  window.agsSendEvent = (name, payload) => sendEvent(name, payload)
   window.agsRefreshLeaderboard = refreshLeaderboard
   window.cacheDisplayName = cacheDisplayName
   setQueueUIHandler(renderLoginQueue)

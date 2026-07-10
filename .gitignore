@@ -25,6 +25,17 @@ node_modules/
 # Build output — deployed to gh-pages branch by CI
 dist/
 
+# Documentation folder
+docs/
+
+# Agent-generated scratch output (plans, generated blog/report drafts) — not app code
+plan/
+output/
+
+# Marketing trailer video exports (regenerate from trailer*.html if ever restored)
+ethans-chess-trailer*.gif
+ethans-chess-trailer*.mp4
+
 # Capacitor / iOS — generated native project (regenerate with `npx cap add ios`)
 ios/App/Pods/
 ios/App/App/public/
