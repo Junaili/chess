@@ -48,8 +48,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-j8D_ni67.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-BQwrsQBZ.css">
+  <script type="module" crossorigin src="/chess/assets/index-VfkllIuc.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-D3HfrFjj.css">
 </head>
 <body>
 
@@ -95,10 +95,15 @@
           </div>
           <div id="ags-player-summary" class="player-summary-card">
             <div id="ags-signedin-info" class="signedin-card" style="display:none">
-              <span class="signedin-greeting">Signed in as</span>
-              <div class="signedin-name-row">
-                <span id="ags-signedin-name" class="signedin-name"></span>
-                <button class="btn-edit-name" id="btn-edit-name" title="Edit display name" aria-label="Edit display name" data-click="window.agsEditName && window.agsEditName()">✏</button>
+              <div class="signedin-identity">
+                <span class="signedin-avatar" aria-hidden="true">♞</span>
+                <div class="signedin-copy">
+                  <span class="signedin-greeting">Signed in as</span>
+                  <div class="signedin-name-row">
+                    <span id="ags-signedin-name" class="signedin-name"></span>
+                    <button class="btn-edit-name" id="btn-edit-name" title="Edit display name" aria-label="Edit display name" data-click="window.agsEditName && window.agsEditName()">✏</button>
+                  </div>
+                </div>
               </div>
               <div class="signedin-footer">
                 <button class="btn-signout" data-click="window.agsLogout && window.agsLogout()">Log out</button>
