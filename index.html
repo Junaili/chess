@@ -48,8 +48,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-DO65kUKk.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-OpNSqazx.css">
+  <script type="module" crossorigin src="/chess/assets/index-BKnguTcv.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-CJxsWoCv.css">
 </head>
 <body>
 
@@ -360,6 +360,7 @@
         <button type="button" class="profile-tab active" data-profile-tab="overview" data-click="window.agsShowProfileTab && window.agsShowProfileTab('overview')" role="tab">Overview</button>
         <button type="button" class="profile-tab" data-profile-tab="stats" data-click="window.agsShowProfileTab && window.agsShowProfileTab('stats')" role="tab">Chess Stats</button>
         <button type="button" class="profile-tab" data-profile-tab="history" data-click="window.agsShowProfileTab && window.agsShowProfileTab('history')" role="tab">History</button>
+        <button type="button" class="profile-tab" data-profile-tab="journal" data-click="window.agsShowProfileTab && window.agsShowProfileTab('journal')" role="tab" hidden>Journal</button>
         <button type="button" class="profile-tab" data-profile-tab="coaching" data-click="window.agsShowProfileTab && window.agsShowProfileTab('coaching')" role="tab" hidden>Coaching</button>
         <button type="button" class="profile-tab" data-profile-tab="account" data-click="window.agsShowProfileTab && window.agsShowProfileTab('account')" role="tab">Account</button>
       </div>
@@ -479,6 +480,27 @@
             <span>Completed games and replays will appear here after you sign in.</span>
           </div>
         </div>
+      </section>
+      </div>
+      <!-- ── My Chess Journal (owner-only): self-reflection + coach report +
+           practice loop. Rendered by src/journal.js; reflections live in the
+           player's PRIVATE CloudSave record. ── -->
+      <div class="profile-panel" data-profile-panel="journal">
+      <section class="profile-history-card journal-card">
+        <div class="profile-history-head">
+          <h3>My Chess Journal</h3>
+          <span id="journal-status" aria-live="polite"></span>
+        </div>
+        <p class="journal-intro">Look back at your games, celebrate your best moves, learn from the rough ones — and turn mistakes into practice. Your reflections are private.</p>
+        <div class="journal-controls">
+          <div class="lb-view-toggle journal-window-toggle" role="tablist" aria-label="Journal time range">
+            <button type="button" class="lb-view-btn active" data-journal-window="24h" role="tab" aria-selected="true">Last 24h</button>
+            <button type="button" class="lb-view-btn" data-journal-window="7d" role="tab" aria-selected="false">7 days</button>
+            <button type="button" class="lb-view-btn" data-journal-window="since-last" role="tab" aria-selected="false">Since last entry</button>
+          </div>
+          <button type="button" id="btn-journal-generate" class="btn btn-primary">Write a new entry</button>
+        </div>
+        <div id="journal-entries" class="journal-entries"></div>
       </section>
       </div>
       <div class="profile-panel" data-profile-panel="coaching">
@@ -970,6 +992,15 @@
           <strong>Tip:</strong>
           <span id="hint-text"></span>
         </div>
+        <!-- Coach Mode take-back prompt: shown when the engine flags the move
+             just played as a blunder; the AI holds its reply until decided. -->
+        <div class="coach-prompt" id="coach-prompt" style="display:none">
+          <span id="coach-prompt-text">Hmm — that move gives something away. Want another look?</span>
+          <div class="coach-prompt-actions">
+            <button type="button" class="btn-mini success" data-click="coachTakeBack()">↩ Take it back</button>
+            <button type="button" class="btn-mini" data-click="coachPlayOn()">Play on</button>
+          </div>
+        </div>
       </div>
 
       <aside class="game-sidebar right" aria-label="Match information and controls">
@@ -1004,6 +1035,10 @@
         </div>
         <div class="match-panel match-more-panel" data-match-panel="more">
           <button class="btn btn-hint" id="btn-hint" data-click="showHint()">Get Hint</button>
+          <!-- Coach Mode (vs computer only): after each of your moves the engine
+               checks it, and offers a take-back on a real blunder — feedback at
+               the moment of the decision. -->
+          <button class="btn btn-secondary" id="btn-coach-mode" data-click="toggleCoachMode()" style="display:none" aria-pressed="false">🧑‍🏫 Coach Mode: Off</button>
           <button class="btn btn-video-chat" id="btn-video-chat" data-click="startVideoChat()" style="display:none">Video Chat</button>
           <button type="button" class="btn btn-secondary" id="btn-match-safety" data-click="openMatchSafety()" style="display:none">Safety</button>
           <button type="button" class="btn btn-secondary" id="btn-match-privacy" data-click="window.agsOpenPrivacyChoices && window.agsOpenPrivacyChoices()">Privacy &amp; Support</button>
@@ -1123,6 +1158,7 @@
         <button class="btn btn-secondary" id="btn-game-over-home" data-click="startNewGame()">Main Menu</button>
         <button class="btn btn-primary"   id="btn-rematch" data-click="requestRematch()" style="display:none">Rematch</button>
         <button class="btn btn-secondary" id="btn-add-match-friend" data-click="window.agsRequestLastOpponent && window.agsRequestLastOpponent()" style="display:none">Add Opponent</button>
+        <button class="btn btn-secondary" id="btn-journal-nudge" data-click="openJournalFromGameOver()" style="display:none">📓 Reflect in your journal</button>
       </div>
       <p id="rematch-message" class="rematch-message"></p>
       <p id="game-over-countdown" class="game-over-countdown"></p>

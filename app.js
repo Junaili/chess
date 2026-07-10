@@ -109,6 +109,16 @@ const MAX_RECONNECTS = 3;
 
 let game = null;
 let ai = new ChessAI();
+
+// ── Journal practice loop state ──────────────────────────────────────────────
+// retryContext: set while playing on from a mid-game position (journal "try
+// again" / puzzle drills). judge=true means src/journal.js wants the player's
+// first move graded (window.agsJournalJudgeMove).
+let retryContext = null;
+// Coach Mode (vs computer): grade each of your moves as you play; on a real
+// blunder, offer a take-back before the AI replies. Opt-in, persisted.
+let coachModeEnabled = localStorage.getItem('chess_coach_mode') === '1';
+let coachPromptPending = false;
 let playerColor = 'white';
 let gameMode = 'computer';   // 'computer' | 'online'
 let difficulty = 'medium';
@@ -403,6 +413,9 @@ function startGame() {
   matchStartedAt = new Date();
   matchHistoryRecorded = false;
   gameEndedByResignation = false;
+  retryContext = null;
+  hideCoachPrompt();
+  updateCoachModeButton();
   boardFlipped = playerColor === 'black';
   resetMatchClocks();
   game = new ChessGame();
@@ -674,6 +687,15 @@ function executeMove(fr, fc, toR, toC, promType) {
   const notation = game.getMoveNotation(fr, fc, toR, toC, promType);
   const capturesBefore = game.capturedByWhite.length + game.capturedByBlack.length;
   const movingColor = game.board[fr][fc]?.color;
+  // Journal drills grade the player's first move; Coach Mode grades every
+  // player move. Both need the position BEFORE the move — clone it now.
+  const wantsJudge = gameMode === 'computer' && movingColor === playerColor
+    && retryContext?.judge && !retryContext.judged
+    && typeof window.agsJournalJudgeMove === 'function';
+  const wantsCoach = gameMode === 'computer' && movingColor === playerColor
+    && coachModeEnabled && !retryContext
+    && typeof window.agsGradeMoveInPosition === 'function';
+  const positionBefore = (wantsJudge || wantsCoach) ? ai._cloneGame(game) : null;
   if (!game.makeMove(fr, fc, toR, toC, promType)) return;
   if (game.capturedByWhite.length + game.capturedByBlack.length > capturesBefore) {
     movingColor !== playerColor ? playDunDunDun() : playCapture();
@@ -700,9 +722,34 @@ function executeMove(fr, fc, toR, toC, promType) {
   suggestedMoveBeforePlay = null;
   if (gameMode === 'online') window.agsPublishLiveMove?.()
 
+  if (wantsJudge && positionBefore) {
+    retryContext.judged = true;
+    const verdict = window.agsJournalJudgeMove(positionBefore, { fr, fc, toR, toC, promType });
+    if (verdict) {
+      document.getElementById('hint-text').textContent = verdict.text;
+      document.getElementById('hint-box').style.display = 'flex';
+    }
+  }
+
   if (isGameOverStatus(game.status)) {
     setTimeout(showGameOver, 600);
     return;
+  }
+
+  // Coach Mode: on a genuine blunder, hold the AI's reply and offer a
+  // take-back — the point is the pause, so the better move is NOT revealed.
+  if (wantsCoach && positionBefore) {
+    const review = window.agsGradeMoveInPosition(positionBefore, { fr, fc, toR, toC, promType });
+    if (review && review.grade === 'Better move available') {
+      coachPromptPending = true;
+      const loss = Math.abs(review.loss || 0);
+      const pawns = (loss / 100).toFixed(1);
+      document.getElementById('coach-prompt-text').textContent = loss >= 5000
+        ? `Careful — ${review.playedNotation} loses the game on the spot. Want another look?`
+        : `Hmm — ${review.playedNotation} gives up about ${pawns} pawn${pawns === '1.0' ? '' : 's'}. Want another look?`;
+      document.getElementById('coach-prompt').style.display = 'flex';
+      return; // AI waits for Take it back / Play on
+    }
   }
 
   if (gameMode === 'computer' && game.currentTurn !== playerColor)
@@ -848,6 +895,107 @@ function showHint() {
   validMoves = [{ toR: best.toR, toC: best.toC }];
   renderBoard();
   setTimeout(() => { selectedSquare = null; validMoves = []; renderBoard(); }, 2000);
+}
+
+// ─── Journal practice loop: retry-from-position, drills, Coach Mode ──────────
+
+// Rebuilds the live game (board, move list, captured pieces) from a move
+// prefix — the same pattern the online match-resume flow uses.
+function rebuildBoardFromMoves(moves) {
+  game = new ChessGame();
+  selectedSquare = null;
+  validMoves = [];
+  dragging = null;
+  pendingPromotion = null;
+  suggestedMoveBeforePlay = null;
+  document.getElementById('move-list').innerHTML = '';
+  document.getElementById('captured-by-white').innerHTML = '';
+  document.getElementById('captured-by-black').innerHTML = '';
+  for (const m of moves) {
+    const notation = game.getMoveNotation(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen');
+    if (!game.makeMove(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen')) return false;
+    addMoveToList(notation, game.currentTurn === 'white' ? 'black' : 'white');
+  }
+  updateCapturedPieces();
+  updateStatus();
+  renderBoard();
+  return true;
+}
+
+// Enters a vs-computer game that starts mid-position: the recorded game's
+// moves are replayed through uptoPly (exclusive), then the player plays on as
+// their original color. Used by the journal's "Try again" and puzzle drills
+// (options.judge asks for the first move to be graded via agsJournalJudgeMove).
+function startRetryFromPosition(moves, uptoPly, myColor, options = {}) {
+  if (!Array.isArray(moves) || !moves.length) return;
+  const prefixLength = Math.max(0, Math.min(Number(uptoPly) || 0, moves.length));
+
+  destroyPeer(); // never carry an online session into a drill
+  gameMode = 'computer';
+  playerColor = myColor === 'black' ? 'black' : 'white';
+  difficulty = 'medium'; // matches the grading engine's depth
+  startGame();
+
+  if (!rebuildBoardFromMoves(moves.slice(0, prefixLength))) {
+    // Corrupt stored moves — fall back to the fresh game startGame() made.
+    return;
+  }
+  retryContext = { judge: !!options.judge, judged: false };
+
+  if (options.label) {
+    document.getElementById('hint-text').textContent = options.label;
+    document.getElementById('hint-box').style.display = 'flex';
+  }
+  if (game.currentTurn !== playerColor) scheduleAIMove();
+}
+window.startRetryFromPosition = startRetryFromPosition;
+
+function hideCoachPrompt() {
+  coachPromptPending = false;
+  const prompt = document.getElementById('coach-prompt');
+  if (prompt) prompt.style.display = 'none';
+}
+
+function coachTakeBack() {
+  if (!coachPromptPending) return;
+  hideCoachPrompt();
+  // Undo just the player's flagged move; it's their turn again.
+  const prefix = game.moveHistory.slice(0, -1)
+    .map(m => ({ fr: m.fr, fc: m.fc, toR: m.toR, toC: m.toC, promType: m.promType || 'queen' }));
+  rebuildBoardFromMoves(prefix);
+  if (typeof window.agsSendEvent === 'function') window.agsSendEvent('coach_take_back', {});
+}
+
+function coachPlayOn() {
+  if (!coachPromptPending) return;
+  hideCoachPrompt();
+  if (!isGameOverStatus(game.status) && gameMode === 'computer' && game.currentTurn !== playerColor) {
+    scheduleAIMove();
+  }
+}
+
+function updateCoachModeButton() {
+  const btn = document.getElementById('btn-coach-mode');
+  if (!btn) return;
+  btn.style.display = gameMode === 'computer' ? '' : 'none';
+  btn.textContent = `🧑‍🏫 Coach Mode: ${coachModeEnabled ? 'On' : 'Off'}`;
+  btn.setAttribute('aria-pressed', String(coachModeEnabled));
+}
+
+function toggleCoachMode() {
+  coachModeEnabled = !coachModeEnabled;
+  localStorage.setItem('chess_coach_mode', coachModeEnabled ? '1' : '0');
+  updateCoachModeButton();
+  if (!coachModeEnabled && coachPromptPending) coachPlayOn();
+  if (typeof window.agsSendEvent === 'function') {
+    window.agsSendEvent('coach_mode_toggled', { enabled: coachModeEnabled });
+  }
+}
+
+function openJournalFromGameOver() {
+  closeModal('game-over-modal');
+  destroyPeer();
+  if (typeof window.agsOpenJournal === 'function') window.agsOpenJournal();
 }
 
 // ─── UI updates ───────────────────────────────────────────────────────────────
@@ -1111,6 +1259,13 @@ function showGameOver() {
     window.agsUpdateMatchFriendAction(currentOpponent);
   } else if (matchFriendMessage && isGusOpponent) {
     matchFriendMessage.textContent = 'Gambit Gus cannot be added as a friend.'
+  }
+
+  // Post-game journal nudge: reflection lands best right after the game.
+  const journalNudge = document.getElementById('btn-journal-nudge');
+  if (journalNudge) {
+    journalNudge.style.display =
+      window.agsCurrentUserId && typeof window.agsOpenJournal === 'function' ? '' : 'none';
   }
 
   // Contextual invite prompt
