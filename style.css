@@ -740,10 +740,10 @@ input[type="checkbox"] {
 
 .player-summary-card .signedin-card {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 12px;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -1524,7 +1524,8 @@ input[type="checkbox"] {
 .signedin-footer {
   display: flex;
   align-items: center;
-  gap: 12px;
+  align-self: flex-start;
+  gap: 8px;
   flex: 0 0 auto;
 }
 
