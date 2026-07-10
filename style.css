@@ -1573,6 +1573,23 @@ input[type="checkbox"] {
   transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
 }
 
+.btn-account {
+  border: 1px solid rgba(240, 195, 122, 0.24);
+  border-radius: 999px;
+  background: rgba(240, 195, 122, 0.08);
+  color: var(--accent-2);
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+
+.btn-account:hover {
+  border-color: rgba(240, 195, 122, 0.48);
+  background: rgba(240, 195, 122, 0.14);
+}
+
 .btn-signout:hover {
   border-color: rgba(240, 195, 122, 0.42);
   color: var(--accent-2);

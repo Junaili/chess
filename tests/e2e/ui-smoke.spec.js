@@ -92,22 +92,20 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#ags-register-email')).toHaveValue('invitee@example.com');
   });
 
-  test('live-match invite link (?peer=) gates on sign-in-or-guest before joining', async ({ page }) => {
+  test('live-match invite link (?peer=) requires sign-in before joining', async ({ page }) => {
     await blockBackend(page);
     await page.goto(`${APP_PATH}?peer=test-host-peer-id`);
     await expect(page.locator('#screen-invite')).toBeVisible();
     await expect(page.locator('#invite-landing-title')).toHaveText(/waiting for you/i);
 
-    // Live mode: account-creation CTA hidden, Google/guest options shown instead.
+    // Live mode: account creation and sign-in options are shown; guest entry is absent.
     await expect(page.locator('#invite-landing-actions-default')).toBeHidden();
     await expect(page.locator('#invite-landing-actions-live')).toBeVisible();
-    await expect(page.locator('.invite-guest-cta')).toBeVisible();
+    await expect(page.locator('.invite-guest-cta')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Create an account to join' })).toBeVisible();
 
-    await page.locator('.invite-guest-cta').click();
-    // Guest path marks the session and immediately attempts to join the match.
-    await expect(page.locator('#screen-waiting')).toBeVisible();
-    const flag = await page.evaluate(() => sessionStorage.getItem('chess_invite_guest'));
-    expect(flag).toBe('1');
+    await page.getByRole('button', { name: 'Create an account to join' }).click();
+    await expect(page.locator('#screen-register')).toBeVisible();
   });
 
   test('registration and chat filters reject inappropriate language locally', async ({ page }) => {
@@ -117,6 +115,7 @@ test.describe('UI smoke (signed out)', () => {
     await page.locator('#ags-register-email').fill('test@example.com');
     await page.locator('#ags-register-display-name').fill('f.u.c.k');
     await page.locator('#ags-register-password').fill('not-a-real-password');
+    await page.locator('#ags-register-terms').check();
     await page.locator('#ags-register-submit').click();
 
     await expect(page.locator('#ags-register-message')).toContainText(/inappropriate language/i);

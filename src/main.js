@@ -152,7 +152,6 @@ const STATIC_ACTIONS = new Set([
   'agsClosePrivacyChoices',
   'agsCompletePasswordReset',
   'agsConfirmDeleteAccount',
-  'agsContinueAsGuestFromInvite',
   'agsCopyInviteLink',
   'agsCreateChildAccount',
   'agsCreateFamily',
@@ -595,7 +594,6 @@ async function reportReferral() {
     sendEvent('referral_reported', { inviter_user_id: inviter })
   } catch {}
   sessionStorage.removeItem('chess_invite_by')
-  sessionStorage.removeItem('chess_invite_guest')
 }
 
 // Send the new player a welcome email via the Extend service. Best-effort:
@@ -769,8 +767,7 @@ function mountShareRow(containerEl, url, opts = {}) {
 }
 
 // live=true means this landing came from a live-match link (?peer=) — the
-// gate offers Google/Apple sign-in or guest play, with account creation
-// deferred to the post-game nudge (see game-over-invite-prompt in app.js).
+// gate requires a signed-in account before the player can join.
 // live=false is the referral-only link (?invitedBy=), unchanged: account
 // creation is the primary CTA since there's no match waiting to join.
 function showInviteScreen(inviterName, { live = false } = {}) {
@@ -783,7 +780,7 @@ function showInviteScreen(inviterName, { live = false } = {}) {
   }
   if (subEl) {
     subEl.textContent = live
-      ? 'Sign in to save your progress, or jump straight into the match as a guest.'
+      ? 'Sign in or create an account to join this live match.'
       : 'Create a free account to accept the challenge and start playing.'
   }
   const defaultActions = document.getElementById('invite-landing-actions-default')
@@ -1482,6 +1479,8 @@ async function initAuth() {
       showRegisterAskParent()
       return
     }
+    const termsCheckbox = document.getElementById('ags-register-terms')
+    if (termsCheckbox) termsCheckbox.checked = false
     if (prefilledEmail) {
       const emailField = document.getElementById('ags-register-email')
       if (emailField && !emailField.value) emailField.value = prefilledEmail
@@ -1499,26 +1498,6 @@ async function initAuth() {
       trigger.setAttribute('aria-expanded', 'true')
     }
     window.requestAnimationFrame(() => nameInput?.focus())
-  }
-  // "Play without an account" on the live-match invite gate. Marks the
-  // session so the post-game nudge (app.js) knows to re-present account
-  // creation specifically to complete the friend connection, then joins the
-  // match — invitedBy/chess_invite_by is untouched, so registering later
-  // still auto-friends the inviter via hydrateAuthenticatedUser.
-  window.agsContinueAsGuestFromInvite = () => {
-    sessionStorage.setItem('chess_invite_guest', '1')
-    const peerId = sessionStorage.getItem('chess_pending_peer')
-    sessionStorage.removeItem('chess_pending_peer')
-    window.history.replaceState({}, '', window.location.pathname + window.location.hash)
-    if (typeof window.showScreen === 'function') window.showScreen('home')
-    if (peerId) window.agsJoinPeer?.(peerId)
-  }
-  // Post-game nudge (app.js) personalizes its copy with the inviter's name
-  // when the current guest arrived via a live-match invite link.
-  window.agsGetPendingInviteName = async () => {
-    const inviterId = sessionStorage.getItem('chess_invite_by')
-    if (!inviterId || sessionStorage.getItem('chess_invite_guest') !== '1') return null
-    return fetchInviterName(inviterId)
   }
   window.agsPasswordLogin = async () => {
     const identifier = document.getElementById('ags-login-identifier')?.value.trim() || ''
@@ -1617,9 +1596,15 @@ async function initAuth() {
     const displayName = document.getElementById('ags-register-display-name')?.value.trim() || ''
     const passwordInput = document.getElementById('ags-register-password')
     const password = passwordInput?.value || ''
+    const termsCheckbox = document.getElementById('ags-register-terms')
     const button = document.getElementById('ags-register-submit')
     if (!emailAddress || !displayName || !password) {
       setAuthMessage('register', 'Enter your email, display name, and a password.', 'error')
+      return
+    }
+    if (!termsCheckbox?.checked) {
+      setAuthMessage('register', 'Accept the Terms of Use and Community Standards to create an account.', 'error')
+      termsCheckbox?.focus()
       return
     }
     if (button) button.disabled = true
@@ -1994,6 +1979,9 @@ async function initAuth() {
     sendEvent('friend_request_sent', { source: 'manual' })
   }
   window.agsOpenProfile = openPublicProfile
+  window.agsOpenMyProfile = () => {
+    if (currentUserId) openPublicProfile(currentUserId, getDisplayName(currentProfile))
+  }
   window.agsProfileAddFriend = async () => {
     if (!activeProfileUser?.userId) return
     await requestProfileFriend(activeProfileUser)

@@ -1119,13 +1119,7 @@ function showGameOver() {
     invitePrompt.innerHTML = '';
     const isWin  = game.status === 'checkmate' && game.winner === playerColor;
     const isLoss = game.status === 'checkmate' && game.winner && game.winner !== playerColor;
-    // A guest who played this match via a live-match invite link (chose "Play
-    // without an account" on the gate) — re-present account creation here,
-    // regardless of the result, since that's what completes the friend
-    // connection with whoever invited them (see agsContinueAsGuestFromInvite).
-    const cameFromLiveInvite = gameMode === 'online' && !window.agsCurrentUserId &&
-      sessionStorage.getItem('chess_invite_guest') === '1';
-    if (isWin || isLoss || cameFromLiveInvite) {
+    if (isWin || isLoss) {
       const inviteUrl = window.agsGetInviteUrl?.();
       const nudge = document.createElement('p');
       nudge.className = 'invite-nudge-text';
@@ -1138,26 +1132,6 @@ function showGameOver() {
             sharePayload: { trigger: 'game_over', mode: gameMode, result: isWin ? 'win' : isLoss ? 'loss' : 'completed' },
           });
         }
-      } else if (cameFromLiveInvite) {
-        nudge.textContent = '🤝 Create an account to become friends and keep playing!';
-        nudge.className += ' invite-nudge-cta';
-        const openRegister = () => {
-          closeModal('game-over-modal');
-          window.agsOpenRegister?.();
-        };
-        nudge.setAttribute('role', 'button');
-        nudge.tabIndex = 0;
-        nudge.addEventListener('click', openRegister);
-        nudge.addEventListener('keydown', event => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            openRegister();
-          }
-        });
-        invitePrompt.appendChild(nudge);
-        window.agsGetPendingInviteName?.().then(name => {
-          if (name) nudge.textContent = `🤝 Create an account to add ${name} as a friend!`;
-        });
       } else {
         nudge.textContent = isWin ? '🎉 Create an account to invite friends!' : '💪 Create an account to invite a different opponent!';
         nudge.className += ' invite-nudge-cta';
@@ -2051,6 +2025,17 @@ async function submitSafetyReport() {
     return;
   }
 
+  // Remove reported content from this player's feed as soon as the report is
+  // accepted. The server-side moderation workflow remains responsible for
+  // review and enforcement; the reporter should not keep seeing the content.
+  if (activeSafetyReport.kind === 'message-report') {
+    const reportedChatId = String(activeSafetyReport.message?.chatId || '')
+    chatMessages = chatMessages.filter(message => message.chatId !== reportedChatId)
+  } else {
+    chatMessages = chatMessages.filter(message => message.side !== 'opponent')
+  }
+  renderChatMessages()
+
   if (shouldBlock && !currentOpponentBlocked) {
     const blockResult = await window.agsBlockPlayer?.(currentOpponent.userId);
     if (!blockResult?.ok) {
@@ -2365,7 +2350,7 @@ window.declineFriendMatchInvite = declineFriendMatchInvite;
 window.handleMatchDeclined = handleMatchDeclined;
 
 // Bridge for src/main.js: join a live-match invite link (?peer=) once the
-// sign-in-or-guest gate on the invite screen has been resolved.
+// sign-in gate on the invite screen has been resolved.
 window.agsJoinPeer = hostPeerId => {
   if (!hostPeerId) return;
   gameMode = 'online';
@@ -3215,5 +3200,5 @@ window.addEventListener('DOMContentLoaded', () => {
   renderLeaderboard();
   // ?peer= (a live-match invite link) is no longer auto-joined here — it goes
   // through src/main.js's initAuth() first, which gates it behind the
-  // sign-in-or-guest screen (#screen-invite) before calling window.agsJoinPeer.
+  // sign-in screen (#screen-invite) before calling window.agsJoinPeer.
 });

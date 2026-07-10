@@ -106,6 +106,7 @@
                 </div>
               </div>
               <div class="signedin-footer">
+                <button class="btn-account" data-click="window.agsOpenMyProfile && window.agsOpenMyProfile()">Account</button>
                 <button class="btn-signout" data-click="window.agsLogout && window.agsLogout()">Log out</button>
               </div>
             </div>
@@ -654,8 +655,8 @@
         </div>
       </div>
 
-      <!-- Live match link (?peer=): sign in (Google/Apple) or jump in as a guest; account
-           creation is deferred to the post-game nudge (see game-over-invite-prompt in app.js). -->
+      <!-- Live match link (?peer=): an account is required before joining so
+           chat and match activity are attributable to a signed-in player. -->
       <div id="invite-landing-actions-live" class="invite-landing-actions" style="display:none">
         <button class="btn btn-google invite-google" data-click="window.agsLogin && window.agsLogin()">
           <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
@@ -672,7 +673,7 @@
           </svg>
           Sign in with Apple
         </button>
-        <button class="btn btn-secondary invite-guest-cta" data-click="window.agsContinueAsGuestFromInvite && window.agsContinueAsGuestFromInvite()">Play without an account</button>
+        <button class="btn btn-primary" data-click="window.agsOpenRegister && window.agsOpenRegister()">Create an account to join</button>
         <div class="auth-divider invite-divider"><span>already have an account?</span></div>
         <button class="btn btn-secondary invite-pw" data-click="window.agsOpenLogin && window.agsOpenLogin()">Log in with password</button>
       </div>
@@ -777,6 +778,10 @@
           </div>
           <small>Use a password you don't use elsewhere.</small>
         </div>
+        <label class="legal-confirm-row register-terms-confirm" for="ags-register-terms">
+          <input type="checkbox" id="ags-register-terms" />
+          <span>I agree to the Terms of Use and Community Standards, including the zero-tolerance rules for abusive or objectionable content.</span>
+        </label>
         <p id="ags-register-message" class="auth-message"></p>
         <div class="auth-form-actions">
           <button class="btn btn-primary" id="ags-register-submit" data-click="window.agsRegister && window.agsRegister()">Create Free Account</button>

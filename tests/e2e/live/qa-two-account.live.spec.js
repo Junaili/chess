@@ -77,9 +77,10 @@ async function registerOrLogin(page, email, displayName) {
   await page.getByRole('button', { name: 'Create Free Account' }).first().click();
   await expect(page.locator('#screen-register')).toBeVisible();
   await page.locator('#ags-register-email').fill(email);
-  await page.locator('#ags-register-display-name').fill(displayName);
-  await page.locator('#ags-register-password').fill(password);
-  await page.locator('#ags-register-minimum-age').check();
+    await page.locator('#ags-register-display-name').fill(displayName);
+    await page.locator('#ags-register-password').fill(password);
+    await page.locator('#ags-register-terms').check();
+    await page.locator('#ags-register-minimum-age').check();
   await page.locator('#ags-register-submit').click();
 
   await expect.poll(async () => {
