@@ -1,9 +1,9 @@
 const { test, expect } = require('@playwright/test');
 const { gotoApp, startVsComputer, playMove, squareLocator } = require('./helpers.cjs');
 
-// Fully offline: the "Play vs Computer" mode is pure client-side logic, so these
+// Fully offline: the "Single Player" mode is pure client-side logic, so these
 // run on both the Chromium (browser) and WebKit/iPad (iOS engine) projects.
-test.describe('Play vs Computer', () => {
+test.describe('Single Player', () => {
   test.beforeEach(async ({ page }) => {
     await gotoApp(page);
   });

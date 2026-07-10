@@ -3,7 +3,7 @@ const { expect } = require('@playwright/test');
 const APP_PATH = '/chess/';
 
 // AGS / realtime endpoints the dev server proxies. Offline specs abort these so
-// the app boots in its signed-out, fully-local "Play vs Computer" mode.
+// the app boots in its signed-out, fully-local "Single Player" mode.
 const BACKEND_PATTERNS = [
   '**/iam/**', '**/basic/**', '**/cloudsave/**', '**/friends/**',
   '**/presence/**', '**/lobby/**', '**/social/**', '**/leaderboard/**',
@@ -59,7 +59,7 @@ async function playMove(page, from, to, promote = 'queen') {
   }
 }
 
-// Open the signed-out "Play vs Computer as Guest" entry and reach color select.
+// Open the signed-out "Single Player as Guest" entry and reach color select.
 async function openGuestColorSelect(page, guestName = 'Tester') {
   await page.locator('#ags-open-guest').click();
   await expect(page.locator('#ags-guest-options')).toBeVisible();
@@ -69,13 +69,13 @@ async function openGuestColorSelect(page, guestName = 'Tester') {
 }
 
 // Drive the home -> color -> piece-color -> difficulty -> board flow.
-// `entry` is 'guest' (signed-out) or 'member' (signed-in, uses Play vs Computer).
+// `entry` is 'guest' (signed-out) or 'member' (signed-in, uses Single Player).
 async function startVsComputer(page, { color = 'white', difficulty = 'easy', entry = 'guest' } = {}) {
   // confirmNewGame()/resignGame() use window.confirm — auto-accept any dialog.
   page.on('dialog', dialog => dialog.accept().catch(() => {}));
 
   if (entry === 'member') {
-    await page.getByRole('button', { name: 'Play vs Computer', exact: true }).click();
+    await page.getByRole('button', { name: 'Single Player', exact: true }).click();
     await expect(page.locator('#screen-color-select')).toBeVisible();
   } else {
     await openGuestColorSelect(page);

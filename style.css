@@ -1627,7 +1627,7 @@ input[type="checkbox"] {
 
 .lb-entry {
   display: grid;
-  grid-template-columns: 34px 1fr 48px;
+  grid-template-columns: 34px minmax(0, 1fr) 48px;
   align-items: center;
   gap: 10px;
   border-radius: 16px;
@@ -1656,10 +1656,20 @@ input[type="checkbox"] {
 }
 
 .lb-name {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 700;
+}
+
+.lb-name-button,
+.lb-name-with-stats {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .lb-name-button {
@@ -1670,6 +1680,14 @@ input[type="checkbox"] {
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+
+.lb-player-stats {
+  flex: 0 0 auto;
+  color: var(--text-soft);
+  font-size: 0.71rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .lb-name-button:hover {

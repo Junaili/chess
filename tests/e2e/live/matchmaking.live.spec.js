@@ -7,7 +7,7 @@ const creds = testCreds();
 test.describe('Live matchmaking ticket lifecycle', () => {
   test.skip(!creds, 'Set TEST_USER_1_* in .env.test to run live matchmaking tests');
 
-  test('Play vs Random creates a ticket and cancel tears it down', async ({ page }) => {
+  test('Find a Chess Buddy creates a ticket and cancel tears it down', async ({ page }) => {
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
 
