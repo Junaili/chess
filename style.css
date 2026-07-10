@@ -1765,7 +1765,11 @@ input[type="checkbox"] {
 
 .profile-tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* One equal-width column per visible tab — the own-profile view shows five
+     (Overview/Stats/History/Journal/Account) where others show four, and a
+     fixed repeat(4) wrapped the fifth onto its own row. */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 5px;
   flex: 0 0 auto;
   margin-bottom: 16px;
@@ -6405,4 +6409,325 @@ input[type="checkbox"] {
   font-size: 0.85rem;
   list-style: none;
   margin-left: -20px;
+}
+
+/* ── My Chess Journal (own-profile tab) + Coach Mode ───────────────────────── */
+
+.journal-intro {
+  margin: 0 0 12px;
+  color: var(--text-dim);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.journal-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.journal-window-toggle {
+  flex: 1 1 300px;
+  grid-template-columns: repeat(3, 1fr); /* three windows, one row */
+  margin: 0;
+}
+
+#btn-journal-generate {
+  min-height: 42px;
+  padding: 10px 18px;
+}
+
+.journal-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+.journal-entry {
+  padding: 14px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.journal-entry.latest {
+  border-color: rgba(240, 195, 122, 0.3);
+}
+
+.journal-entry header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 14px;
+  margin-bottom: 8px;
+}
+
+.journal-entry header strong {
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.journal-entry header > div > span {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-soft);
+  font-size: 0.76rem;
+}
+
+.journal-entry-stats {
+  display: flex;
+  gap: 10px;
+  color: var(--accent-2);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.journal-trend {
+  margin: 0 0 8px;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+}
+
+.journal-coach p {
+  margin: 6px 0;
+  color: var(--text-dim);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.journal-coach-headline {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.journal-goal,
+.journal-goal-verdict {
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: rgba(126, 166, 255, 0.09);
+  border: 1px solid rgba(126, 166, 255, 0.22);
+  color: var(--text-dim);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.journal-goal span {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+}
+
+.journal-goal-verdict.achieved {
+  background: rgba(63, 147, 104, 0.12);
+  border-color: rgba(63, 147, 104, 0.35);
+}
+
+.journal-goal-verdict.missed {
+  background: rgba(221, 95, 87, 0.1);
+  border-color: rgba(221, 95, 87, 0.3);
+}
+
+.journal-moments {
+  margin-top: 12px;
+}
+
+.journal-moments h4,
+.journal-puzzles h4,
+.journal-reflection h4 {
+  margin: 0 0 8px;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.journal-moment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 9px 12px;
+  margin-top: 6px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.journal-moment.excellent {
+  border-color: rgba(63, 147, 104, 0.3);
+}
+
+.journal-moment.mistake {
+  border-color: rgba(240, 195, 122, 0.24);
+}
+
+.journal-moment-main strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.journal-moment-main span {
+  color: var(--text-soft);
+  font-size: 0.74rem;
+}
+
+.journal-moment-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.journal-moment-gone {
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  font-style: italic;
+}
+
+.journal-puzzles {
+  margin-top: 12px;
+}
+
+.journal-puzzle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+  width: 100%;
+  padding: 10px 12px;
+  margin-top: 6px;
+  border: 1px dashed rgba(126, 166, 255, 0.35);
+  border-radius: 12px;
+  background: rgba(126, 166, 255, 0.06);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.journal-puzzle:hover {
+  background: rgba(126, 166, 255, 0.12);
+}
+
+.journal-puzzle-kind {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.journal-puzzle-count {
+  color: var(--text-soft);
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.journal-reflection {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.journal-private-note {
+  color: var(--text-soft);
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.journal-reflection label {
+  display: block;
+  margin: 8px 0;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.journal-reflection textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.84rem;
+  resize: vertical;
+}
+
+.journal-reflection .name-input {
+  margin: 8px 0;
+}
+
+.journal-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.journal-chip {
+  padding: 7px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.journal-chip.selected {
+  border-color: rgba(63, 147, 104, 0.5);
+  background: rgba(63, 147, 104, 0.2);
+  color: #dfffee;
+}
+
+.journal-save-note {
+  margin-left: 8px;
+  color: var(--success);
+  font-size: 0.76rem;
+}
+
+.journal-saved-reflection {
+  margin: 10px 0 0;
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* Coach Mode take-back prompt (game screen, vs computer) */
+.coach-prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 14px;
+  margin-top: 8px;
+  padding: 10px 14px;
+  border: 1px solid rgba(240, 195, 122, 0.35);
+  border-radius: 14px;
+  background: rgba(240, 195, 122, 0.1);
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.coach-prompt-actions {
+  display: flex;
+  gap: 6px;
 }

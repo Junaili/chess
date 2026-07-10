@@ -20,6 +20,7 @@ import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
 import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite, rejectFamilyInvite, removeFamilyMember, leaveFamily, familyTransportAvailable, recordParentalConsent } from './family.js'
 import { initGusPanel, resetGusPanel, openGusProfile, refreshGusProfile, showGusTab, startGusMatchmaking as startGusMatchmakingFlow } from './gus.js'
+import { renderJournalTab, resetJournalState } from './journal.js'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
 import {
@@ -107,6 +108,8 @@ const STATIC_ACTIONS = new Set([
   'cancelWaiting',
   'closeModal',
   'closeSafetyReport',
+  'coachPlayOn',
+  'coachTakeBack',
   'confirmGoHome',
   'confirmNewGame',
   'copyInviteLink',
@@ -117,6 +120,7 @@ const STATIC_ACTIONS = new Set([
   'flipBoard',
   'handleChatInputKeydown',
   'hideAddContact',
+  'openJournalFromGameOver',
   'openMatchSafety',
   'playAgainFromGameOver',
   'reportCurrentOpponent',
@@ -132,6 +136,7 @@ const STATIC_ACTIONS = new Set([
   'showHint',
   'showMatchTab',
   'showScreen',
+  'toggleCoachMode',
   'startGusMatchmaking',
   'startNewGame',
   'startRandomMatchmaking',
@@ -169,6 +174,7 @@ const STATIC_ACTIONS = new Set([
   'agsOpenGuestPlay',
   'agsOpenGusProfile',
   'agsOpenLegalDocument',
+  'agsOpenJournal',
   'agsOpenLogin',
   'agsOpenOfflineFriends',
   'agsOpenPolicy',
@@ -333,6 +339,7 @@ const expectedInviteFriendIds = new Set()
 const EXPECTED_INVITE_TTL_MS = 2 * 60 * 1000
 let activeProfileUser = null
 let spectatorPrevScreen = null
+let spectatorReturnProfileTab = ''
 let profileMatchHistoryRows = []
 let blockedPlayers = []
 let deletionRequirements = null
@@ -1439,6 +1446,7 @@ async function initAuth() {
     currentStreak = 0
     clearUnlockedCache()
     resetGusPanel()
+    resetJournalState()
     chatClient.disconnect()
     await signOutPresence()
     await logout()
@@ -1983,6 +1991,12 @@ async function initAuth() {
   window.agsOpenMyProfile = () => {
     if (currentUserId) openPublicProfile(currentUserId, getDisplayName(currentProfile))
   }
+  // Game-over nudge target: own profile, landed on the Journal tab.
+  window.agsOpenJournal = async () => {
+    if (!currentUserId) return
+    await openPublicProfile(currentUserId, getDisplayName(currentProfile))
+    showProfileTab('journal')
+  }
   window.agsProfileAddFriend = async () => {
     if (!activeProfileUser?.userId) return
     await requestProfileFriend(activeProfileUser)
@@ -2318,6 +2332,11 @@ async function initAuth() {
     } else if (typeof window.showScreen === 'function') {
       window.showScreen('home')
     }
+    // Land back on the tab the drill-down came from (e.g. the Journal tab).
+    if (spectatorReturnProfileTab && target === 'profile') {
+      showProfileTab(spectatorReturnProfileTab)
+    }
+    spectatorReturnProfileTab = ''
   }
   window.agsSpectatorFirst = () => replayAt(0)
   window.agsSpectatorPrev  = () => replayAt(spectatorReplayIndex - 1)
@@ -2679,6 +2698,7 @@ async function openPublicProfile(userId, displayName = '') {
   setProfileTabVisible('stats', !!currentUserId)
   setProfileTabVisible('account', false)
   setProfileTabVisible('coaching', false)
+  setProfileTabVisible('journal', false)
   if (nameEl) nameEl.textContent = displayName || userId.slice(0, 8)
   if (editBtn) editBtn.style.display = 'none'
   if (editForm) editForm.style.display = 'none'
@@ -2754,6 +2774,10 @@ async function openPublicProfile(userId, displayName = '') {
     if (editBtn) editBtn.style.display = ''
     if (accountSafetyCard) accountSafetyCard.style.display = ''
     setProfileTabVisible('account', true)
+    // Journal is owner-only (a deliberately different gate from the
+    // guardian-only Coaching tab) — reflections are the player's own space.
+    setProfileTabVisible('journal', true)
+    renderJournalTab(userId, matchHistory, { isChildSession: isProtectedChildSession() })
     renderBlockedPlayers()
     return
   }
@@ -4066,12 +4090,17 @@ function setSpectatorReplayControls(visible) {
 
 // replayMatchData opens any recorded match (own history, a friend's, or Gus's)
 // on the spectator board in replay mode; prevScreen is where Back returns to.
-function replayMatchData(match, prevScreen = 'profile') {
+// startIndex jumps straight to a specific ply (journal key moments); default
+// is the final position. returnTab re-selects a profile tab on Back so a
+// drill-down from the Journal tab lands back on the Journal tab.
+function replayMatchData(match, prevScreen = 'profile', { startIndex = -1, returnTab = '' } = {}) {
   if (!match || !Array.isArray(match.moves) || !match.moves.length) return
 
   spectatorPrevScreen = prevScreen
-  spectatorReplayIndex = match.moves.length - 1
-  const finalGame = buildReplayPosition(match.moves, match.moves.length - 1)
+  spectatorReturnProfileTab = returnTab
+  const lastIndex = match.moves.length - 1
+  spectatorReplayIndex = startIndex >= 0 && startIndex <= lastIndex ? startIndex : lastIndex
+  const finalGame = buildReplayPosition(match.moves, lastIndex)
   spectatorLastMatchData = {
     active: false,
     moves: match.moves,
@@ -4092,6 +4121,10 @@ function replayMatchHistoryAt(index) {
 
 window.agsReplayMatchHistory = replayMatchHistoryAt
 window.agsReplayMatchData = replayMatchData
+// Grading seam for src/journal.js: its incremental grader maintains the
+// running position itself and calls this per player ply (the thresholds and
+// prose stay defined in exactly one place). Also used to judge puzzle answers.
+window.agsGradeMoveInPosition = gradeMoveInPosition
 
 function addSpectatorCoordinateLabels(squareEl, r, c) {
   if (c === 0) {
@@ -4135,12 +4168,14 @@ function buildReplayPosition(moves, throughIndex) {
   return g
 }
 
-function analyzeReplayMove(matchData, moveIndex) {
-  const moves = matchData.moves || []
-  const played = moves[moveIndex]
-  if (!played) return null
-
-  const before = buildReplayPosition(moves, moveIndex - 1)
+// gradeMoveInPosition is the core grader: it takes an already-built "position
+// before the move" so callers control the cost of getting there.
+// analyzeReplayMove wraps it for the replay viewer (rebuilding the prefix per
+// call); the journal's incremental grader (src/journal.js) walks one running
+// position through a game and calls this per player ply — avoiding the O(n²)
+// prefix replays. Returns the human-facing grade fields plus the raw numbers
+// (loss/scores/SANs) that key-moment selection needs.
+function gradeMoveInPosition(before, played, { whiteName, blackName } = {}) {
   const mover = before.currentTurn
   const playedNotation = before.getMoveNotation(played.fr, played.fc, played.toR, played.toC, played.promType || 'queen')
   const best = spectatorAi.getBestMove(before, 'medium')
@@ -4149,26 +4184,42 @@ function analyzeReplayMove(matchData, moveIndex) {
       grade: 'Forced',
       text: `${playedNotation} was played in a position with no meaningful alternative.`,
       recommendation: '',
+      playedNotation,
+      bestNotation: '',
+      loss: 0,
+      playedScore: null,
+      bestScore: null,
+      preScore: scoreForColor(spectatorAi.evaluate(before), mover),
     }
   }
 
   const bestNotation = before.getMoveNotation(best.fr, best.fc, best.toR, best.toC, best.promType || 'queen')
-  const playedAfter = buildReplayPosition(moves, moveIndex - 1)
+  const preScore = scoreForColor(spectatorAi.evaluate(before), mover)
+  const playedAfter = spectatorAi._cloneGame(before)
   playedAfter.makeMove(played.fr, played.fc, played.toR, played.toC, played.promType || 'queen')
-  const bestAfter = buildReplayPosition(moves, moveIndex - 1)
+  const bestAfter = spectatorAi._cloneGame(before)
   bestAfter.makeMove(best.fr, best.fc, best.toR, best.toC, best.promType || 'queen')
 
-  const playedScore = scoreForColor(spectatorAi.evaluate(playedAfter), mover)
-  const bestScore = scoreForColor(spectatorAi.evaluate(bestAfter), mover)
+  // Score each candidate AFTER the opponent's best answer (one-ply minimax),
+  // not with a raw static eval of the resulting position — a static eval
+  // can't see a hanging piece (Qxh7 "wins a pawn" right up until ...Rxh7),
+  // and hung pieces are exactly the mistakes this grader exists to catch.
+  const opponentIsWhite = mover !== 'white'
+  const playedScore = scoreForColor(
+    spectatorAi.minimax(playedAfter, 1, -Infinity, Infinity, opponentIsWhite), mover)
+  const bestScore = scoreForColor(
+    spectatorAi.minimax(bestAfter, 1, -Infinity, Infinity, opponentIsWhite), mover)
   const loss = bestScore - playedScore
   const sameMove = sameReplayMove(played, best)
-  const moverName = mover === 'white' ? (matchData.whiteName || 'White') : (matchData.blackName || 'Black')
+  const moverName = mover === 'white' ? (whiteName || 'White') : (blackName || 'Black')
+  const raw = { playedNotation, bestNotation, loss, playedScore, bestScore, preScore, matchedBest: sameMove }
 
   if (sameMove || loss < 35) {
     return {
       grade: 'Strong move',
       text: `${moverName}'s ${playedNotation} matches the engine's preferred idea.`,
       recommendation: 'No better move found at this depth.',
+      ...raw,
     }
   }
 
@@ -4177,6 +4228,7 @@ function analyzeReplayMove(matchData, moveIndex) {
       grade: 'Playable',
       text: `${moverName}'s ${playedNotation} is playable, but it gives up ${formatPawnLoss(loss)} compared with the best line.`,
       recommendation: `Consider ${bestNotation} instead.`,
+      ...raw,
     }
   }
 
@@ -4184,7 +4236,20 @@ function analyzeReplayMove(matchData, moveIndex) {
     grade: 'Better move available',
     text: `${moverName}'s ${playedNotation} misses a stronger continuation and gives up ${formatPawnLoss(loss)}.`,
     recommendation: `Recommended: ${bestNotation}.`,
+    ...raw,
   }
+}
+
+function analyzeReplayMove(matchData, moveIndex) {
+  const moves = matchData.moves || []
+  const played = moves[moveIndex]
+  if (!played) return null
+
+  const before = buildReplayPosition(moves, moveIndex - 1)
+  return gradeMoveInPosition(before, played, {
+    whiteName: matchData.whiteName,
+    blackName: matchData.blackName,
+  })
 }
 
 // ─── Coaching summary (family feature) ──────────────────────────────────────
@@ -4200,8 +4265,20 @@ function gradeAllMoves(matchData) {
       moveIndex: i,
       mover: i % 2 === 0 ? 'white' : 'black', // white always moves ply 0
       grade: analysis.grade,
+      loss: analysis.loss || 0,
     }
   }).filter(Boolean)
+}
+
+// The subject's single worst graded ply — the "review this together" landing
+// point for the guardian coaching drill-down. Null when there's no blunder.
+function worstGradedPly(grades, subjectColor) {
+  let worst = null
+  for (const g of grades || []) {
+    if (g.mover !== subjectColor || g.grade !== 'Better move available') continue
+    if (!worst || g.loss > worst.loss) worst = g
+  }
+  return worst ? worst.moveIndex : null
 }
 
 let coachingRenderToken = 0
@@ -4248,6 +4325,7 @@ async function renderFamilyCoachingTab(userId, matchHistory) {
       index,
       match,
       summary: summarizeCoachingGrades(grades, match.moves.length, match.myColor),
+      worstPly: worstGradedPly(grades, match.myColor),
     })
   }
   if (token !== coachingRenderToken) return
@@ -4268,21 +4346,28 @@ async function renderFamilyCoachingTab(userId, matchHistory) {
       : 'None')
   }
 
-  gamesEl.innerHTML = perGame.map(({ index, match, summary }) => {
+  gamesEl.innerHTML = perGame.map(({ index, match, summary, worstPly }) => {
     const result = match.result === 'win' ? 'Won' : match.result === 'loss' ? 'Lost' : 'Draw'
-    return `<button class="profile-history-row replayable" type="button" data-coaching-replay="${index}">
+    const reviewHint = worstPly != null ? ' · tap to review the key moment together' : ''
+    return `<button class="profile-history-row replayable" type="button" data-coaching-replay="${index}"${worstPly != null ? ` data-coaching-ply="${worstPly}"` : ''}>
       <span class="profile-history-result ${esc(match.result || '')}">${esc(result)}</span>
       <div class="profile-history-main">
         <strong>vs ${esc(match.opponentName || 'Opponent')}</strong>
-        <span>${esc(summary.headline)}</span>
+        <span>${esc(summary.headline + reviewHint)}</span>
       </div>
     </button>`
   }).join('')
   gamesEl.querySelectorAll('[data-coaching-replay]').forEach(button => {
     button.addEventListener('click', () => {
-      // Jumps into the existing replay viewer + per-move analysis panel so a
-      // parent can see exactly why a move was graded the way it was.
-      replayMatchHistoryAt(Number(button.dataset.coachingReplay))
+      // Jumps into the replay viewer + per-move analysis panel, landing
+      // directly on the child's worst moment (when there is one) so parent
+      // and kid can review it together instead of scrubbing for it.
+      const index = Number(button.dataset.coachingReplay)
+      const ply = button.dataset.coachingPly
+      replayMatchData(profileMatchHistoryRows[index], 'profile', {
+        startIndex: ply != null ? Number(ply) : -1,
+        returnTab: 'coaching',
+      })
     })
   })
 }
