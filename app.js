@@ -2198,7 +2198,13 @@ async function submitSafetyReport() {
       return;
     }
   }
-  setSafetyMessage('report-player-message', 'Report submitted. Thank you.', 'success');
+  const ticketId = String(result.ticketId || '').trim();
+  const ticketReference = ticketId ? ` AGS report reference: ${ticketId}.` : '';
+  setSafetyMessage(
+    'report-player-message',
+    `Report submitted. We review valid reports within 24 hours.${ticketReference}`,
+    'success'
+  );
   window.setTimeout(closeSafetyReport, 700);
 }
 

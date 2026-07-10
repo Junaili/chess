@@ -56,6 +56,13 @@ test('normalizes AGS Lobby blocked-player responses', async () => {
   )
 })
 
+test('uses the AGS reporting ticket as the player report reference', async () => {
+  const { getReportTicketId } = await safetyPromise
+  assert.equal(getReportTicketId({ ticketId: 'ticket-123' }), 'ticket-123')
+  assert.equal(getReportTicketId({ ticket: { id: 'ticket-456' } }), 'ticket-456')
+  assert.equal(getReportTicketId({}), '')
+})
+
 test('does not expose raw browser transport errors to the safety UI', async () => {
   const { getSafetyError } = await safetyPromise
 

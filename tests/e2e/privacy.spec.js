@@ -12,6 +12,7 @@ test('player can decline and later enable optional analytics', async ({ page }) 
   await page.getByRole('button', { name: 'Privacy & Support' }).click()
   await expect(page.locator('#privacy-center-modal')).toBeVisible()
   await expect(page.locator('#privacy-choice-status')).toContainText('disabled')
+  await expect(page.getByRole('link', { name: 'jun@accelbyte.ai' })).toHaveAttribute('href', /mailto:jun@accelbyte\.ai/)
 
   await page.locator('#privacy-analytics-toggle').check()
   await page.getByRole('button', { name: 'Save Choice' }).click()
@@ -27,7 +28,7 @@ test('published legal page contains privacy, terms, community, and support', asy
   await expect(page.getByRole('heading', { name: 'Terms of Use' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Community Standards' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Support', exact: true })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Open a support request' })).toHaveAttribute('href', /github\.com\/junaili\/chess\/issues\/new/)
+  await expect(page.getByRole('link', { name: 'Email Jun at jun@accelbyte.ai' })).toHaveAttribute('href', 'mailto:jun@accelbyte.ai')
 })
 
 function injectLegalReaderTrigger(page) {

@@ -48,4 +48,4 @@ Players 13 and older must meet the minimum digital-consent age applicable in the
 
 ## Contact
 
-Privacy and deletion questions can be submitted at https://github.com/junaili/chess/issues/new.
+Privacy and deletion questions can be emailed to [jun@accelbyte.ai](mailto:jun@accelbyte.ai).

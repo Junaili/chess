@@ -12,6 +12,8 @@ Play competitively, communicate respectfully, and help keep the game safe.
 
 Use **Report Player** or **Report Message** from a match when content violates these standards. Use **Block Player** to prevent further direct interaction. Reports may include message and player identifiers so the incident can be investigated.
 
+We review valid player-safety reports and take appropriate action within 24 hours.
+
 Serious or repeated violations may result in content removal, communication restrictions, suspension, or account termination.
 
-Safety questions can be submitted at https://github.com/junaili/chess/issues/new.
+Safety questions can be emailed to [jun@accelbyte.ai](mailto:jun@accelbyte.ai).

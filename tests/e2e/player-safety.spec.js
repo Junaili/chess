@@ -28,7 +28,7 @@ test.describe('player safety', () => {
       window.__reportedPlayer = null
       window.agsReportPlayer = async payload => {
         window.__reportedPlayer = payload
-        return { ok: true }
+        return { ok: true, ticketId: 'ags-ticket-123' }
       }
       window.openMatchSafety()
     })
@@ -43,6 +43,8 @@ test.describe('player safety', () => {
     await page.locator('#btn-submit-player-report').click()
 
     await expect(page.locator('#report-player-message')).toContainText('Report submitted')
+    await expect(page.locator('#report-player-message')).toContainText('within 24 hours')
+    await expect(page.locator('#report-player-message')).toContainText('AGS report reference: ags-ticket-123')
     await expect.poll(() => page.evaluate(() => window.__reportedPlayer)).toEqual({
       userId: 'opponent-1',
       reason: 'Harassment',

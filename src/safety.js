@@ -4,11 +4,12 @@ import { extendFetch } from './extend-client.js'
 import {
   buildChatReport,
   buildUserReport,
+  getReportTicketId,
   getSafetyError,
   normalizeBlockedPlayers,
 } from './safety-payloads.mjs'
 
-export { buildChatReport, buildUserReport, getSafetyError, normalizeBlockedPlayers }
+export { buildChatReport, buildUserReport, getReportTicketId, getSafetyError, normalizeBlockedPlayers }
 
 export const PLAYER_SAFETY_REASON_GROUP = 'Player Safety'
 

@@ -36,12 +36,11 @@ function escapeHtml(text) {
 }
 
 // Inline formatting: **bold**, [text](url) links, and bare https:// URLs
-// auto-linked (the source markdown uses plain "submitted at https://..."
-// sentences, not markdown link syntax).
+// auto-linked. Legal sources may also use a mailto: link for support contact.
 function renderInline(text) {
   let html = escapeHtml(text)
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_m, label, url) =>
+  html = html.replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:)[^\s)]+)\)/g, (_m, label, url) =>
     `<a href="${url}" rel="noopener noreferrer">${label}</a>`,
   )
   html = html.replace(/(^|[\s(])(https?:\/\/[^\s<]+?)([.,;:!?)]?(?=\s|$))/g, (_m, pre, url) =>
@@ -78,7 +77,7 @@ function parseDocument(markdown) {
     }
     // A paragraph that is a single markdown link, alone, is a call-to-action —
     // render as the page's styled button instead of a plain inline link.
-    const soleLink = block.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/)
+    const soleLink = block.match(/^\[([^\]]+)\]\(((?:https?:\/\/|mailto:)[^\s)]+)\)$/)
     if (soleLink) {
       return `<p><a class="support-button" href="${soleLink[2]}" rel="noopener noreferrer">${escapeHtml(soleLink[1])}</a></p>`
     }
