@@ -1496,18 +1496,25 @@ input[type="checkbox"] {
 }
 
 .btn-edit-name {
-  background: transparent;
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(240, 195, 122, 0.22);
+  background: rgba(240, 195, 122, 0.07);
   color: var(--text-soft);
-  font-size: 0.9rem;
+  font-size: 0.7rem;
+  font-weight: 800;
   cursor: pointer;
-  transition: color 0.18s ease;
-  padding: 4px;
-  border-radius: 6px;
+  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  padding: 5px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
 .btn-edit-name:hover {
   color: var(--accent-2);
+  border-color: rgba(240, 195, 122, 0.48);
+  background: rgba(240, 195, 122, 0.13);
 }
 
 .name-edit-actions {
