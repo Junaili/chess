@@ -559,16 +559,21 @@ input[type="checkbox"] {
   overflow: visible;
 }
 
-/* Leaderboard fills its column; its list scrolls instead of the page. */
+/* The leaderboard hugs its own content instead of being stretched to match
+   the People column's height — capped at 10 entries, it's usually much
+   shorter, and a card that fits its content reads as intentional where a
+   stretched one with dead space below the list reads as broken. */
 #screen-home.signed-in .leaderboard-panel {
-  min-height: 0;
+  align-self: start;
+  min-height: 300px;
   overflow: hidden;
 }
 
 #screen-home.signed-in .lb-list {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
-  max-height: none;
+  max-height: min(52vh, 480px);
+  overflow-y: auto;
 }
 
 .auth-actions {
@@ -760,6 +765,28 @@ input[type="checkbox"] {
   margin-top: 12px;
 }
 
+/* One card, two groups: Friends is always shown, Family nests below it with
+   its own label — distinct enough to tell apart, unified enough to feel like
+   one "People" section instead of two panels stapled together. */
+.people-group-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--accent-2);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+}
+
+.people-divider {
+  height: 1px;
+  margin: 16px 0 14px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+}
+
 .friends-list {
   display: flex;
   flex-direction: column;
@@ -865,19 +892,23 @@ input[type="checkbox"] {
   letter-spacing: 0.06em;
 }
 
+/* Most players never set up a family — a single row, not a paragraph card,
+   so the common case doesn't compete with Friends for space. */
 .family-empty {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 10px;
+  padding: 10px 12px;
   border: 1px dashed rgba(255, 255, 255, 0.14);
-  border-radius: 14px;
+  border-radius: 12px;
 }
 
-.family-empty p {
+.family-empty-copy {
   color: var(--text-dim);
-  font-size: 0.82rem;
-  line-height: 1.5;
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 
 .family-invite-picker {
@@ -1088,7 +1119,8 @@ input[type="checkbox"] {
   line-height: 1.45;
 }
 
-.offline-friends-trigger {
+.offline-friends-trigger,
+.lb-view-more {
   width: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -1106,7 +1138,8 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
-.offline-friends-trigger:hover {
+.offline-friends-trigger:hover,
+.lb-view-more:hover {
   border-color: rgba(240, 195, 122, 0.26);
   background: rgba(240, 195, 122, 0.07);
 }
@@ -1201,6 +1234,26 @@ input[type="checkbox"] {
 }
 
 .offline-friends-list .friend-row {
+  flex: 0 0 auto;
+}
+
+/* Full-leaderboard overlay reuses the offline-friends dialog chrome verbatim
+   (see the shared .offline-friends-* rules above); it only adds a view-toggle
+   row between the header and the list, so the shared dialog's two-row grid
+   needs a third explicit track. */
+.leaderboard-dialog {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.leaderboard-overlay-toggle {
+  margin: 14px 24px 0;
+}
+
+.lb-overlay-list {
+  padding-top: 12px;
+}
+
+.lb-overlay-list .lb-entry {
   flex: 0 0 auto;
 }
 
@@ -1328,6 +1381,10 @@ input[type="checkbox"] {
 
   .offline-friends-list {
     padding: 14px 18px max(18px, env(safe-area-inset-bottom));
+  }
+
+  .leaderboard-overlay-toggle {
+    margin: 12px 18px 0;
   }
 }
 
@@ -1540,6 +1597,34 @@ input[type="checkbox"] {
   text-align: right;
   color: var(--accent-2);
   font-weight: 800;
+}
+
+/* Your rank, when it doesn't fit in the top 10 — pulled out of the scrolling
+   list into its own small callout so it reads as "where you stand", not just
+   another row buried at the bottom. */
+.lb-your-rank {
+  margin-top: 10px;
+}
+
+.lb-your-rank-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-soft);
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.lb-your-rank .lb-entry {
+  cursor: default;
+}
+
+/* Shares .offline-friends-trigger's row-button look (defined above); only
+   the column count differs (no count badge, just label + arrow). */
+.lb-view-more {
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-top: 10px;
 }
 
 .profile-container {
@@ -1987,10 +2072,6 @@ input[type="checkbox"] {
 @keyframes profileHistoryLoading {
   0% { background-position: 100% 0; }
   100% { background-position: -100% 0; }
-}
-
-.lb-me-sep {
-  margin-top: 8px;
 }
 
 .lb-empty {

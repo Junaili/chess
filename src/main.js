@@ -148,6 +148,7 @@ const STATIC_ACTIONS = new Set([
   'agsCloseAchievements',
   'agsCloseDeleteAccount',
   'agsCloseOfflineFriends',
+  'agsCloseLeaderboardOverlay',
   'agsClosePrivacyChoices',
   'agsCompletePasswordReset',
   'agsConfirmDeleteAccount',
@@ -196,6 +197,7 @@ const STATIC_ACTIONS = new Set([
   'agsSpectatorNext',
   'agsSpectatorPrev',
   'agsStopWatching',
+  'agsSwitchLeaderboardOverlayView',
   'agsSwitchLeaderboardView',
   'agsToggleAddChild',
   'agsToggleAddFriend',
@@ -316,7 +318,6 @@ let reviewedLegalDocumentIds = new Set()
 let acceptedLegalDocuments = []
 let activeLegalReaderDocument = null
 let legalReaderTrigger = null
-let offlineFriendsTrigger = null
 let friendsState = { friends: [], incoming: [], outgoing: [] }
 let familyState = { group: null, members: [], incomingInvites: [] }
 let friendsRefreshTimer = null
@@ -2446,14 +2447,19 @@ async function initAuth() {
 
 async function refreshLeaderboard() {
   const needsRank = currentUserId && currentUserWins > 0
+  // Fetch one entry past the top-10 display cap, purely to detect whether a
+  // "View full leaderboard" link is worth showing — there's no separate
+  // total-count API.
   const [rankings, userRankData] = await Promise.all([
-    fetchTopRankings(currentLeaderboardView, 10),
+    fetchTopRankings(currentLeaderboardView, 11),
     needsRank ? fetchUserRank(currentUserId, currentLeaderboardView) : Promise.resolve(null),
   ])
   if (rankings === null) return  // hard failure — keep local leaderboard visible
-  try { await enrichDisplayNames(rankings) } catch (e) { console.warn('[lb] enrichDisplayNames:', e) }
-  const nameMap = resolveDisplayNames(rankings)
-  renderAGSLeaderboard(rankings, nameMap, userRankData)
+  const hasMore = rankings.length > 10
+  const top10 = rankings.slice(0, 10)
+  try { await enrichDisplayNames(top10) } catch (e) { console.warn('[lb] enrichDisplayNames:', e) }
+  const nameMap = resolveDisplayNames(top10)
+  renderAGSLeaderboard(top10, nameMap, userRankData, hasMore)
 }
 
 function switchLeaderboardView(view) {
@@ -2470,16 +2476,20 @@ function switchLeaderboardView(view) {
 }
 window.agsSwitchLeaderboardView = switchLeaderboardView
 
-function renderAGSLeaderboard(rankings, nameMap, userRankData) {
+function renderAGSLeaderboard(rankings, nameMap, userRankData, hasMore = false) {
   const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
   const listEl = document.getElementById('lb-list')
   const resetBtn = document.querySelector('.btn-lb-reset')
+  const rankCard = document.getElementById('lb-your-rank')
+  const viewMoreBtn = document.getElementById('lb-view-more')
   if (!listEl) return
 
   if (resetBtn) resetBtn.style.display = 'none'
 
   if (rankings.length === 0) {
     listEl.innerHTML = '<p class="lb-empty">No entries yet — win a game!</p>'
+    if (rankCard) { rankCard.style.display = 'none'; rankCard.innerHTML = '' }
+    if (viewMoreBtn) viewMoreBtn.style.display = 'none'
     return
   }
 
@@ -2497,17 +2507,27 @@ function renderAGSLeaderboard(rankings, nameMap, userRankData) {
       <span class="lb-wins">${entry.point}</span>
     </div>`
   }).join('')
-
-  if (!inTop && userRankData) {
-    const myName = document.getElementById('ags-signedin-name')?.textContent || 'You'
-    const safeMyName = esc(myName)
-    listEl.innerHTML += `<div class="lb-entry lb-you lb-me-sep">
-      <span class="lb-rank">#${userRankData.rank}</span>
-      <button class="lb-name lb-name-button" data-profile-user-id="${esc(currentUserId)}" data-profile-name="${safeMyName}">${safeMyName} (you)</button>
-      <span class="lb-wins">${userRankData.point}</span>
-    </div>`
-  }
   bindLeaderboardProfileButtons(listEl)
+
+  // Your own rank, when it doesn't fit in the top 10 — a small callout below
+  // the list instead of one more row buried at the bottom of it.
+  if (rankCard) {
+    if (!inTop && userRankData) {
+      const myName = document.getElementById('ags-signedin-name')?.textContent || 'You'
+      rankCard.style.display = ''
+      rankCard.innerHTML = `<span class="lb-your-rank-label">Your rank</span>
+        <div class="lb-entry lb-you">
+          <span class="lb-rank">#${userRankData.rank}</span>
+          <span class="lb-name">${esc(myName)} (you)</span>
+          <span class="lb-wins">${userRankData.point}</span>
+        </div>`
+    } else {
+      rankCard.style.display = 'none'
+      rankCard.innerHTML = ''
+    }
+  }
+
+  if (viewMoreBtn) viewMoreBtn.style.display = hasMore ? '' : 'none'
 }
 
 function bindLeaderboardProfileButtons(listEl) {
@@ -2517,6 +2537,86 @@ function bindLeaderboardProfileButtons(listEl) {
     })
   })
 }
+
+if (import.meta.env.DEV) {
+  window.agsRenderLeaderboardForTesting = renderAGSLeaderboard
+}
+
+// ── Full leaderboard overlay ────────────────────────────────────────────────
+// "View full leaderboard" opens this when the home panel's top-10 list
+// doesn't hold everyone. Independent fetch (its own page size, its own view
+// toggle) rather than sharing state with the home panel — simpler than
+// keeping two renderings of the same data in sync.
+
+let leaderboardOverlayView = 'rating'
+const LEADERBOARD_OVERLAY_PAGE_SIZE = 50
+const leaderboardOverlay = createOverlayController('leaderboard-overlay', 'leaderboard-overlay-close')
+
+function syncLeaderboardOverlayTabs() {
+  document.querySelectorAll('[data-lb-overlay-view]').forEach(btn => {
+    const selected = btn.dataset.lbOverlayView === leaderboardOverlayView
+    btn.classList.toggle('active', selected)
+    btn.setAttribute('aria-selected', String(selected))
+  })
+}
+
+async function loadFullLeaderboard() {
+  const listEl = document.getElementById('leaderboard-overlay-list')
+  if (!listEl) return
+  const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
+  listEl.innerHTML = '<p class="lb-empty">Loading…</p>'
+  const rankings = await fetchTopRankings(leaderboardOverlayView, LEADERBOARD_OVERLAY_PAGE_SIZE)
+  if (rankings === null) {
+    listEl.innerHTML = '<p class="lb-empty">Could not load the leaderboard. Try again in a moment.</p>'
+    return
+  }
+  if (!rankings.length) {
+    listEl.innerHTML = '<p class="lb-empty">No entries yet — win a game!</p>'
+    return
+  }
+  try { await enrichDisplayNames(rankings) } catch (e) { console.warn('[lb] enrichDisplayNames:', e) }
+  const nameMap = resolveDisplayNames(rankings)
+  listEl.innerHTML = rankings.map((entry, i) => {
+    const isYou = entry.userId === currentUserId
+    const name = isYou
+      ? (document.getElementById('ags-signedin-name')?.textContent || nameMap[entry.userId] || 'You')
+      : (nameMap[entry.userId] || entry.userId.slice(0, 8))
+    const safeName = esc(name)
+    return `<div class="lb-entry${isYou ? ' lb-you' : ''}">
+      <span class="lb-rank">${i + 1}</span>
+      <button class="lb-name lb-name-button" data-profile-user-id="${esc(entry.userId)}" data-profile-name="${safeName}">${safeName}${isYou ? ' (you)' : ''}</button>
+      <span class="lb-wins">${entry.point}</span>
+    </div>`
+  }).join('')
+  listEl.querySelectorAll('[data-profile-user-id]').forEach(button => {
+    button.addEventListener('click', () => {
+      closeLeaderboardOverlay()
+      openPublicProfile(button.dataset.profileUserId, button.dataset.profileName || '')
+    })
+  })
+}
+
+function openLeaderboardOverlay(trigger = null) {
+  leaderboardOverlayView = currentLeaderboardView
+  syncLeaderboardOverlayTabs()
+  leaderboardOverlay.open(trigger)
+  loadFullLeaderboard()
+}
+
+function closeLeaderboardOverlay() {
+  leaderboardOverlay.close()
+}
+
+function switchLeaderboardOverlayView(view) {
+  if (!LEADERBOARD_VIEWS[view] || view === leaderboardOverlayView) return
+  leaderboardOverlayView = view
+  syncLeaderboardOverlayTabs()
+  loadFullLeaderboard()
+}
+
+window.agsOpenLeaderboardOverlay = openLeaderboardOverlay
+window.agsCloseLeaderboardOverlay = closeLeaderboardOverlay
+window.agsSwitchLeaderboardOverlayView = switchLeaderboardOverlayView
 
 function showProfileTab(name = 'overview') {
   document.querySelectorAll('[data-profile-tab]').forEach(tab => {
@@ -3497,52 +3597,62 @@ function renderOfflineFriends(friends) {
   })
 }
 
-function openOfflineFriends(trigger = null) {
-  const overlay = document.getElementById('offline-friends-overlay')
-  const close = document.getElementById('offline-friends-close')
-  if (!overlay || !close) return
-  offlineFriendsTrigger = trigger || document.activeElement
-  overlay.hidden = false
-  document.body.classList.add('offline-friends-open')
-  close.focus()
+// Generic small-modal controller (open/close + ESC / backdrop-click / focus
+// trap) shared by every "overlay on top of the home screen" dialog — offline
+// friends and the full leaderboard both use this instead of duplicating the
+// same dismissal wiring.
+function createOverlayController(overlayId, closeButtonId) {
+  let trigger = null
+  function open(fromTrigger = null) {
+    const overlay = document.getElementById(overlayId)
+    const closeButton = document.getElementById(closeButtonId)
+    if (!overlay || !closeButton) return
+    trigger = fromTrigger || document.activeElement
+    overlay.hidden = false
+    document.body.classList.add('offline-friends-open')
+    closeButton.focus()
+  }
+  function close() {
+    const overlay = document.getElementById(overlayId)
+    if (!overlay || overlay.hidden) return
+    overlay.hidden = true
+    document.body.classList.remove('offline-friends-open')
+    const el = trigger
+    trigger = null
+    el?.focus?.()
+  }
+  function bindDismissal() {
+    const overlay = document.getElementById(overlayId)
+    overlay?.addEventListener('click', event => {
+      if (event.target === overlay) close()
+    })
+    document.addEventListener('keydown', event => {
+      if (overlay?.hidden !== false) return
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        close()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = [...overlay.querySelectorAll('button:not(:disabled)')]
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    })
+  }
+  return { open, close, bindDismissal }
 }
 
-function closeOfflineFriends() {
-  const overlay = document.getElementById('offline-friends-overlay')
-  if (!overlay || overlay.hidden) return
-  overlay.hidden = true
-  document.body.classList.remove('offline-friends-open')
-  const trigger = offlineFriendsTrigger
-  offlineFriendsTrigger = null
-  trigger?.focus?.()
-}
-
-function initializeOfflineFriendsOverlay() {
-  const overlay = document.getElementById('offline-friends-overlay')
-  overlay?.addEventListener('click', event => {
-    if (event.target === overlay) closeOfflineFriends()
-  })
-  document.addEventListener('keydown', event => {
-    if (overlay?.hidden !== false) return
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      closeOfflineFriends()
-      return
-    }
-    if (event.key !== 'Tab') return
-    const focusable = [...overlay.querySelectorAll('button:not(:disabled)')]
-    if (!focusable.length) return
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  })
-}
+const offlineFriendsOverlay = createOverlayController('offline-friends-overlay', 'offline-friends-close')
+function openOfflineFriends(trigger = null) { offlineFriendsOverlay.open(trigger) }
+function closeOfflineFriends() { offlineFriendsOverlay.close() }
 
 window.agsOpenOfflineFriends = openOfflineFriends
 window.agsCloseOfflineFriends = closeOfflineFriends
@@ -4327,5 +4437,9 @@ document.addEventListener('visibilitychange', () => {
 })
 
 initializeLegalReader()
-initializeOfflineFriendsOverlay()
+offlineFriendsOverlay.bindDismissal()
+leaderboardOverlay.bindDismissal()
+// Bound directly (not data-click) so the overlay controller reliably gets the
+// clicked element as its focus-return trigger across engines.
+document.getElementById('lb-view-more')?.addEventListener('click', event => openLeaderboardOverlay(event.currentTarget))
 initAuth()
