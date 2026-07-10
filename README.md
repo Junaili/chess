@@ -1,19 +1,29 @@
 # Ethan's Chess
 
-A fully-featured browser chess game built with vanilla HTML, CSS, and JavaScript — integrated with [AccelByte Gaming Services (AGS)](https://docs.accelbyte.io/) for authentication, player stats, leaderboards, matchmaking, match chat, friends, and live spectating.
+A browser chess game — vanilla HTML, CSS, and JavaScript, integrated with [AccelByte Gaming Services (AGS)](https://docs.accelbyte.io/) for auth, social, and live-ops — that has grown into a small family-friendly online chess platform: friends and matchmaking, a parent-managed family/COPPA mode, achievements, a self-reflection coaching journal, player safety tooling, and an iOS app via Capacitor. A companion Go service (`custom-extend-app/`) deployed on AGS Extend backs the server-side pieces (email, parent-authorized child accounts, Sign in with Apple account deletion, GDPR deletion, and a self-learning matchmaking bot).
 
 This project is intended to serve as a practical reference for integrating a browser-based game with AGS using the TypeScript Web SDK.
 
 ## Features
 
+**Play**
 - **Play vs Computer** — three difficulty levels powered by a minimax AI
 - **Invite Friend** — share a link and play peer-to-peer via WebRTC (PeerJS)
-- **Play vs Random** — AGS Matchmaking pairs you with a random online player
-- **Match Chat** — AGS Chat provides session/private topics, history, and server-side filtering
-- **Sign in with Google** — tracks wins/losses and shows a global leaderboard
-- **Video Chat** — built-in video/voice during online games (requires HTTPS)
-- **Live Spectating** — watch a friend's match in real time; replay moves after it ends
+- **Play vs Random** — AGS Matchmaking pairs you with a random online player, including a cold-start AI opponent ("Gus") backed by an AMS dedicated server
+- **Guest Play** — try a game against the computer without creating an account
 - **Move Hints** — on-demand hint, or post-move AI feedback
+- **Live Spectating** — watch a friend's match in real time; replay moves after it ends
+
+**Account & Social**
+- **Sign in with Google, Apple, or email/password** — plus account creation, password reset, and display-name moderation
+- **Friends & Presence** — friend requests, online status, and game invites over AGS Lobby
+- **Match Chat** — AGS Chat provides session/private topics, history, and server-side profanity filtering
+- **Video Chat** — built-in video/voice during online games (requires HTTPS), gated to friends
+- **Family accounts** — COPPA-compliant parent-managed child accounts: age gate, no stored email for children, restricted friending, analytics forced off
+- **Global Leaderboard** — ranked by wins, with Elo-style rating tracked per player
+- **Achievements** — unlocked via AGS Achievements as players hit milestones
+- **My Chess Journal** — post-game self-reflection, an AI coach report on weak phases/openings, and a puzzle practice loop generated from the player's own games
+- **Player Safety** — report/block, content moderation on chat and display names, and an in-app privacy center with opt-in analytics consent
 
 ---
 
@@ -21,24 +31,76 @@ This project is intended to serve as a practical reference for integrating a bro
 
 ```
 chess-ethan/
-├── index.html            # App shell and all UI screens
-├── style.css             # All styles
-├── app.js                # UI, game flow, online multiplayer, video chat
-├── chess-engine.js       # Chess logic (moves, rules, board state)
-├── ai-engine.js          # Minimax AI with piece-square tables
-├── vite.config.js        # Dev server (HTTPS + reverse proxy to AGS)
+├── index.html                # App shell and all UI screens
+├── style.css                 # All styles
+├── app.js                    # Chess UI, game flow, online multiplayer, video chat
+├── chess-engine.js           # Chess logic (moves, rules, board state)
+├── ai-engine.js               # Minimax AI with piece-square tables
+├── vite.config.js            # Dev server (HTTPS + reverse proxy to AGS)
+├── capacitor.config.json     # iOS app shell config
 ├── src/
-│   ├── ags-client.js     # AGS SDK initialisation
-│   ├── auth.js           # AGS IAM authorization code + PKCE
-│   ├── stats.js          # Win/loss stats + CloudSave match history
-│   ├── leaderboard.js    # Global leaderboard (LeaderboardDataV3Api)
-│   ├── matchmaking.js    # Random matchmaking (MatchTicketsApi + GameSessionApi)
-│   ├── chat.mjs          # AGS Chat JSON-RPC WebSocket transport
-│   ├── spectator.js      # Live match publishing/watching via CloudSave
-│   └── telemetry.js      # Match telemetry stored in CloudSave
-├── .env.example          # Environment variable template
-└── .env.production       # Production env vars (committed; no secrets)
+│   ├── main.js                # App bootstrap; wires every screen and AGS call together
+│   ├── ags-client.js          # AGS SDK initialisation
+│   │
+│   │   # Auth & session
+│   ├── auth.js                 # Google/Apple/email login, registration, password reset
+│   ├── auth-data.mjs           # Pure auth response parsing/mapping helpers
+│   ├── session.js              # Token refresh scheduling, keep-alive
+│   ├── native-auth-bounce.js   # iOS Capacitor OAuth redirect handling
+│   ├── login-queue.js          # Serializes concurrent login attempts
+│   │
+│   │   # Player data, stats, social
+│   ├── stats.js                 # Win/loss stats (Social Stats) + CloudSave match history
+│   ├── match-stats.mjs          # Elo rating math, per-match aggregation (pure functions)
+│   ├── match-resume.mjs         # Resuming an in-progress match after reload
+│   ├── leaderboard.js           # Global leaderboard (LeaderboardDataV3Api)
+│   ├── achievements.js          # AGS Achievements unlock + display
+│   ├── friends.js               # Friend requests, list, lookup (Lobby + IAM)
+│   ├── presence.js              # Online presence (Lobby WebSocket)
+│   ├── chat.mjs                 # AGS Chat JSON-RPC WebSocket transport
+│   ├── spectator.js             # Live match publishing/watching via CloudSave
+│   ├── matchmaking.js           # Random matchmaking (MatchTicketsApi + GameSessionApi)
+│   ├── gus.js / gus-data.mjs    # "Play with Gus" cold-start bot profile + challenge flow
+│   │
+│   │   # Family (COPPA)
+│   ├── family.js                # Parent-managed child accounts, family membership
+│   ├── family-safety.mjs        # Child-session detection and restriction rules (pure)
+│   ├── family-feedback.mjs      # Copy/messaging for family flows (pure)
+│   │
+│   │   # Safety & moderation
+│   ├── safety.js                 # Report/block a player (Lobby + Extend)
+│   ├── safety-payloads.mjs       # Report payload shaping (pure)
+│   ├── content-moderation.mjs    # Chat/display-name filtering client-side pass
+│   ├── friend-feedback.mjs       # Copy/messaging for friend flows (pure)
+│   │
+│   │   # Journal & coaching
+│   ├── journal.js                # Journal UI flow: reflection, coach report, puzzles
+│   ├── journal-data.mjs          # Grading/puzzle-generation logic (pure)
+│   │
+│   │   # Privacy, telemetry, legal
+│   ├── privacy-preferences.mjs   # Analytics consent storage (pure)
+│   ├── telemetry.js              # Gameplay/funnel events sent to AGS Game Telemetry
+│   ├── anon-id.js                # Device/session id + platform stamping for events
+│   ├── legal.js / legal-data.mjs / legal-markdown.mjs   # AGS Legal fetch, accept, render
+│   │
+│   │   # Account lifecycle & backend bridge
+│   ├── account-deletion.js            # Native account deletion (incl. Apple revocation)
+│   ├── account-deletion-contract.mjs  # Request/response shaping (pure)
+│   ├── extend-client.js               # Authenticated fetch wrapper for the Extend service
+│   └── notifications.js               # In-app toast/notification rendering
+│
+├── custom-extend-app/ethan-chess-service/   # Go backend on AGS Extend — see below
+├── peerjs-bot-spike/                        # Prototype: Node peer that speaks the P2P protocol
+├── legal-documents/                         # Source docs + manifest for AGS Legal provisioning
+├── scripts/                                  # Legal page generation, AGS Legal provisioning, iOS test runner
+├── tests/                                    # Unit (node:test) + Playwright e2e/live suites — see TESTING.md
+├── ios/                                      # Capacitor-generated native iOS project
+├── appstore-screenshots/                     # App Store listing assets
+├── .env.example                              # Environment variable template
+└── .env.production                           # Production env vars (committed; no secrets)
 ```
+
+`.mjs` files are pure logic (no AGS SDK calls, no DOM) with matching unit tests in `tests/unit/`; `.js` files wire that logic to AGS and the UI.
 
 ---
 
@@ -79,7 +141,7 @@ ipconfig | findstr "IPv4"     # Windows
 
 ### 4. Trust the self-signed certificate
 
-The dev server runs over HTTPS using the included `cert.pem` / `key.pem`. Your browser will warn on first load — click **Advanced → Proceed** to continue.
+The dev server runs over HTTPS using a local `cert.pem` / `key.pem` (generate your own self-signed pair; they're gitignored). Your browser will warn on first load — click **Advanced → Proceed** to continue.
 
 ### 5. Start the dev server
 
@@ -87,23 +149,43 @@ The dev server runs over HTTPS using the included `cert.pem` / `key.pem`. Your b
 npm run dev
 ```
 
+Friends, chat, family accounts, and other social features additionally require the Extend backend service running (see below) — the front end alone covers auth, stats, leaderboard, matchmaking, and CloudSave-backed features.
+
+---
+
+## Backend Service (AGS Extend)
+
+`custom-extend-app/ethan-chess-service/` is a Go service deployed to [AGS Extend](https://docs.accelbyte.io/) that handles everything that needs a server-side client secret or admin-scoped IAM permission:
+
+- Email delivery (welcome, invites, password reset support)
+- Parent-authorized child account creation (family/COPPA)
+- Sign in with Apple token revocation on account deletion
+- GDPR/native account deletion
+- Referral-triggered achievement unlocks
+- A self-learning matchmaking bot ("Gus"), trained on a daily loop and served from an AMS dedicated server (`cmd/bot-ds`)
+
+See `custom-extend-app/ethan-chess-service/.env.example` for required configuration (an AGS server-side IAM client, Apple credentials, CORS/invite-host allowlists) and its `Makefile` for build/deploy targets. The frontend talks to it through `src/extend-client.js`.
+
 ---
 
 ## Integrating with AccelByte Gaming Services
 
-This section explains what AGS does in this game and how each service was integrated, so you can apply the same patterns to your own browser game.
+This section explains what AGS does in this game and how each service was integrated, so you can apply the same patterns to your own browser game. It covers the core client-side integration; family/COPPA, achievements, safety, and the Extend backend build on the same patterns and are covered at a higher level in [Features](#features) and [Backend Service](#backend-service-ags-extend) above.
 
 ### Overview of AGS services used
 
 | Service | AGS Module | What it does in this game |
 |---|---|---|
-| Authentication | IAM | Google Sign-In and session management |
-| Player Stats | Social Stats | Tracks wins and losses per player |
-| Match History | CloudSave | Stores per-player match records |
+| Authentication | IAM | Google, Apple, and email/password sign-in; guest play; parent-managed child accounts |
+| Player Stats | Social Stats | Tracks wins, losses, and rating per player |
+| Match History | CloudSave | Stores per-player match records and live spectating state |
 | Leaderboard | Leaderboard | Global win rankings |
-| Matchmaking | Matchmaking v2 | Queues players and pairs them |
+| Matchmaking | Matchmaking v2 | Queues players and pairs them, including the AMS-backed bot |
 | Match Chat | Chat | Session/private topics, history, filtering, and mute enforcement |
-| Friends & Presence | Lobby | Friend list and online status |
+| Friends & Presence | Lobby | Friend list, online status, and player report/block |
+| Achievements | Achievements | Milestone unlocks |
+| Legal | Legal | Versioned Privacy Policy / Terms / Community Standards acceptance |
+| Analytics | Game Telemetry | Gameplay and funnel event tracking, gated on opt-in consent |
 | Live Spectating | CloudSave | Publishes live board state for watchers |
 
 ---
@@ -138,7 +220,7 @@ Copy the **Client ID** — this goes into your `.env` as `VITE_ACCELBYTE_CLIENT_
 npm install @accelbyte/sdk @accelbyte/sdk-iam @accelbyte/sdk-social \
             @accelbyte/sdk-leaderboard @accelbyte/sdk-matchmaking \
             @accelbyte/sdk-session @accelbyte/sdk-cloudsave @accelbyte/sdk-lobby \
-            @accelbyte/sdk-chat
+            @accelbyte/sdk-chat @accelbyte/sdk-achievement @accelbyte/sdk-gametelemetry
 ```
 
 Each package maps to one AGS service. Only install the ones you use.
@@ -175,13 +257,15 @@ In **development**, Vite's dev server acts as a reverse proxy — `/iam`, `/clou
 ```js
 // vite.config.js (dev proxy excerpt)
 proxy: {
-  '/iam':         { target: agsTarget, changeOrigin: true },
-  '/cloudsave':   { target: agsTarget, changeOrigin: true },
-  '/social':      { target: agsTarget, changeOrigin: true },
-  '/leaderboard': { target: agsTarget, changeOrigin: true },
-  '/match2':      { target: agsTarget, changeOrigin: true },
-  '/session':     { target: agsTarget, changeOrigin: true },
-  '/lobby':       { target: agsTarget, changeOrigin: true, ws: true },
+  '/iam':            { target: agsTarget, changeOrigin: true },
+  '/cloudsave':      { target: agsTarget, changeOrigin: true },
+  '/social':         { target: agsTarget, changeOrigin: true },
+  '/leaderboard':    { target: agsTarget, changeOrigin: true },
+  '/match2':         { target: agsTarget, changeOrigin: true },
+  '/session':        { target: agsTarget, changeOrigin: true },
+  '/lobby':          { target: agsTarget, changeOrigin: true, ws: true },
+  '/achievement':    { target: agsTarget, changeOrigin: true },
+  '/game-telemetry': { target: agsTarget, changeOrigin: true },
 }
 ```
 
@@ -189,9 +273,11 @@ In **production**, the SDK calls AGS directly. AGS must have your domain in its 
 
 ---
 
-### Step 5 — Authentication (AGS IAM authorization code + PKCE)
+### Step 5 — Authentication (AGS IAM)
 
-**How it works:**
+The app supports Google (authorization code + PKCE), Apple, email/password, and guest play — all in `src/auth.js`. Google is the simplest to reason about and illustrates the pattern the others follow:
+
+**How Google sign-in works:**
 
 1. User clicks "Sign in with Google"
 2. The AGS SDK generates a PKCE verifier, challenge, and CSRF-bound state
@@ -222,6 +308,8 @@ PKCE is designed for public clients: the app proves possession of a one-time ver
 - Configure Google as an identity provider in **AGS Admin Portal → IAM**
 - Add the exact HTTPS redirect URI to the public IAM client
 - For iOS, keep the HTTPS redirect page and register `io.github.junaili.chess:/oauth2redirect` as the native return URL
+
+Email/password login and registration use `IamUserAuthorizationClient`'s password grant directly (`loginWithPassword`, `registerWithPassword` in `src/auth.js`); parent-managed child accounts go through the same registration call with a guardian's session and a `groupId` linking the child to the family (`registerChildAccount`).
 
 ---
 
@@ -397,6 +485,8 @@ const timer = setInterval(async () => {
 await MatchTicketsApi(sdk).deleteMatchTicket_ByTicketid(ticketId)
 ```
 
+The same pool also matches players against "Gus," a bot running on an AGS AMS dedicated server, when no human opponent is available within a short window — see `src/gus.js` and `custom-extend-app/ethan-chess-service/cmd/bot-ds`.
+
 ---
 
 ### Step 10 — Match Chat
@@ -431,10 +521,36 @@ The AGS Lobby service provides a WebSocket connection for real-time events. This
 - **Online presence** — knowing who is in-game vs. on the home screen
 - **Friend list** — fetching friends and managing requests
 - **Game invites** — sending and receiving match invitations between friends
+- **Report/block** — player safety actions (`src/safety.js`)
 
 The Lobby WebSocket connection is established on login. Friend data is fetched via REST; real-time notifications (friend requests, invitations, presence changes) arrive over the WebSocket.
 
 See `src/main.js` for the full implementation — search for `renderFriendsListOnlineFirst` and the lobby event handlers.
+
+---
+
+## iOS App
+
+The web app ships to iOS via [Capacitor](https://capacitorjs.com/), reusing the same codebase with a native shell:
+
+```bash
+npm run ios:build   # builds the web bundle and syncs it into ios/App
+```
+
+`src/native-auth-bounce.js` handles the OAuth redirect back into the native app (`io.github.junaili.chess:/oauth2redirect`), and `capacitor.config.json` configures the app id and native HTTP plugin. See `TESTING.md` for the iOS test target and `scripts/test-ios.sh`.
+
+---
+
+## Testing
+
+```bash
+npm run test:unit   # node:test — pure logic in src/*.mjs
+npm run test:e2e    # Playwright — offline/mocked AGS, chromium + webkit-ipad
+npm run test:live   # Playwright — live AGS namespace, requires .env.test (see .env.test.example)
+npm run test        # unit + e2e
+```
+
+See `TESTING.md` for the full breakdown of what each suite covers and the pre-commit gate.
 
 ---
 
@@ -526,9 +642,11 @@ Add `https://yourusername.github.io/your-repo/` to **AGS Admin Portal → IAM �
 
 ## Tech Stack
 
-- Vanilla JavaScript (no frameworks)
+- Vanilla JavaScript (no frameworks) on the frontend, Go on the backend (AGS Extend)
 - [Vite](https://vitejs.dev/) — dev server and build tool
+- [Capacitor](https://capacitorjs.com/) — iOS app shell
 - [PeerJS](https://peerjs.com/) — WebRTC peer-to-peer chess moves and video
-- [AccelByte Gaming Services SDK](https://docs.accelbyte.io/) — auth, stats, leaderboard, matchmaking, Chat, CloudSave, friends
+- [AccelByte Gaming Services SDK](https://docs.accelbyte.io/) — auth, stats, leaderboard, matchmaking, chat, CloudSave, friends, achievements, legal, game telemetry
+- [Playwright](https://playwright.dev/) + `node:test` — e2e and unit testing
 - Web Audio API — sound effects
 - WebRTC `getUserMedia` — video chat
