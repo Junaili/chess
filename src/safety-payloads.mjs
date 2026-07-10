@@ -52,6 +52,19 @@ export function buildUserReport({ userId, reason, comment = '' }) {
   }
 }
 
+// The Reporting service can return either ticketId or ticketID depending on
+// endpoint/version. Keep the user-facing receipt tied to AGS's ticket, rather
+// than creating a second application-owned report identifier.
+export function getReportTicketId(payload) {
+  const candidates = [
+    payload?.ticketId,
+    payload?.ticketID,
+    payload?.ticket?.id,
+    payload?.data?.ticketId,
+  ]
+  return candidates.map(value => String(value || '').trim()).find(Boolean) || ''
+}
+
 export function getSafetyError(error, fallback = 'The safety action could not be completed.') {
   const status = error?.response?.status
   const data = error?.response?.data

@@ -13,4 +13,4 @@ By using Ethan's Chess, you agree to these Terms of Use, the Privacy Policy, and
 
 These terms are governed by applicable law. Nothing here limits rights that cannot legally be waived.
 
-Questions can be submitted at https://github.com/junaili/chess/issues/new.
+Questions can be emailed to [jun@accelbyte.ai](mailto:jun@accelbyte.ai).

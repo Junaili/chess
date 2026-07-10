@@ -32,6 +32,7 @@ import { createAgsChatClient } from './chat.mjs'
 import {
   blockPlayer,
   fetchPlayerSafetyReasons,
+  getReportTicketId,
   getSafetyError,
   listBlockedPlayers,
   reportChatMessage,
@@ -2124,14 +2125,16 @@ async function initAuth() {
   }
   window.agsReportChatMessage = async input => {
     try {
-      return { ok: true, data: await reportChatMessage(input) }
+      const data = await reportChatMessage(input)
+      return { ok: true, data, ticketId: getReportTicketId(data) }
     } catch (error) {
       return { ok: false, error: getSafetyError(error, 'Could not report this message.') }
     }
   }
   window.agsReportPlayer = async input => {
     try {
-      return { ok: true, data: await reportPlayer(input) }
+      const data = await reportPlayer(input)
+      return { ok: true, data, ticketId: getReportTicketId(data) }
     } catch (error) {
       return { ok: false, error: getSafetyError(error, 'Could not report this player.') }
     }
