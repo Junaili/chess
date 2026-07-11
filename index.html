@@ -48,8 +48,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-C2jZj9BN.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-BqUpY_d0.css">
+  <script type="module" crossorigin src="/chess/assets/index-CfD7iwoo.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-DEzFYkli.css">
 </head>
 <body>
 
@@ -1061,6 +1061,12 @@
         <span class="matchmaking-wait-label">Time waiting</span>
         <span id="matchmaking-wait-time" class="matchmaking-wait-time" role="timer" aria-live="off">00:00</span>
       </div>
+
+      <!-- Random matchmaking can pair you with Gambit Gus if no human is
+           available — offer to meet him while you wait. Safe to navigate
+           away: the search keeps running and a match found while browsing
+           his profile forces the screen back here. -->
+      <button type="button" class="btn btn-secondary btn-learn-gus" id="btn-learn-about-gus" style="display:none" data-click="window.agsOpenGusProfile && window.agsOpenGusProfile()">♞ While you wait, meet Gambit Gus →</button>
 
       <!-- Shown to the host (inviter) -->
       <div id="invite-link-section" style="display:none">
