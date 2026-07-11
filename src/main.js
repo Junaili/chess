@@ -177,6 +177,7 @@ const STATIC_ACTIONS = new Set([
   'agsOpenLegalDocument',
   'agsOpenJournal',
   'agsOpenLogin',
+  'agsOpenMyProfile',
   'agsOpenOfflineFriends',
   'agsOpenPolicy',
   'agsOpenPrivacyChoices',
