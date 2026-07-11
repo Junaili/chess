@@ -48,8 +48,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-CfD7iwoo.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-DEzFYkli.css">
+  <script type="module" crossorigin src="/chess/assets/index-JRT4lV5K.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-CJN2mD4w.css">
 </head>
 <body>
 
@@ -1030,6 +1030,14 @@
               <button class="btn btn-primary btn-chat-send" id="btn-chat-send" data-click="sendChatMessage()" disabled>Send</button>
             </div>
             <p id="online-chat-message" class="online-chat-notice" aria-live="polite"></p>
+          </div>
+          <div class="match-chat-gate" id="match-chat-gate" role="status" hidden>
+            <span class="match-chat-gate-icon" aria-hidden="true">💬</span>
+            <div class="match-chat-gate-copy">
+              <strong id="match-chat-gate-title">Chat is for friends</strong>
+              <p id="match-chat-gate-message">Chat unlocks when you and your opponent are friends.</p>
+              <button type="button" class="btn-mini success" id="btn-match-chat-friend" style="display:none">Add opponent</button>
+            </div>
           </div>
           <p class="match-panel-empty" id="match-chat-unavailable">Chat is available in online games.</p>
         </div>

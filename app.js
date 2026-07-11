@@ -160,6 +160,9 @@ let chatMessages   = [];
 let chatTransportState = { state: 'idle', detail: '', topicId: '' };
 let pendingChatContext = null;
 let chatActivationKey = '';
+let matchChatFriendState = 'unknown';
+let matchChatFriendRequestSent = false;
+let matchChatFriendCheckToken = 0;
 let currentOpponent = null;
 let currentOpponentBlocked = false;
 let activeSafetyReport = null;
@@ -469,12 +472,16 @@ function startGame() {
   if (rsBtn) rsBtn.style.display = showVsComputerControls ? '' : 'none';
   document.getElementById('online-chat').style.display = isOnline ? 'flex' : 'none';
   document.getElementById('match-chat-unavailable').style.display = isOnline ? 'none' : '';
+  if (!isOnline) {
+    matchChatFriendState = 'unknown';
+    hideMatchChatGate();
+  }
   document.getElementById('match-chat-tab').style.display = isOnline ? '' : 'none';
   document.getElementById('btn-match-safety').style.display = isOnline ? '' : 'none';
   showMatchTab('moves');
   arrangePlayerStrips();
   updateChatAvailability();
-  if (isOnline) activateChatForCurrentMatch();
+  if (isOnline) refreshMatchChatFriendGate();
 
   showScreen('game');
   renderBoard();
@@ -1544,6 +1551,9 @@ function destroyPeer() {
   moveLog   = [];
   pendingChatContext = null;
   chatActivationKey = '';
+  matchChatFriendState = 'unknown';
+  matchChatFriendRequestSent = false;
+  matchChatFriendCheckToken += 1;
   if (typeof window.agsDeactivateChat === 'function') window.agsDeactivateChat();
   remotePeerId = null;
   setCurrentOpponent('', '');
@@ -1887,14 +1897,120 @@ function resetChatState() {
   showChatModerationMessage();
 }
 
+function isGusOpponent(opponent = currentOpponent) {
+  return !!opponent && typeof window.isGambitGusIdentity === 'function'
+    && window.isGambitGusIdentity(opponent.userId, opponent.name);
+}
+
+function renderMatchChatGate(state, opponent = currentOpponent) {
+  const gate = document.getElementById('match-chat-gate');
+  const title = document.getElementById('match-chat-gate-title');
+  const message = document.getElementById('match-chat-gate-message');
+  const addButton = document.getElementById('btn-match-chat-friend');
+  if (!gate || !title || !message || !addButton) return;
+
+  const name = opponent?.name || 'your opponent';
+  const copy = {
+    checking: ['Checking chat access', `Checking whether you and ${name} are friends…`],
+    waiting: ['Chat needs both players', 'Chat will be available once both player accounts are identified.'],
+    stranger: ['Chat is for friends', `Add ${name} as a friend to unlock chat after they accept.`],
+    requested: ['Friend request sent', `Chat will unlock when ${name} accepts your friend request.`],
+    gus: ['Gus is here to play', 'Chat is not available with Gambit Gus, and Gus cannot be added as a friend.'],
+    blocked: ['Chat is unavailable', 'Chat is hidden because this player is blocked.'],
+  }[state] || ['Chat unavailable', 'Chat is not available for this match.'];
+
+  title.textContent = copy[0];
+  message.textContent = copy[1];
+  const canRequest = state === 'stranger' && !!opponent?.userId && !currentOpponentBlocked;
+  addButton.style.display = canRequest ? '' : 'none';
+  addButton.disabled = state === 'requested';
+  addButton.textContent = state === 'requested' ? 'Request sent' : `Add ${name}`;
+  if (canRequest) {
+    addButton.onclick = () => window.agsRequestLastOpponent?.();
+  } else {
+    addButton.onclick = null;
+  }
+  gate.hidden = false;
+}
+
+function hideMatchChatGate() {
+  const gate = document.getElementById('match-chat-gate');
+  if (gate) gate.hidden = true;
+}
+
+async function refreshMatchChatFriendGate({ requestSent = false } = {}) {
+  if (gameMode !== 'online') return;
+  const opponent = currentOpponent;
+  const token = ++matchChatFriendCheckToken;
+  matchChatFriendRequestSent = requestSent || matchChatFriendRequestSent;
+
+  if (currentOpponentBlocked) {
+    matchChatFriendState = 'blocked';
+    renderMatchChatGate('blocked', opponent);
+    updateChatAvailability();
+    return;
+  }
+  if (isGusOpponent(opponent)) {
+    matchChatFriendState = 'gus';
+    renderMatchChatGate('gus', opponent);
+    chatTransportState = { state: 'unavailable', detail: 'Chat is not available with Gambit Gus.', topicId: '' };
+    window.agsDeactivateChat?.();
+    updateChatAvailability();
+    return;
+  }
+  if (!opponent?.userId) {
+    matchChatFriendState = 'waiting';
+    renderMatchChatGate('waiting', opponent);
+    updateChatAvailability();
+    return;
+  }
+  if (matchChatFriendRequestSent) {
+    matchChatFriendState = 'requested';
+    renderMatchChatGate('requested', opponent);
+    updateChatAvailability();
+    return;
+  }
+
+  matchChatFriendState = 'checking';
+  renderMatchChatGate('checking', opponent);
+  updateChatAvailability();
+  try {
+    const isFamily = window.agsIsFamilyMember?.(opponent.userId) === true;
+    const isFriend = isFamily || await window.agsIsFriendWith?.(opponent.userId);
+    if (token !== matchChatFriendCheckToken || opponent.userId !== currentOpponent?.userId) return;
+    if (!isFriend) {
+      matchChatFriendState = 'stranger';
+      renderMatchChatGate('stranger', opponent);
+      chatTransportState = { state: 'unavailable', detail: 'Chat is only available between friends.', topicId: '' };
+      window.agsDeactivateChat?.();
+      updateChatAvailability();
+      return;
+    }
+    matchChatFriendState = 'allowed';
+    hideMatchChatGate();
+    updateChatAvailability();
+    activateChatForCurrentMatch();
+  } catch {
+    if (token !== matchChatFriendCheckToken) return;
+    matchChatFriendState = 'stranger';
+    renderMatchChatGate('stranger', opponent);
+    chatTransportState = { state: 'unavailable', detail: 'Could not confirm friendship. Chat is unavailable for now.', topicId: '' };
+    updateChatAvailability();
+  }
+}
+
+window.agsRefreshMatchChatGate = refreshMatchChatFriendGate;
+
 function updateChatAvailability() {
   const statusEl = document.getElementById('online-chat-status');
   const inputEl = document.getElementById('online-chat-input');
   const sendBtn = document.getElementById('btn-chat-send');
   const composeEl = document.querySelector('#online-chat .online-chat-compose');
+  const chatEl = document.getElementById('online-chat');
   const isOnline = gameMode === 'online';
   const state = chatTransportState.state || 'idle';
-  const enabled = isOnline && state === 'ready' && !currentOpponentBlocked;
+  const friendGateBlocks = isOnline && matchChatFriendState !== 'allowed';
+  const enabled = isOnline && state === 'ready' && !currentOpponentBlocked && !friendGateBlocks;
   const labels = {
     idle: 'Unavailable',
     connecting: 'Connecting…',
@@ -1915,7 +2031,8 @@ function updateChatAvailability() {
   }
   if (inputEl) inputEl.disabled = !enabled;
   if (sendBtn) sendBtn.disabled = !enabled;
-  if (composeEl) composeEl.style.display = currentOpponentBlocked ? 'none' : 'flex';
+  if (chatEl) chatEl.style.display = isOnline && !friendGateBlocks ? 'flex' : 'none';
+  if (composeEl) composeEl.style.display = currentOpponentBlocked || friendGateBlocks ? 'none' : 'flex';
 }
 
 function renderChatMessages() {
@@ -2655,7 +2772,7 @@ function setupPeerConnection(conn, role) {
       window.agsSetOpponentRating?.(data.rating);
       const oppColor = playerColor === 'white' ? 'black' : 'white';
       setPlayerInfo(oppColor, opponentName, opponentId);
-      activateChatForCurrentMatch();
+      refreshMatchChatFriendGate();
       saveActiveMatch(); // host: opponent identity only becomes known here, after startGame() already ran
     } else if (data.type === 'move') {
       const move = normalizePeerMove(data);
