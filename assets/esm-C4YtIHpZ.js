@@ -1,0 +1,2 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/web-BSLoSF-e.js","assets/dist-Bf9zDzdJ.js"])))=>i.map(i=>d[i]);
+import{t as e}from"./index-CLCmtpSF.js";import{registerPlugin as t}from"./dist-Bf9zDzdJ.js";var n=t(`App`,{web:()=>e(()=>import(`./web-BSLoSF-e.js`).then(e=>new e.AppWeb),__vite__mapDeps([0,1]))});export{n as App};
