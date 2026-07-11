@@ -548,11 +548,28 @@ input[type="checkbox"] {
 
 /* Friends panel absorbs the leftover height in the left column and scrolls. */
 #screen-home.signed-in .friends-panel {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+/* A cut-off row at the bottom edge reads as broken, not "scroll for more" —
+   the thin scrollbar alone is easy to miss. Static fade, not JS-toggled: it
+   still looks intentional even when there's nothing below to scroll to. */
+#screen-home.signed-in .friends-panel::after {
+  content: "";
+  position: sticky;
+  display: block;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  margin-top: -28px;
+  background: linear-gradient(to bottom, transparent, var(--surface));
+  pointer-events: none;
 }
 
 #screen-home.signed-in .gus-panel {
@@ -4528,6 +4545,8 @@ input[type="checkbox"] {
 
 .modal-content {
   width: min(460px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
   border-radius: 28px;
   padding: 30px;
   text-align: center;
@@ -4784,7 +4803,12 @@ input[type="checkbox"] {
     padding: 18px;
     padding-top: max(18px, env(safe-area-inset-top));
     padding-bottom: max(18px, env(safe-area-inset-bottom));
-    align-items: flex-start;
+    /* "safe" centers short content (color-select, login, difficulty, …)
+       instead of pinning it to the top with an unbalanced void below, but
+       still falls back to top-aligned + scrollable for content taller than
+       the viewport (register, the signed-in dashboard) instead of clipping
+       it against the centering. */
+    align-items: safe center;
     overflow-y: auto;
   }
 
