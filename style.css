@@ -3017,6 +3017,85 @@ input[type="checkbox"] {
   font-size: 0.72rem;
 }
 
+/* Touch tablets have enough room for a compact consent card, but not for the
+   desktop banner without it sitting on top of the screen's last controls. */
+@media (pointer: coarse) and (min-width: 700px) {
+  body.privacy-choice-pending .privacy-center-button {
+    display: none;
+  }
+
+  body.privacy-choice-pending .screen.active:not(#screen-game) {
+    height: calc(100dvh - 148px);
+  }
+
+  .privacy-consent-banner {
+    left: auto;
+    right: max(12px, env(safe-area-inset-right));
+    width: min(350px, calc(100% - 24px));
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    transform: none;
+    border-radius: 18px;
+  }
+
+  .privacy-consent-banner p {
+    max-width: none;
+    margin-top: 4px;
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
+
+  .privacy-consent-actions {
+    flex-wrap: wrap;
+  }
+
+  .privacy-consent-actions .btn {
+    flex: 1 1 130px;
+    padding: 9px 10px;
+  }
+
+  .privacy-text-button {
+    flex: 1 1 100%;
+    padding: 4px;
+    text-align: center;
+  }
+}
+
+@media (pointer: coarse) and (min-width: 700px) and (orientation: landscape) {
+  body.privacy-choice-pending .screen.active:not(#screen-game) {
+    height: calc(100dvh - 112px);
+  }
+
+  .privacy-consent-banner {
+    width: min(620px, calc(100% - 24px));
+    align-items: center;
+    flex-direction: row;
+    gap: 16px;
+    padding: 12px 14px;
+  }
+
+  .privacy-consent-banner p {
+    max-width: 220px;
+    font-size: 0.68rem;
+  }
+
+  .privacy-consent-actions {
+    flex-wrap: nowrap;
+  }
+
+  .privacy-consent-actions .btn {
+    flex: 0 1 auto;
+    white-space: nowrap;
+  }
+
+  .privacy-text-button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
+
 .privacy-text-button {
   padding: 8px 4px;
   border: 0;
@@ -5200,6 +5279,35 @@ input[type="checkbox"] {
     overflow-y: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .color-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .difficulty-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .color-btn {
+    min-height: 178px;
+  }
+
+  .diff-btn {
+    min-height: 132px;
+    padding: 18px;
+  }
+}
+
+@media (pointer: coarse) and (min-width: 700px) and (orientation: portrait) {
+  .difficulty-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .difficulty-options .diff-btn:last-child {
+    grid-column: 1 / -1;
   }
 }
 

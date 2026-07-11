@@ -507,6 +507,7 @@ function renderPrivacyChoices() {
   const status = document.getElementById('privacy-choice-status')
   const banner = document.getElementById('privacy-consent-banner')
   const childSession = isProtectedChildSession()
+  document.body?.classList.toggle('privacy-choice-pending', !preferences.decided && !childSession)
   if (toggle) {
     toggle.checked = childSession ? false : preferences.analytics
     toggle.disabled = childSession
