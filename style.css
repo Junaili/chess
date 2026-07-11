@@ -3347,7 +3347,12 @@ input[type="checkbox"] {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* flex-start, not center: dynamic content (hint box, coach prompt) can push
+     total height past the container's budget. With overflow:hidden, centered
+     content clips symmetrically from both ends — cutting off the opponent
+     strip at the top. Packing from the top means any residual overflow only
+     ever clips the bottom, never the opponent info the player needs to see. */
+  justify-content: flex-start;
   gap: 8px;
   min-width: 0;
   min-height: 0;
@@ -4994,9 +4999,15 @@ input[type="checkbox"] {
 @media (pointer: coarse) and (min-width: 700px) {
   :root {
     --rail: clamp(260px, 27vw, 350px);
+    /* 248px budgets player strips/status bar/gaps assuming the CSS-minimum
+       8px top+bottom safe-area padding (see #screen-game below). Devices
+       whose real inset exceeds that minimum (e.g. a status bar taller than
+       8px) need the excess subtracted here too, or the board is computed
+       too large and .game-center's overflow:hidden clips the top and
+       bottom of the match screen to fit it. */
     --board-size: min(
       calc(100vw - var(--rail) - 72px),
-      calc(100dvh - 248px),
+      calc(100dvh - 232px - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))),
       820px
     );
   }

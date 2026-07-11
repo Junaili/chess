@@ -76,22 +76,27 @@ subscribeAccessTokenRefresh(accessToken => {
 })
 
 window.agsPrepareSessionChat = () => chatClient.prepareSessionChat()
-// Child sessions chat with family members only (COPPA: no open communication
-// with strangers). Peers whose identity can't be established count as
-// strangers. The rejection message surfaces through app.js's normal
-// chat-unavailable path; the match itself is unaffected.
-function childChatGuardError(otherUserId) {
-  if (!isProtectedChildSession()) return null
-  const isFamilyMember = !!otherUserId && familyState.members.some(m => m.userId === otherUserId)
-  return isFamilyMember ? null : new Error('Chat on this account works with family members only.')
+// Chat is limited to friends and family — it's a private channel, and casual
+// opponents (random matchmaking, the cold-start bot) are strangers by
+// default. Peers whose identity can't be established count as strangers.
+// The rejection message surfaces through app.js's normal chat-unavailable
+// path; the match itself is unaffected. (This also covers the stricter
+// COPPA rule for protected child sessions, since a child's friend list is
+// already restricted to family elsewhere in the app.)
+async function chatPeerGuardError(otherUserId) {
+  if (!otherUserId) return new Error('Chat requires both players to be signed in.')
+  const isFamilyMember = familyState.members.some(m => m.userId === otherUserId)
+  if (isFamilyMember) return null
+  const isFriend = await window.agsIsFriendWith(otherUserId)
+  return isFriend ? null : new Error('Chat is only available with friends and family.')
 }
-window.agsActivateSessionChat = (sessionId, opponentUserId) => {
-  const guardError = childChatGuardError(opponentUserId)
+window.agsActivateSessionChat = async (sessionId, opponentUserId) => {
+  const guardError = await chatPeerGuardError(opponentUserId)
   if (guardError) return Promise.reject(guardError)
   return chatClient.activateSessionChat(sessionId)
 }
-window.agsActivatePersonalChat = otherUserId => {
-  const guardError = childChatGuardError(otherUserId)
+window.agsActivatePersonalChat = async otherUserId => {
+  const guardError = await chatPeerGuardError(otherUserId)
   if (guardError) return Promise.reject(guardError)
   return chatClient.activatePersonalChat(otherUserId)
 }
