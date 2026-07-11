@@ -4364,6 +4364,12 @@ input[type="checkbox"] {
   background: rgba(240, 195, 122, 0.08);
 }
 
+.btn-learn-gus {
+  display: block;
+  margin: 4px auto 22px;
+  border-color: rgba(138, 95, 201, 0.35);
+}
+
 .matchmaking-wait-label {
   color: var(--text-dim);
   font-size: 0.78rem;

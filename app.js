@@ -2808,6 +2808,11 @@ function showWaitingScreen(role) {
   document.getElementById('waiting-sub').textContent = sub;
   document.getElementById('invite-link-section').style.display = 'none';
   document.getElementById('waiting-spinner').style.display = 'block';
+  // Only the random "Find a Chess Buddy" queue can actually pair you with
+  // Gus as a fallback — the direct Gus challenge already knows who you're
+  // playing, and friend invites/joins aren't matchmaking at all.
+  const learnGusBtn = document.getElementById('btn-learn-about-gus');
+  if (learnGusBtn) learnGusBtn.style.display = role === 'matchmaking' ? '' : 'none';
 }
 
 function pickWhiteUserId(memberUserIds = [], sessionId = '') {

@@ -461,6 +461,34 @@ test.describe('UI smoke (signed out)', () => {
     await expect(timer).toBeHidden();
   });
 
+  test('random matchmaking offers to meet Gus while waiting, and it opens his profile', async ({ page }) => {
+    await gotoApp(page);
+    await page.evaluate(() => {
+      window.agsStartMatchmaking = () => {};
+      window.agsCancelMatchmaking = () => {};
+      window.startRandomMatchmaking();
+    });
+
+    const learnGusBtn = page.locator('#btn-learn-about-gus');
+    await expect(learnGusBtn).toBeVisible();
+    await learnGusBtn.click();
+    await expect(page.locator('#screen-gus')).toBeVisible();
+  });
+
+  test('the meet-Gus link only appears for random matchmaking, not friend invites or a direct Gus challenge', async ({ page }) => {
+    await gotoApp(page);
+    const learnGusBtn = page.locator('#btn-learn-about-gus');
+
+    await page.evaluate(() => window.showWaitingScreen('host'));
+    await expect(learnGusBtn).toBeHidden();
+
+    await page.evaluate(() => window.showWaitingScreen('gus-matchmaking'));
+    await expect(learnGusBtn).toBeHidden();
+
+    await page.evaluate(() => window.showWaitingScreen('matchmaking'));
+    await expect(learnGusBtn).toBeVisible();
+  });
+
   test('leaderboard view toggle switches the active tab (All Time / This Week)', async ({ page }) => {
     await gotoApp(page);
     await page.evaluate(() => {
