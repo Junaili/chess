@@ -288,3 +288,66 @@ test.describe('Coach Mode (vs computer)', () => {
     await expect(page.locator('#coach-prompt')).toBeHidden();
   });
 });
+
+test.describe('Coach Gus journal narrative (Phase 4)', () => {
+  test("attaches Gus's note to a fresh entry when the coach endpoint answers", async ({ page }) => {
+    test.slow();
+    await gotoApp(page);
+    await stubCloudSave(page);
+    await page.route('**/coach/report*', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ available: true, coach: 'Gambit Gus', note: 'Nxf5 was a beauty — you saw the slip and pounced. Next stop: castling by move ten!' }),
+    }));
+    await openJournalTab(page);
+    await page.evaluate(history => window.agsRenderJournalForTesting('me', history, { isChildSession: false }), freshHistory());
+    await page.locator('#btn-journal-generate').click();
+
+    await expect(page.locator('.journal-entry.latest')).toBeVisible({ timeout: 45000 });
+    const gusNote = page.locator('.journal-coach-gus');
+    await expect(gusNote).toBeVisible({ timeout: 15000 });
+    await expect(gusNote).toContainText('Coach Gus:');
+    await expect(gusNote).toContainText('Nxf5 was a beauty');
+  });
+
+  test('degrades silently when the LLM is unconfigured ({"available":false})', async ({ page }) => {
+    test.slow();
+    await gotoApp(page);
+    await stubCloudSave(page);
+    await page.route('**/coach/report*', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ available: false }),
+    }));
+    await openJournalTab(page);
+    await page.evaluate(history => window.agsRenderJournalForTesting('me', history, { isChildSession: false }), freshHistory());
+    await page.locator('#btn-journal-generate').click();
+
+    const entry = page.locator('.journal-entry.latest');
+    await expect(entry).toBeVisible({ timeout: 45000 });
+    // The deterministic report is intact; no Gus note, no error surfaced.
+    await expect(entry.locator('.journal-coach-headline')).toHaveText(/./);
+    await page.waitForTimeout(500);
+    await expect(page.locator('.journal-coach-gus')).toHaveCount(0);
+    await expect(page.locator('#journal-status')).toHaveText('');
+  });
+
+  test('child sessions never call the coach endpoint', async ({ page }) => {
+    test.slow();
+    await gotoApp(page);
+    await stubCloudSave(page);
+    let coachCalls = 0;
+    await page.route('**/coach/report*', route => {
+      coachCalls++;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ available: true, note: 'should never appear' }) });
+    });
+    await openJournalTab(page);
+    await page.evaluate(history => window.agsRenderJournalForTesting('kid', history, { isChildSession: true }), freshHistory());
+    await page.locator('#btn-journal-generate').click();
+
+    await expect(page.locator('.journal-entry.latest')).toBeVisible({ timeout: 45000 });
+    await page.waitForTimeout(500);
+    expect(coachCalls).toBe(0);
+    await expect(page.locator('.journal-coach-gus')).toHaveCount(0);
+  });
+});

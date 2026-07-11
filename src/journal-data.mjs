@@ -423,6 +423,48 @@ export function buildCoachReport({ record, aggregate, keyMoments, goal, openingL
   }
 }
 
+// buildCoachReportRequest shapes an entry into the PII-free payload for the
+// Extend /coach/report endpoint (Coach Gus's optional narrative). By
+// construction it carries aggregates and SAN strings only — no display
+// names, no user ids, no reflections. The server re-validates everything,
+// but the privacy line is drawn here first: nothing identifying ever leaves
+// the client. (Child sessions never call the endpoint at all — see
+// journal.js.)
+export function buildCoachReportRequest(entry) {
+  const acc = entry.accuracy || {}
+  const round1 = cp => Math.round(Math.abs(cp || 0) / 10) / 10 // centipawns → pawns, 1dp
+  const verdict = entry.previousGoalVerdict
+  return {
+    window: entry.window || '24h',
+    record: {
+      wins: entry.record?.wins || 0,
+      losses: entry.record?.losses || 0,
+      draws: entry.record?.draws || 0,
+    },
+    accuracy: {
+      movesGraded: acc.movesGraded || 0,
+      strongRate: acc.strongRate || 0,
+      blunderCount: acc.blunderCount || 0,
+      weakestPhase: acc.weakestPhase || '',
+    },
+    bestMoments: (entry.keyMoments?.excellent || []).slice(0, 3).map(m => ({
+      kind: m.kind === 'punished' ? 'punished' : 'swing',
+      san: m.playedNotation || '',
+      gainPawns: round1(m.gain),
+    })),
+    mistakes: (entry.keyMoments?.mistakes || []).slice(0, 3).map(m => ({
+      san: m.playedNotation || '',
+      bestSan: m.bestNotation || '',
+      lossPawns: round1(m.loss),
+      phase: m.phase || '',
+    })),
+    goal: entry.goal?.label || '',
+    previousGoal: verdict?.goal
+      ? { label: verdict.goal.label || '', achieved: verdict.achieved ?? null, detail: verdict.detail || '' }
+      : null,
+  }
+}
+
 // ─── Entry + record shaping ──────────────────────────────────────────────────
 
 export function buildJournalEntry({

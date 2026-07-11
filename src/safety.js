@@ -1,4 +1,5 @@
 import { PlayerApi } from '@accelbyte/sdk-lobby'
+import { PublicReasonsApi, PublicReportsApi } from '@accelbyte/sdk-reporting'
 import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
 import {
@@ -17,6 +18,10 @@ function required(value, label) {
   const normalized = String(value || '').trim()
   if (!normalized) throw new Error(`${label} is required.`)
   return normalized
+}
+
+function requiresNativeReportingProxy() {
+  return !!window.Capacitor?.isNativePlatform?.()
 }
 
 async function readSafetyResponse(response, fallback) {
@@ -40,9 +45,18 @@ async function readSafetyResponse(response, fallback) {
 }
 
 export async function fetchPlayerSafetyReasons() {
-  const response = await extendFetch('/safety/reasons')
-  const data = await readSafetyResponse(response, 'Could not load report reasons.')
-  return (data?.data || [])
+  if (requiresNativeReportingProxy()) {
+    const response = await extendFetch('/safety/reasons')
+    const data = await readSafetyResponse(response, 'Could not load report reasons.')
+    return (data?.data || [])
+      .map(reason => ({
+        title: String(reason?.title || '').trim(),
+        description: String(reason?.description || '').trim(),
+      }))
+      .filter(reason => reason.title)
+  }
+  const response = await PublicReasonsApi(sdk).getReasons({ limit: 100, offset: 0 })
+  return (response?.data?.data || [])
     .map(reason => ({
       title: String(reason?.title || '').trim(),
       description: String(reason?.description || '').trim(),
@@ -52,22 +66,30 @@ export async function fetchPlayerSafetyReasons() {
 
 export async function reportChatMessage(input) {
   const payload = buildChatReport(input)
-  const response = await extendFetch('/safety/reports', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  return readSafetyResponse(response, 'Could not report this message.')
+  if (requiresNativeReportingProxy()) {
+    const response = await extendFetch('/safety/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    return readSafetyResponse(response, 'Could not report this message.')
+  }
+  const response = await PublicReportsApi(sdk).createReport(payload)
+  return response?.data || {}
 }
 
 export async function reportPlayer(input) {
   const payload = buildUserReport(input)
-  const response = await extendFetch('/safety/reports', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  return readSafetyResponse(response, 'Could not report this player.')
+  if (requiresNativeReportingProxy()) {
+    const response = await extendFetch('/safety/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    return readSafetyResponse(response, 'Could not report this player.')
+  }
+  const response = await PublicReportsApi(sdk).createReport(payload)
+  return response?.data || {}
 }
 
 export async function listBlockedPlayers() {

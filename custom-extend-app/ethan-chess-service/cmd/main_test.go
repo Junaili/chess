@@ -85,6 +85,21 @@ func TestCORSMiddlewareAllowsCredentialedBrowserRequests(t *testing.T) {
 	}
 }
 
+func TestParseAllowedOriginsKeepsNativeOriginWhenDeploymentOriginsConfigured(t *testing.T) {
+	t.Parallel()
+
+	origins := parseAllowedOrigins("https://preview.example")
+	for _, origin := range []string{
+		"https://preview.example",
+		"https://junaili.github.io",
+		"capacitor://localhost",
+	} {
+		if _, ok := origins[origin]; !ok {
+			t.Fatalf("expected %q to be allowed", origin)
+		}
+	}
+}
+
 func TestGenerateInternalGatewayToken(t *testing.T) {
 	t.Parallel()
 

@@ -11,6 +11,7 @@
 // never shared with the public match-history writer.
 import { PublicPlayerRecordApi } from '@accelbyte/sdk-cloudsave'
 import { sdk } from './ags-client.js'
+import { extendFetch } from './extend-client.js'
 import { unlockEventAchievement } from './achievements.js'
 import { sendEvent } from './telemetry.js'
 import { fetchMatchHistory } from './stats.js'
@@ -20,7 +21,7 @@ import {
   filterMatchesByWindow, describeWindow, summarizeGradedGame, selectKeyMoments,
   buildPuzzleDeck, deriveGoal, verifyGoal, aggregateSummaries,
   buildJournalEntry, normalizeJournalRecord, buildJournalRecordValue,
-  detectProcessBadges,
+  detectProcessBadges, buildCoachReportRequest,
 } from './journal-data.mjs'
 
 const JOURNAL_KEY = 'chess-journal'
@@ -197,6 +198,12 @@ async function generateJournal() {
     })
     setStatus('')
     renderEntries()
+
+    // Coach Gus's narrative — optional garnish on the deterministic report,
+    // fetched after the entry is already saved and rendered so it is never
+    // load-bearing. Child sessions skip it entirely: no child data to an
+    // LLM, ever.
+    if (!state.isChild) void requestGusNote(entry.id)
   } catch (error) {
     console.warn('[journal] generate:', error?.message || error)
     setStatus('Could not finish this entry — check your connection and try again.')
@@ -205,6 +212,32 @@ async function generateJournal() {
       state.generating = false
       setGenerating(false)
     }
+  }
+}
+
+// requestGusNote asks the Extend /coach/report endpoint for a short note in
+// Gambit Gus's voice and attaches it to the entry. Every failure mode —
+// endpoint not deployed, LLM unconfigured ({"available":false}), network
+// error, rate limit — degrades silently: the deterministic coach report is
+// the product, this is the garnish.
+async function requestGusNote(entryId) {
+  try {
+    const entry = state.record?.entries.find(e => e.id === entryId)
+    if (!entry || entry.coach?.gusNote) return
+    const res = await extendFetch('/coach/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildCoachReportRequest(entry)),
+    })
+    if (!res.ok) return
+    const data = await res.json()
+    if (!data?.available || typeof data.note !== 'string' || !data.note.trim()) return
+    entry.coach = { ...(entry.coach || {}), gusNote: data.note.trim().slice(0, 900) }
+    state.record = await saveJournalRecord(state.userId, state.record)
+    renderEntries()
+    sendEvent('journal_gus_note_added', {})
+  } catch (error) {
+    console.warn('[journal] coach note unavailable:', error?.message || error)
   }
 }
 
@@ -425,6 +458,7 @@ function renderEntry(entry, index) {
       ${entry.coach?.bestMomentText ? `<p class="journal-coach-best">🌟 ${esc(entry.coach.bestMomentText)}</p>` : ''}
       ${entry.coach?.lessonText ? `<p class="journal-coach-lesson">📖 ${esc(entry.coach.lessonText)}</p>` : ''}
       ${entry.coach?.openingLine ? `<p class="journal-coach-opening">${esc(entry.coach.openingLine)}</p>` : ''}
+      ${entry.coach?.gusNote ? `<p class="journal-coach-gus">♞ <strong>Coach Gus:</strong> “${esc(entry.coach.gusNote)}”</p>` : ''}
     </div>
     ${verdictHtml}
     ${entry.goal ? `<p class="journal-goal">🎯 <strong>Goal:</strong> ${esc(entry.goal.label)} <span>${esc(entry.goal.detail || '')}</span></p>` : ''}
