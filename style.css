@@ -6140,6 +6140,12 @@ input[type="checkbox"] {
     var(--surface);
 }
 
+/* Sits at the top of the leaderboard column now — .home-left's flex gap
+   isn't available here, so give it its own space before the heading. */
+#home-leaderboard-panel .gus-panel {
+  margin-bottom: 16px;
+}
+
 .gus-panel .friends-header {
   margin-bottom: 6px;
 }

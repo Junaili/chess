@@ -260,6 +260,8 @@
               <div id="ags-child-handoff" class="child-handoff" style="display:none" aria-live="polite"></div>
             </div>
           </section>
+        </div>
+        <div id="home-leaderboard-panel" class="leaderboard-panel">
           <!-- ── Gambit Gus card: the resident bot's home-screen presence.
                Revealed by src/gus.js once signed in and the Extend profile
                endpoint answers; stays hidden for guests / offline Extend. ── -->
@@ -276,8 +278,6 @@
               <button class="btn-mini" data-click="window.agsOpenGusProfile && window.agsOpenGusProfile()">Stats &amp; Journal</button>
             </div>
           </section>
-        </div>
-        <div id="home-leaderboard-panel" class="leaderboard-panel">
           <h3 class="lb-heading">Leaderboard</h3>
           <div class="lb-view-toggle" role="tablist" aria-label="Leaderboard time range">
             <button type="button" class="lb-view-btn active" data-lb-view="rating" data-click="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('rating')" role="tab" aria-selected="true">All Time</button>
