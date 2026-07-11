@@ -6757,3 +6757,16 @@ input[type="checkbox"] {
   display: flex;
   gap: 6px;
 }
+
+/* Coach Gus's optional narrative on a journal entry */
+.journal-coach-gus {
+  margin: 8px 0 0;
+  padding: 9px 12px;
+  border-left: 3px solid #8a5fc9;
+  border-radius: 0 12px 12px 0;
+  background: rgba(138, 95, 201, 0.1);
+  color: var(--text);
+  font-size: 0.86rem;
+  font-style: italic;
+  line-height: 1.55;
+}

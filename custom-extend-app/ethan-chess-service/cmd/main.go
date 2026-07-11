@@ -159,22 +159,19 @@ func main() {
 	mux.Handle(basePath+"/account/deletion",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(accountDeletion.deleteAccount))))
 
-	// Reporting does not expose browser CORS headers. Keep the player token so
-	// AGS records the authenticated player as the reporter, while this service
-	// provides the browser-facing CORS boundary.
+	// Reporting and Group now have browser CORS for the web app, but AGS still
+	// rejects Capacitor's capacitor://localhost origin. Keep these narrow
+	// player-token proxies for native iOS builds only.
 	safety := newSafetyProxyFromEnv()
 	mux.Handle(basePath+"/safety/reasons",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(safety.reasons))))
 	mux.Handle(basePath+"/safety/reports",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(safety.reports))))
 
-	// Family: the AGS Group service omits CORS headers on its actual API
-	// responses (only the preflight carries them), so the browser can't call
-	// Group directly from junaili.github.io. Whitelisted passthrough with the
-	// player token — Group still enforces guardian/child roles server-side.
 	family := newFamilyGroupProxyFromEnv()
 	mux.Handle(basePath+"/family/group/",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(family.handle))))
+
 	childAccounts := newChildAccountHandlerFromEnv()
 	mux.Handle(basePath+"/family/child-account",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(childAccounts.create))))
@@ -195,6 +192,13 @@ func main() {
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(gus.profile))))
 	mux.Handle(basePath+"/bot/challenge",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(gus.challenge))))
+
+	// "Coach Gus" journal narrative (journal Phase 4): an optional LLM note in
+	// Gus's voice layered on the client's deterministic coach report. Degrades
+	// to {"available":false} when the LLM is unconfigured or failing.
+	coach := newCoachReportHandler(botDir)
+	mux.Handle(basePath+"/coach/report",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(coach.report))))
 
 	if watcher != nil {
 		// Debug endpoint: GET {basePath}/debug/watcher?key=<BOT_TRIGGER_SECRET>
@@ -289,16 +293,14 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// parseAllowedOrigins splits a comma-separated ALLOWED_ORIGIN env var into a set.
-// Falls back to the GitHub Pages origin when the env var is empty.
+// parseAllowedOrigins merges optional deployment-specific origins with the
+// shipped web, local-development, and Capacitor origins. Keeping these defaults
+// additive prevents ALLOWED_ORIGIN from accidentally disabling the iOS app.
 func parseAllowedOrigins(raw string) map[string]struct{} {
 	defaults := []string{"https://junaili.github.io", "https://localhost:8808", "capacitor://localhost"}
 	set := make(map[string]struct{})
-	if raw == "" {
-		for _, o := range defaults {
-			set[o] = struct{}{}
-		}
-		return set
+	for _, o := range defaults {
+		set[o] = struct{}{}
 	}
 	for _, o := range strings.Split(raw, ",") {
 		o = strings.TrimSpace(o)

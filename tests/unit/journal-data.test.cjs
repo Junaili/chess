@@ -330,3 +330,48 @@ test('detectProcessBadges: clean game, castle crew, blunder buster', async () =>
   const none = detectProcessBadges({ gradedGames: [], matches: [], journalRecord: { entries: [] } })
   assert.deepEqual(none, [])
 })
+
+// ─── Coach Gus request payload (privacy-critical) ────────────────────────────
+
+test('buildCoachReportRequest carries SAN + aggregates and never any names or ids', async () => {
+  const { buildCoachReportRequest } = await journalPromise
+  const entry = {
+    id: 'journal-1',
+    window: '24h',
+    record: { wins: 1, losses: 1, draws: 0 },
+    accuracy: { movesGraded: 24, strongRate: 0.5, blunderCount: 2, weakestPhase: 'endgame' },
+    keyMoments: {
+      excellent: [{ kind: 'punished', matchId: 'g1', ply: 12, gain: 200, playedNotation: 'Nxf5', opponentName: 'Maya Realname' }],
+      mistakes: [{ kind: 'mistake', matchId: 'g2', ply: 20, loss: 780, playedNotation: 'Qxh7', bestNotation: 'Nc3', phase: 'middlegame', opponentName: 'Rex Realname' }],
+    },
+    goal: { kind: 'castle-early', label: 'Castle by move 10 in your next 3 games', detail: 'Safety first.' },
+    previousGoalVerdict: { goal: { label: 'Cut endgame mistakes' }, achieved: true, detail: '4 to 1' },
+    reflection: { didWell: 'my secret thoughts', tryNext: 'more secrets', chips: [] },
+    games: { g1: { opponentName: 'Maya Realname', moves: [] } },
+  }
+  const payload = buildCoachReportRequest(entry)
+
+  assert.equal(payload.window, '24h')
+  assert.deepEqual(payload.record, { wins: 1, losses: 1, draws: 0 })
+  assert.equal(payload.bestMoments[0].san, 'Nxf5')
+  assert.equal(payload.bestMoments[0].gainPawns, 2)
+  assert.equal(payload.mistakes[0].bestSan, 'Nc3')
+  assert.equal(payload.mistakes[0].lossPawns, 7.8)
+  assert.equal(payload.goal, 'Castle by move 10 in your next 3 games')
+  assert.equal(payload.previousGoal.achieved, true)
+
+  // The privacy line: nothing identifying, and no reflections, ever.
+  const serialized = JSON.stringify(payload)
+  assert.ok(!serialized.includes('Realname'), 'opponent names must never leave the client')
+  assert.ok(!serialized.includes('secret'), 'reflections must never leave the client')
+  assert.ok(!serialized.includes('journal-1'), 'entry ids are not needed server-side')
+})
+
+test('buildCoachReportRequest tolerates sparse entries', async () => {
+  const { buildCoachReportRequest } = await journalPromise
+  const payload = buildCoachReportRequest({ window: '7d', record: {}, accuracy: {}, keyMoments: {} })
+  assert.equal(payload.window, '7d')
+  assert.deepEqual(payload.bestMoments, [])
+  assert.deepEqual(payload.mistakes, [])
+  assert.equal(payload.previousGoal, null)
+})

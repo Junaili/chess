@@ -1,21 +1,10 @@
 import { sdk } from './ags-client.js'
 import { refreshSession } from './auth.js'
+import { withRefreshRetry } from './http-retry.mjs'
 
 const EXTEND_BASE = import.meta.env.VITE_EXTEND_EMAIL_URL || '/extend'
 
-// Runs doRequest(); if it returns HTTP 401 (the AGS access token has expired),
-// refreshes the session once and retries. Pure with respect to its injected
-// deps so the retry behaviour is unit-testable without the SDK or network.
-export async function withRefreshRetry(doRequest, refresh) {
-  let res = await doRequest()
-  if (res && res.status === 401) {
-    const refreshed = await refresh()
-    if (refreshed && refreshed.ok) {
-      res = await doRequest()
-    }
-  }
-  return res
-}
+export { withRefreshRetry }
 
 // fetch() against the Extend service that attaches the current AGS access token
 // and, on a 401, refreshes the session and retries once. The plain SDK calls
