@@ -2120,7 +2120,13 @@ async function initAuth() {
     const opponent = window.agsLastOpponent
     if (!opponent?.userId) return
     if (blockedPlayers.some(item => item.userId === opponent.userId)) return
-    await runFriendAction(() => requestFriend(opponent.userId), 'Friend request sent.')
+    if (isGambitGusIdentity(opponent.userId, opponent.name)) {
+      const message = document.getElementById('match-friend-message')
+      if (message) message.textContent = 'Gambit Gus cannot be added as a friend.'
+      return
+    }
+    const sent = await runFriendAction(() => requestFriend(opponent.userId, opponent.name), 'Friend request sent.')
+    if (sent) await window.agsRefreshMatchChatGate?.({ requestSent: true })
     await updatePostMatchFriendAction(opponent)
   }
   window.agsGetSafetyReasons = async () => {
@@ -2977,9 +2983,15 @@ async function requestProfileFriend(profile) {
   const addBtn = document.getElementById('profile-add-friend-btn')
   if (addBtn) addBtn.disabled = true
 
+  if (isGambitGusIdentity(profile?.userId, profile?.displayName)) {
+    if (statusEl) statusEl.textContent = 'Gambit Gus cannot be added as a friend.'
+    if (addBtn) addBtn.style.display = 'none'
+    return
+  }
+
   const result = profile.action === 'accept'
     ? await acceptFriend(profile.userId)
-    : await requestFriend(profile.userId)
+    : await requestFriend(profile.userId, profile.displayName)
 
   if (!result.ok) {
     if (statusEl) statusEl.textContent = result.error
@@ -3955,7 +3967,13 @@ function renderFamilyPanel(loggedIn) {
     const invites = familyState.group ? [] : familyState.incomingInvites
     invitesSection.style.display = invites.length ? '' : 'none'
     if (invitesCount) invitesCount.textContent = invites.length
-    invitesList.innerHTML = invites.map(invite => `<div class="friend-row">
+    // Said before Accept, not after: this account doesn't hold the child
+    // role yet, so isProtectedChildSession() can't gate a warning onto the
+    // post-accept state — the only honest place for it is right here.
+    const notice = invites.length
+      ? '<p class="family-invite-notice">Accepting turns on supervision for this account: analytics off, chat and friends limited to family.</p>'
+      : ''
+    invitesList.innerHTML = notice + invites.map(invite => `<div class="friend-row">
       <div class="friend-main"><span class="friend-name">${esc(invite.groupName)}</span></div>
       <div class="friend-actions">
         <button class="btn-mini success" data-action="accept-family" data-group-id="${esc(invite.groupId)}">Accept</button>
@@ -4015,10 +4033,17 @@ function renderFamilyInvitePicker() {
   const esc = window.escapeHtml || (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
   const memberIds = new Set(familyState.members.map(m => m.userId))
   const candidates = friendsState.friends.filter(friend => !memberIds.has(friend.userId))
-  picker.innerHTML = candidates.length
+  // This is for a child who already has their own account (an older kid, or
+  // one made before the family existed) — only guardian + child roles exist,
+  // so accepting supervises the account regardless of the friend's actual
+  // age. Said plainly here so a guardian never does this to an adult by
+  // mistake, and Accept/Decline (renderFamilyPanel) repeats it for the
+  // person on the receiving end.
+  const notice = '<p class="family-invite-notice">Only for a child\'s own account — accepting turns on supervision (analytics off, chat and friends limited to family), even for an adult account.</p>'
+  picker.innerHTML = notice + (candidates.length
     ? candidates.map(friend => friendRow(friend,
         `<button class="btn-mini success" data-action="family-invite" data-user-id="${esc(friend.userId)}">Invite</button>`)).join('')
-    : '<p class="friends-empty">All your friends are already in the family — add more friends first.</p>'
+    : '<p class="friends-empty">All your friends are already in the family — add more friends first.</p>')
   picker.querySelectorAll('button[data-action="family-invite"]').forEach(btn => {
     btn.addEventListener('click', () => window.agsInviteToFamily?.(btn.dataset.userId))
   })
@@ -4074,6 +4099,9 @@ window.agsIsFriendWith = async userId => {
   const status = await getFriendshipStatus(userId)
   return !!(status.ok && status.status === '3')
 }
+
+window.agsIsFamilyMember = userId => !!userId
+  && familyState.members.some(member => member.userId === userId)
 
 // Replay state — index of the move currently shown (-1 = live / not in replay)
 let spectatorReplayIndex = -1

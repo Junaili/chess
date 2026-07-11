@@ -128,8 +128,8 @@ export async function fetchFriendState() {
   }
 }
 
-export async function requestFriend(friendId) {
-  if (isGambitGusIdentity(friendId)) return gusFriendBlock()
+export async function requestFriend(friendId, displayName = '') {
+  if (isGambitGusIdentity(friendId, displayName)) return gusFriendBlock()
   try {
     await friendsApi().createFriendMeRequest({ friendId })
     return { ok: true }
@@ -230,7 +230,7 @@ export async function addFriendByEmail(email, myUserId, relationshipState = {}) 
       displayName: lookup.displayName,
     }
   }
-  const sent = await requestFriend(lookup.userId)
+  const sent = await requestFriend(lookup.userId, lookup.displayName)
   return {
     ...sent,
     found: true,

@@ -51,4 +51,15 @@ test.describe('Match chat friends-or-family-only gate', () => {
     });
     expect(rejected).toBe('Chat requires both players to be signed in.');
   });
+
+  test('never sends a friend request to Gambit Gus', async ({ page }) => {
+    const message = await page.evaluate(async () => {
+      window.agsGambitGusUserId = 'gus-bot-9';
+      window.agsGambitGusName = 'Gambit Gus';
+      window.agsLastOpponent = { userId: 'gus-bot-9', name: 'Gambit Gus' };
+      await window.agsRequestLastOpponent();
+      return document.querySelector('#match-friend-message')?.textContent || '';
+    });
+    expect(message).toBe('Gambit Gus cannot be added as a friend.');
+  });
 });
