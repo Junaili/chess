@@ -48,7 +48,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-JRT4lV5K.js"></script>
+  <script type="module" crossorigin src="/chess/assets/index-DRC1Il9P.js"></script>
   <link rel="stylesheet" crossorigin href="/chess/assets/index-CJN2mD4w.css">
 </head>
 <body>
@@ -671,6 +671,12 @@
           </svg>
           Sign in with Google
         </button>
+        <button id="invite-default-apple" class="btn btn-apple" style="display:none" data-click="window.agsLoginApple && window.agsLoginApple()">
+          <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0">
+            <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-3.038 1.5-.12-1.08.42-2.24 1.05-2.97.71-.84 1.99-1.46 3.16-1.61.02.13.005.27.005.4zM20.5 17.04c-.41.93-.62 1.34-1.15 2.16-.74 1.16-1.79 2.61-3.08 2.62-1.15.01-1.44-.75-3-.74-1.56.01-1.88.75-3.03.74-1.29-.01-2.28-1.31-3.02-2.47-2.07-3.24-2.29-7.04-1.01-9.06.91-1.43 2.34-2.27 3.69-2.27 1.37 0 2.23.75 3.36.75 1.1 0 1.77-.75 3.36-.75 1.2 0 2.47.65 3.38 1.78-2.97 1.63-2.49 5.87.12 7.04z"/>
+          </svg>
+          Sign in with Apple
+        </button>
         <div class="invite-password-row">
           <button class="btn btn-secondary invite-pw" data-click="window.agsOpenLogin && window.agsOpenLogin()">Log in with password</button>
           <button class="btn btn-secondary invite-forgot" data-click="window.agsOpenForgotPassword && window.agsOpenForgotPassword()">Forgot password?</button>
@@ -728,6 +734,7 @@
           <button class="btn btn-secondary" id="ags-login-forgot" data-click="window.agsOpenForgotPassword && window.agsOpenForgotPassword()">Forgot Password?</button>
         </div>
         <button class="auth-login-link" data-click="window.agsLogin && window.agsLogin()">Prefer Google? <strong>Continue with Google</strong></button>
+        <button id="login-apple-link" class="auth-login-link" style="display:none" data-click="window.agsLoginApple && window.agsLoginApple()">Prefer Apple? <strong>Continue with Apple</strong></button>
       </div>
       <button class="btn btn-back" data-click="showScreen('home')">← Back</button>
     </div>
