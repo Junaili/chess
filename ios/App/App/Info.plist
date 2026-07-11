@@ -12,6 +12,8 @@
 	<string>Ethan's Chess uses your camera for video chat with your opponent during a match.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ethan's Chess uses your microphone for voice and video chat with your opponent during a match.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Ethan's Chess uses a peer-to-peer connection to send moves and video directly to your opponent during a match.</string>
 	<key>CFBundleDisplayName</key>
         <string>Ethan's Chess</string>
 	<key>CFBundleExecutable</key>

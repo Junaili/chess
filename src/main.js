@@ -805,6 +805,10 @@ function showInviteScreen(inviterName, { live = false } = {}) {
   if (defaultActions) defaultActions.style.display = live ? 'none' : ''
   if (defaultDivider) defaultDivider.style.display = live ? 'none' : ''
   if (defaultSignin) defaultSignin.style.display = live ? 'none' : ''
+  if (defaultSignin) {
+    const defaultAppleBtn = document.getElementById('invite-default-apple')
+    if (defaultAppleBtn) defaultAppleBtn.style.display = (!live && window.Capacitor?.isNativePlatform?.()) ? '' : 'none'
+  }
   if (liveActions) {
     liveActions.style.display = live ? '' : 'none'
     const appleBtn = document.getElementById('invite-live-apple')
@@ -3159,6 +3163,8 @@ function updateAuthUI(loggedIn, name, userId) {
   const appleBtn = document.getElementById('ags-signin-apple')
   const isNative = !!window.Capacitor?.isNativePlatform?.()
   if (appleBtn) appleBtn.style.display = (!loggedIn && isNative) ? '' : 'none'
+  const loginAppleLink = document.getElementById('login-apple-link')
+  if (loginAppleLink) loginAppleLink.style.display = (!loggedIn && isNative) ? '' : 'none'
 
   if (loggedIn) {
     nameInput.style.display = 'none'
