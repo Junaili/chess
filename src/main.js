@@ -1304,6 +1304,15 @@ async function initAuth() {
   // events, so guest play (which never authenticates) still needs this to
   // fire game_started/game_completed/matchmaking_* events.
   window.agsSendEvent = (name, payload) => sendEvent(name, payload)
+  // One anchor event per browser session (DAU / session counts / retention).
+  // Queued pre-auth, so guest sessions that later sign in are captured too;
+  // guests who never authenticate can't deliver protected events at all.
+  try {
+    if (!sessionStorage.getItem('chess_session_evt')) {
+      sessionStorage.setItem('chess_session_evt', '1')
+      sendEvent('session_started', {})
+    }
+  } catch {}
   window.agsRefreshLeaderboard = refreshLeaderboard
   window.cacheDisplayName = cacheDisplayName
   setQueueUIHandler(renderLoginQueue)
@@ -1515,6 +1524,9 @@ async function initAuth() {
     const nameInput = document.getElementById('player-name-input')
     if (!options) return
 
+    // Only ever delivered if this visitor later signs in (protected events
+    // need auth) — which is exactly the guest→register conversion signal.
+    sendEvent('guest_mode_entered', {})
     options.hidden = false
     if (trigger) {
       trigger.style.display = 'none'
@@ -2009,6 +2021,7 @@ async function initAuth() {
   // Game-over nudge target: own profile, landed on the Journal tab.
   window.agsOpenJournal = async () => {
     if (!currentUserId) return
+    sendEvent('journal_nudge_clicked', {})
     await openPublicProfile(currentUserId, getDisplayName(currentProfile))
     showProfileTab('journal')
   }
@@ -2676,6 +2689,10 @@ window.agsCloseLeaderboardOverlay = closeLeaderboardOverlay
 window.agsSwitchLeaderboardOverlayView = switchLeaderboardOverlayView
 
 function showProfileTab(name = 'overview') {
+  sendEvent('profile_tab_viewed', {
+    tab: name,
+    own_profile: !!currentUserId && activeProfileUser?.userId === currentUserId,
+  })
   document.querySelectorAll('[data-profile-tab]').forEach(tab => {
     const selected = tab.dataset.profileTab === name
     tab.classList.toggle('active', selected)
@@ -4015,12 +4032,16 @@ function showFamilyOnlineNudge(member) {
   familyNudgeUserId = member.userId
   nameEl.textContent = `${member.displayName || 'A family member'} is online`
   banner.style.display = 'flex'
+  sendEvent('family_nudge_shown', {})
 }
 
 window.agsPlayFamilyNudge = () => {
   const banner = document.getElementById('family-online-notification')
   if (banner) banner.style.display = 'none'
-  if (familyNudgeUserId) window.agsInviteFamilyMember?.(familyNudgeUserId)
+  if (familyNudgeUserId) {
+    sendEvent('family_nudge_accepted', {})
+    window.agsInviteFamilyMember?.(familyNudgeUserId)
+  }
   familyNudgeUserId = null
 }
 
@@ -4143,6 +4164,7 @@ function setSpectatorReplayControls(visible) {
 function replayMatchData(match, prevScreen = 'profile', { startIndex = -1, returnTab = '' } = {}) {
   if (!match || !Array.isArray(match.moves) || !match.moves.length) return
 
+  sendEvent('replay_viewed', { source: returnTab || prevScreen, at_ply: startIndex >= 0 })
   spectatorPrevScreen = prevScreen
   spectatorReturnProfileTab = returnTab
   const lastIndex = match.moves.length - 1

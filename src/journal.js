@@ -229,7 +229,12 @@ async function requestGusNote(entryId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildCoachReportRequest(entry)),
     })
-    if (!res.ok) return
+    if (!res.ok) {
+      // 403 here is the Club paywall — count encounters so the gate's
+      // conversion impact is measurable before touching pricing.
+      if (res.status === 403) sendEvent('club_gate_hit', { feature: 'coach_report' })
+      return
+    }
     const data = await res.json()
     if (!data?.available || typeof data.note !== 'string' || !data.note.trim()) return
     entry.coach = { ...(entry.coach || {}), gusNote: data.note.trim().slice(0, 900) }
