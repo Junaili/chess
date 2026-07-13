@@ -3044,6 +3044,13 @@ input[type="checkbox"] {
   font-size: 0.72rem;
 }
 
+/* The first-visit consent card is fixed to the viewport. Reserve its footprint
+   on every non-game screen so it never covers a form, dashboard panel, or
+   navigation control. */
+body.privacy-choice-pending .screen.active:not(#screen-game) {
+  height: calc(100dvh - 112px);
+}
+
 /* Touch tablets have enough room for a compact consent card, but not for the
    desktop banner without it sitting on top of the screen's last controls. */
 @media (pointer: coarse) and (min-width: 700px) {
@@ -3052,7 +3059,7 @@ input[type="checkbox"] {
   }
 
   body.privacy-choice-pending .screen.active:not(#screen-game) {
-    height: calc(100dvh - 148px);
+    height: calc(100dvh - 196px);
   }
 
   .privacy-consent-banner {
@@ -5388,6 +5395,73 @@ input[type="checkbox"] {
   .diff-btn {
     min-height: 132px;
     padding: 18px;
+  }
+}
+
+/* Registration is the one form tall enough to push its Back control below a
+   short landscape viewport. Keep the touch targets generous while tightening
+   only the vertical rhythm needed for this high-value entry flow. */
+@media (min-width: 700px) and (max-width: 1300px) and (orientation: landscape) {
+  #screen-register.active {
+    align-items: flex-start;
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+
+  #screen-register .auth-panel {
+    padding: 18px 22px;
+  }
+
+  #screen-register .auth-panel h2 {
+    margin-bottom: 7px;
+    font-size: 2.25rem;
+  }
+
+  #screen-register .auth-subtitle {
+    margin-bottom: 14px;
+    font-size: 0.84rem;
+    line-height: 1.35;
+  }
+
+  #screen-register .auth-form {
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  #screen-register .auth-field {
+    gap: 4px;
+  }
+
+  #screen-register .auth-field > span,
+  #screen-register .auth-field > label {
+    font-size: 0.74rem;
+  }
+
+  #screen-register .name-input {
+    padding: 10px 13px;
+  }
+
+  #screen-register .auth-field > small {
+    font-size: 0.68rem;
+    line-height: 1.25;
+  }
+
+  #screen-register .legal-confirm-row {
+    gap: 10px;
+    margin-bottom: 6px;
+    padding: 10px 12px;
+    font-size: 0.72rem;
+    line-height: 1.3;
+  }
+
+  #screen-register .legal-confirm-row input {
+    width: 17px;
+    height: 17px;
+  }
+
+  #screen-register .auth-form-actions .btn,
+  #screen-register .btn-back {
+    padding: 9px 14px;
   }
 }
 

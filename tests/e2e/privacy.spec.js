@@ -22,6 +22,24 @@ test('player can decline and later enable optional analytics', async ({ page }) 
   await expect(page.locator('#privacy-choice-status')).toContainText('enabled')
 })
 
+test('first-visit consent stays below the signed-in dashboard', async ({ page }) => {
+  await gotoApp(page, { privacyChoice: null })
+  await page.evaluate(() => {
+    document.getElementById('screen-home').classList.add('signed-in')
+    for (const id of ['ags-account-entry', 'ags-auth-actions', 'ags-signin-btn', 'ags-guest-entry']) {
+      document.getElementById(id).style.display = 'none'
+    }
+    document.getElementById('ags-signedin-info').style.display = 'flex'
+    document.getElementById('ags-signedin-name').textContent = 'JunHotmail'
+  })
+  const geometry = await page.evaluate(() => {
+    const panel = document.querySelector('#screen-home .home-left')?.getBoundingClientRect()
+    const banner = document.querySelector('#privacy-consent-banner')?.getBoundingClientRect()
+    return { panelBottom: panel?.bottom || 0, bannerTop: banner?.top || 0 }
+  })
+  expect(geometry.panelBottom).toBeLessThanOrEqual(geometry.bannerTop + 1)
+})
+
 test('published legal page contains privacy, terms, community, and support', async ({ page }) => {
   await page.goto(`${APP_PATH}legal/index.html#privacy`)
   await expect(page.getByRole('heading', { name: 'Privacy Policy' })).toBeVisible()

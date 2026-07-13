@@ -58,6 +58,24 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#screen-home')).toBeVisible();
   });
 
+  test('registration keeps its Back control reachable on tablet and desktop', async ({ page }) => {
+    await gotoApp(page);
+    await page.getByRole('button', { name: 'Create Free Account' }).click();
+    await expect(page.locator('#screen-register')).toBeVisible();
+    const geometry = await page.evaluate(() => {
+      const screen = document.querySelector('#screen-register');
+      const back = document.querySelector('#screen-register .btn-back');
+      const rect = back?.getBoundingClientRect();
+      return {
+        scrollHeight: screen?.scrollHeight || 0,
+        clientHeight: screen?.clientHeight || 0,
+        backBottom: rect?.bottom || 0,
+      };
+    });
+    expect(geometry.backBottom).toBeLessThanOrEqual(geometry.clientHeight + 1);
+    expect(geometry.scrollHeight).toBeLessThanOrEqual(geometry.clientHeight + 1);
+  });
+
   test('every password field can be revealed and hidden without changing its value', async ({ page }) => {
     await gotoApp(page);
 
