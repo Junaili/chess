@@ -411,7 +411,11 @@ function startGame() {
     window.agsSetPresence('in-match');
   }
   if (typeof window.agsSendEvent === 'function') {
-    window.agsSendEvent('game_started', { mode: gameMode, color: playerColor });
+    window.agsSendEvent('game_started', {
+      mode: gameMode,
+      color: playerColor,
+      ...(gameMode === 'computer' ? { difficulty } : {}),
+    });
   }
   matchStartedAt = new Date();
   matchHistoryRecorded = false;
@@ -893,6 +897,7 @@ function showHint() {
   if (!game || !isPlayerTurn() || aiThinking || gameMode === 'online') return;
   const best = ai.getBestMove(game, 'medium');
   if (!best) return;
+  if (typeof window.agsSendEvent === 'function') window.agsSendEvent('hint_used', {});
   const cols = 'abcdefgh', rows = '87654321';
   const piece = game.board[best.fr][best.fc];
   document.getElementById('hint-text').textContent =
@@ -1431,11 +1436,13 @@ function requestRematch() {
   btn.disabled = true;
   setRematchMessage('Rematch request sent. Waiting for your opponent...', 'pending');
   peerConn.send({ type: 'rematch_request' });
+  if (typeof window.agsSendEvent === 'function') window.agsSendEvent('rematch_requested', {});
 }
 
 function acceptRematch() {
   if (currentOpponentBlocked) return;
   stopGameOverCountdown();
+  if (typeof window.agsSendEvent === 'function') window.agsSendEvent('rematch_accepted', {});
   document.getElementById('rematch-notification').style.display = 'none';
   setRematchMessage('Rematch accepted. Starting...', 'success');
   if (connRole === 'host') {
@@ -3140,6 +3147,7 @@ async function startVideoChat() {
     document.getElementById('video-chat-panel').style.display = 'flex';
     document.getElementById('btn-video-chat').textContent = '📵 End Call';
 
+    if (typeof window.agsSendEvent === 'function') window.agsSendEvent('video_call_started', {});
     mediaCall = peer.call(remotePeerId, localStream);
     mediaCall.on('stream', remoteStream => {
       document.getElementById('remote-video').srcObject = remoteStream;
@@ -3168,6 +3176,7 @@ async function acceptVideoCall() {
     document.getElementById('btn-video-chat').textContent = '📵 End Call';
 
     pendingCall.answer(localStream);
+    if (typeof window.agsSendEvent === 'function') window.agsSendEvent('video_call_accepted', {});
     mediaCall    = pendingCall;
     pendingCall  = null;
     mediaCall.on('stream', remoteStream => {
