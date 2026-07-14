@@ -144,6 +144,8 @@ window.setPlayerFromAGS = function(name) {
 
 let peer = null;
 let peerConn = null;
+let peerLifecycleGeneration = 0;
+let peerOpenTimer = null;
 let currentInviteLink = '';
 let connRole       = null;   // 'host' | 'joiner'
 let pingInterval   = null;
@@ -219,6 +221,24 @@ let mediaCall    = null;
 let pendingCall  = null;
 let audioEnabled = true;
 let camEnabled   = true;
+let remoteMediaStream = null;
+let videoCallState = 'idle';
+let videoCallDirection = '';
+let videoCallMonitor = null;
+let videoCallTimeout = null;
+let videoReconnectTimer = null;
+let pendingCallTimeout = null;
+let videoReconnectAttempts = 0;
+let videoCallGeneration = 0;
+let videoCallAttemptStartedAt = 0;
+let videoCallStartedAt = 0;
+let videoCallLastTelemetryAt = 0;
+let videoCallEnding = false;
+let callFacingMode = 'user';
+let selectedCallAudioDeviceId = '';
+let selectedCallVideoDeviceId = '';
+
+const VIDEO_CALL_DEVICE_PREFS_KEY = 'chess-video-call-devices-v1';
 
 // Video calls are friends-only (seeing/hearing a stranger from random
 // matchmaking is a child-safety issue). false until AGS confirms mutual
@@ -367,7 +387,7 @@ function selectPieceColor(hex) {
   if (gameMode === 'computer') {
     showScreen('difficulty');
   } else if (gameMode === 'online') {
-    createOnlineRoom();
+    void createOnlineRoom();
   }
 }
 
@@ -1543,7 +1563,90 @@ async function forfeitOnlineMatchAndGoHome() {
 
 // ─── PeerJS — Online Multiplayer ──────────────────────────────────────────────
 
+async function createGamePeer(id) {
+  if (window.chessVideoCall?.createPeer) return window.chessVideoCall.createPeer(id);
+  return id ? new Peer(id) : new Peer();
+}
+
+const PEER_OPEN_TIMEOUT_MS = 15000;
+const RETRYABLE_PEER_SIGNAL_ERRORS = new Set([
+  'network',
+  'socket-error',
+  'socket-closed',
+  'server-error',
+  'disconnected',
+]);
+
+function isRetryablePeerSignalError(error) {
+  return RETRYABLE_PEER_SIGNAL_ERRORS.has(String(error?.type || '').toLowerCase());
+}
+
+function normalizePeerTarget(value) {
+  const peerId = String(value || '').trim();
+  return /^[A-Za-z0-9_-]{1,128}$/.test(peerId) ? peerId : '';
+}
+
+function showPeerSetupFailure(message, generation = peerLifecycleGeneration) {
+  if (generation !== peerLifecycleGeneration) return;
+  const sub = document.getElementById('waiting-sub');
+  const spinner = document.getElementById('waiting-spinner');
+  if (sub) sub.textContent = message;
+  if (spinner) spinner.style.display = 'none';
+}
+
+function armPeerOpenTimeout(activePeer, generation, message) {
+  if (peerOpenTimer) clearTimeout(peerOpenTimer);
+  peerOpenTimer = setTimeout(() => {
+    if (generation !== peerLifecycleGeneration || peer !== activePeer || activePeer?.open) return;
+    peerOpenTimer = null;
+    showPeerSetupFailure(message, generation);
+    if (game && gameMode === 'online') {
+      showConnBanner(message, 'error');
+      handleConnectionLost();
+    }
+    try { activePeer.destroy(); } catch {}
+    peer = null;
+  }, PEER_OPEN_TIMEOUT_MS);
+}
+
+function clearPeerOpenTimeout() {
+  if (peerOpenTimer) { clearTimeout(peerOpenTimer); peerOpenTimer = null; }
+}
+
+function attachPeerLifecycle(activePeer, generation, reconnectFailureMessage) {
+  activePeer.on('disconnected', () => {
+    if (generation !== peerLifecycleGeneration || peer !== activePeer) return;
+    console.warn('PeerJS signaling disconnected; reconnecting.');
+    if (!game) {
+      const sub = document.getElementById('waiting-sub');
+      const spinner = document.getElementById('waiting-spinner');
+      if (sub) sub.textContent = 'Match service connection interrupted — reconnecting…';
+      if (spinner) spinner.style.display = 'block';
+      armPeerOpenTimeout(activePeer, generation, reconnectFailureMessage);
+    }
+    try {
+      activePeer.reconnect();
+    } catch (error) {
+      console.warn('PeerJS signaling reconnect failed:', error);
+      if (!game) showPeerSetupFailure(reconnectFailureMessage, generation);
+    }
+  });
+
+  activePeer.on('close', () => {
+    if (generation !== peerLifecycleGeneration || peer !== activePeer) return;
+    clearPeerOpenTimeout();
+    peer = null;
+    if (game && gameMode === 'online' && !peerConn?.open) {
+      handleConnectionLost();
+    } else if (!game) {
+      showPeerSetupFailure(reconnectFailureMessage, generation);
+    }
+  });
+}
+
 function destroyPeer() {
+  peerLifecycleGeneration += 1;
+  clearPeerOpenTimeout();
   clearInterval(matchClockTimer);
   matchClockTimer = null;
   endVideoChat();
@@ -1696,6 +1799,7 @@ window.agsDiscardActiveMatch = function() {
 // handles the rest, no new peer message protocol needed.
 async function attemptResume(record) {
   destroyPeer(); // clean slate — also clears any stale game/moveLog/connRole
+  const peerGeneration = peerLifecycleGeneration;
 
   gameMode = 'online';
   playerColor = record.myColor;
@@ -1753,26 +1857,73 @@ async function attemptResume(record) {
   // it from the same authoritative history in case I'm asked for it.
   moveLog = normalized.map(m => ({ type: 'move', ...m }));
 
-  peer = new Peer(iAmHost ? peerId : undefined);
+  let createdPeer;
+  try {
+    createdPeer = await createGamePeer(iAmHost ? peerId : undefined);
+  } catch (error) {
+    if (peerGeneration !== peerLifecycleGeneration) return;
+    console.warn('Could not recreate PeerJS connection:', error);
+    handleConnectionLost();
+    return;
+  }
+  if (peerGeneration !== peerLifecycleGeneration) {
+    try { createdPeer.destroy(); } catch {}
+    return;
+  }
+  peer = createdPeer;
   setupCallHandler();
+  attachPeerLifecycle(createdPeer, peerGeneration, 'Could not reconnect to the saved match. Check your connection and try again.');
+  armPeerOpenTimeout(createdPeer, peerGeneration, 'The match reconnect took too long. Check your connection; retrying…');
 
   if (iAmHost) {
-    peer.on('open', () => {
-      peer.on('connection', conn => {
-        if (peerConn) return;
-        peerConn = conn;
-        setupPeerConnection(conn, 'host');
-      });
+    // Register the data-connection listener once. PeerJS emits `open` again
+    // after a signaling reconnect, so nesting this inside `open` would stack
+    // duplicate handlers every time the signaling socket recovered.
+    createdPeer.on('connection', conn => {
+      if (peerGeneration !== peerLifecycleGeneration || peer !== createdPeer) {
+        try { conn.close(); } catch {}
+        return;
+      }
+      if (peerConn) {
+        try { conn.close(); } catch {}
+        return;
+      }
+      peerConn = conn;
+      setupPeerConnection(conn, 'host');
+    });
+    createdPeer.on('open', () => {
+      if (peerGeneration !== peerLifecycleGeneration || peer !== createdPeer) return;
+      clearPeerOpenTimeout();
     });
   } else {
-    peer.on('open', () => {
-      const conn = peer.connect(peerId, { reliable: true });
-      peerConn = conn;
-      setupPeerConnection(conn, 'joiner');
+    createdPeer.on('open', () => {
+      if (peerGeneration !== peerLifecycleGeneration || peer !== createdPeer) return;
+      clearPeerOpenTimeout();
+      if (peerConn) return;
+      try {
+        const conn = createdPeer.connect(peerId, { reliable: true });
+        peerConn = conn;
+        setupPeerConnection(conn, 'joiner');
+      } catch (error) {
+        console.warn('Could not reconnect to the saved match:', error);
+        handleConnectionLost();
+      }
     });
   }
 
-  peer.on('error', () => {
+  createdPeer.on('error', error => {
+    if (peerGeneration !== peerLifecycleGeneration || peer !== createdPeer) return;
+    if (isRetryablePeerSignalError(error)) {
+      // PeerJS emits `error: network` immediately before its recoverable
+      // `disconnected` event. attachPeerLifecycle owns that reconnect; treating
+      // this first event as a lost game would destroy the recovered Peer.
+      console.warn('Saved-match signaling interrupted; PeerJS is reconnecting:', error?.message || error);
+      if (!peerConn?.open) {
+        showConnBanner('Match service connection interrupted — reconnecting…', 'warning');
+      }
+      return;
+    }
+    clearPeerOpenTimeout();
     // Opponent isn't back yet (or the connect attempt otherwise failed) —
     // this re-enters the same disconnected state without resetting the
     // original 10-minute deadline (markMatchDisconnected only sets
@@ -1780,7 +1931,9 @@ async function attemptResume(record) {
     handleConnectionLost();
     const current = readActiveMatch();
     if (current && (window.agsIsResumable?.(current) ?? true)) {
-      setTimeout(() => attemptResume(current), 10_000);
+      setTimeout(() => {
+        if (peerGeneration === peerLifecycleGeneration) void attemptResume(current);
+      }, 10_000);
     } else if (current) {
       resolveExpiredMatch(current);
     }
@@ -2450,10 +2603,57 @@ function handleConnectionLost() {
 
 function setupCallHandler() {
   peer.on('call', call => {
-    if (pendingCall) { try { call.close(); } catch {} return; }
+    const rejectCall = () => { try { call.close(); } catch {} };
+    // A media call must come from the same PeerJS identity as the active game
+    // data connection. Friendship alone is not sufficient identity binding.
+    if (!remotePeerId || call.peer !== remotePeerId) {
+      rejectCall();
+      return;
+    }
+
+    if (mediaCall) {
+      // Deterministic glare handling when both players press Video Chat at the
+      // same time: the lexicographically smaller peer remains the caller.
+      if (videoCallDirection === 'outgoing' && localStream) {
+        const localPeerId = String(peer?.id || '');
+        if (localPeerId && localPeerId > String(call.peer || '')) {
+          const outgoingCall = mediaCall;
+          clearVideoCallTimers();
+          stopVideoCallMonitor();
+          mediaCall = call;
+          call.answer(localStream);
+          bindMediaCall(call, 'incoming');
+          setVideoCallState('connecting');
+          try { outgoingCall.close(); } catch {}
+          if (typeof window.agsSendEvent === 'function') {
+            window.agsSendEvent('video_call_glare_resolved', { role: 'answerer' });
+          }
+          return;
+        }
+      }
+      rejectCall();
+      return;
+    }
+    if (pendingCall || !['idle', 'ringing'].includes(videoCallState)) {
+      rejectCall();
+      return;
+    }
     const ring = () => {
       pendingCall = call;
+      setVideoCallState('ringing');
       document.getElementById('video-call-notification').style.display = 'flex';
+      call.on('close', () => {
+        if (pendingCall === call && !videoCallEnding) endVideoChat('remote-ended', true);
+      });
+      call.on('error', error => {
+        if (pendingCall !== call || videoCallEnding) return;
+        console.warn('[video-call] incoming call failed before answer:', error?.message || error);
+        endVideoChat('media-error', true);
+      });
+      if (pendingCallTimeout) clearTimeout(pendingCallTimeout);
+      pendingCallTimeout = setTimeout(() => {
+        if (pendingCall === call) declineVideoCall();
+      }, VIDEO_CALL_CONNECT_TIMEOUT_MS);
     };
     // Friends-only, enforced on the receiving side too: the caller's client
     // hides its button, but a tampered client (or a stale friendship) can
@@ -2467,7 +2667,8 @@ function setupCallHandler() {
     window.agsIsFriendWith(opponentId).then(isFriend => {
       // Re-check state after the await: another ring may have landed, or the
       // opponent may have changed while the status call was in flight.
-      if (!isFriend || pendingCall || opponentId !== currentOpponent?.userId) {
+      if (!isFriend || pendingCall || mediaCall || videoCallState !== 'idle' ||
+          opponentId !== currentOpponent?.userId || call.peer !== remotePeerId) {
         try { call.close(); } catch {}
         return;
       }
@@ -2477,19 +2678,37 @@ function setupCallHandler() {
   });
 }
 
-function createOnlineRoom(options = {}) {
+async function createOnlineRoom(options = {}) {
   destroyPeer();
+  const generation = peerLifecycleGeneration;
+  const friendInviteId = options.friendInvite
+    ? 'invite-' + (globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2))
+    : '';
   showWaitingScreen('host');
 
-  peer = new Peer();
+  let createdPeer;
+  try {
+    createdPeer = await createGamePeer();
+  } catch (error) {
+    console.warn('Could not create PeerJS room:', error);
+    showPeerSetupFailure('Could not create the match room. Check your connection and try again.', generation);
+    return false;
+  }
+  if (generation !== peerLifecycleGeneration) {
+    try { createdPeer.destroy(); } catch {}
+    return false;
+  }
+  peer = createdPeer;
   setupCallHandler();
+  attachPeerLifecycle(createdPeer, generation, 'Could not reconnect the match room. Check your connection and try again.');
+  armPeerOpenTimeout(createdPeer, generation, 'The match room took too long to connect. Check your connection and try again.');
 
-  peer.on('open', id => {
-    if (options.friendInvite) {
-      sendFriendMatchInvite(options.friendInvite, id);
-    }
+  createdPeer.on('open', id => {
+    if (generation !== peerLifecycleGeneration || peer !== createdPeer) return;
+    clearPeerOpenTimeout();
 
-    const showLink = base => {
+    const showLink = (base, { preserveStatus = false } = {}) => {
+      if (generation !== peerLifecycleGeneration || peer !== createdPeer) return;
       const inviteUrl = new URL(base, window.location.href);
       inviteUrl.search = '';
       inviteUrl.hash = '';
@@ -2502,9 +2721,11 @@ function createOnlineRoom(options = {}) {
       currentInviteLink = inviteUrl.toString();
       document.getElementById('invite-link-text').textContent = currentInviteLink;
       document.getElementById('invite-link-section').style.display = 'block';
-      document.getElementById('waiting-sub').textContent = options.friendInvite
-        ? `Invite sent to ${options.friendInvite.displayName || 'your friend'}. Waiting for them to accept…`
-        : 'Waiting for your friend to join…';
+      if (!preserveStatus) {
+        document.getElementById('waiting-sub').textContent = options.friendInvite
+          ? `Sending invite to ${options.friendInvite.displayName || 'your friend'}…`
+          : 'Waiting for your friend to join…';
+      }
       document.getElementById('waiting-spinner').style.display = 'block';
       const shareRowEl = document.getElementById('waiting-share-row');
       if (shareRowEl) {
@@ -2520,6 +2741,10 @@ function createOnlineRoom(options = {}) {
       ? (window.agsPublicAppURL || 'https://junaili.github.io/chess/')
       : window.location.href.split('?')[0];
     const isLocal = !native && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    showLink(base);
+    if (options.friendInvite) {
+      void sendFriendMatchInvite(options.friendInvite, id, generation, friendInviteId);
+    }
 
     if (isLocal) {
       const ac = new AbortController();
@@ -2529,22 +2754,39 @@ function createOnlineRoom(options = {}) {
         .then(ip => {
           clearTimeout(ipTimeout);
           const portSuffix = window.location.port ? `:${window.location.port}` : '';
-          showLink(`${window.location.protocol}//${ip.trim()}${portSuffix}${window.location.pathname}`);
+          showLink(`${window.location.protocol}//${ip.trim()}${portSuffix}${window.location.pathname}`, { preserveStatus: true });
         })
-        .catch(() => { clearTimeout(ipTimeout); showLink(base); });
-    } else {
-      showLink(base);
+        .catch(() => { clearTimeout(ipTimeout); });
     }
   });
 
-  peer.on('connection', conn => {
+  createdPeer.on('connection', conn => {
+    if (generation !== peerLifecycleGeneration || peer !== createdPeer) {
+      try { conn.close(); } catch {}
+      return;
+    }
     if (typeof conn.send !== 'function') return;
-    if (peerConn) return;   // already have a connection (pending or open) — reject duplicates
+    if (peerConn) {
+      // Already have a connection (pending or open) — explicitly close the
+      // duplicate so it cannot linger and emit stale events later.
+      try { conn.close(); } catch {}
+      return;
+    }
     peerConn = conn;
     setupPeerConnection(conn, 'host');
   });
 
-  peer.on('error', err => {
+  createdPeer.on('error', err => {
+    if (generation !== peerLifecycleGeneration || peer !== createdPeer) return;
+    if (isRetryablePeerSignalError(err)) {
+      console.warn('Match-room signaling interrupted; PeerJS is reconnecting:', err?.message || err);
+      const sub = document.getElementById('waiting-sub');
+      const spinner = document.getElementById('waiting-spinner');
+      if (sub) sub.textContent = 'Match service connection interrupted — reconnecting…';
+      if (spinner) spinner.style.display = 'block';
+      return;
+    }
+    clearPeerOpenTimeout();
     if (game && gameMode === 'online') {
       console.warn('Peer error during game:', err.type, err.message);
       handleConnectionLost();
@@ -2552,9 +2794,14 @@ function createOnlineRoom(options = {}) {
       console.warn('Connection error:', err.type, err.message);
       const sub = document.getElementById('waiting-sub');
       if (sub) sub.textContent = 'Connection error — ' + (err.message || 'Could not connect.');
-      setTimeout(() => { destroyPeer(); showScreen('home'); }, 2000);
+      setTimeout(() => {
+        if (generation !== peerLifecycleGeneration) return;
+        destroyPeer();
+        showScreen('home');
+      }, 2000);
     }
   });
+  return true;
 }
 
 function startFriendMatchInvite(friend) {
@@ -2639,23 +2886,61 @@ window.handleMatchDeclined = handleMatchDeclined;
 window.agsJoinPeer = hostPeerId => {
   if (!hostPeerId) return;
   gameMode = 'online';
-  joinOnlineRoom(hostPeerId);
+  void joinOnlineRoom(hostPeerId);
 };
 
-function joinOnlineRoom(hostPeerId) {
+async function joinOnlineRoom(hostPeerId) {
   destroyPeer();
+  const generation = peerLifecycleGeneration;
   showWaitingScreen('joiner');
+  hostPeerId = normalizePeerTarget(hostPeerId);
+  if (!hostPeerId) {
+    showPeerSetupFailure('This match invite is invalid. Ask your friend to send a new one.', generation);
+    return false;
+  }
 
-  peer = new Peer();
+  let createdPeer;
+  try {
+    createdPeer = await createGamePeer();
+  } catch (error) {
+    console.warn('Could not create PeerJS joiner:', error);
+    showPeerSetupFailure('Could not start the match connection. Check your connection and try again.', generation);
+    return false;
+  }
+  if (generation !== peerLifecycleGeneration) {
+    try { createdPeer.destroy(); } catch {}
+    return false;
+  }
+  peer = createdPeer;
   setupCallHandler();
+  attachPeerLifecycle(createdPeer, generation, 'Could not reconnect to the match service. Ask your friend for a new invite.');
+  armPeerOpenTimeout(createdPeer, generation, 'The match connection took too long to start. The invite may have expired.');
 
-  peer.on('open', () => {
-    const conn = peer.connect(hostPeerId, { reliable: true });
-    peerConn = conn;
-    setupPeerConnection(conn, 'joiner');
+  createdPeer.on('open', () => {
+    if (generation !== peerLifecycleGeneration || peer !== createdPeer) return;
+    clearPeerOpenTimeout();
+    if (peerConn) return;
+    try {
+      const conn = createdPeer.connect(hostPeerId, { reliable: true });
+      peerConn = conn;
+      setupPeerConnection(conn, 'joiner');
+    } catch (error) {
+      console.warn('Join connect failed:', error);
+      showPeerSetupFailure('Could not connect to your friend. The invite may have expired.', generation);
+    }
   });
 
-  peer.on('error', err => {
+  createdPeer.on('error', err => {
+    if (generation !== peerLifecycleGeneration || peer !== createdPeer) return;
+    if (isRetryablePeerSignalError(err)) {
+      console.warn('Join signaling interrupted; PeerJS is reconnecting:', err?.message || err);
+      const sub = document.getElementById('waiting-sub');
+      const spinner = document.getElementById('waiting-spinner');
+      if (sub) sub.textContent = 'Match service connection interrupted — reconnecting…';
+      if (spinner) spinner.style.display = 'block';
+      return;
+    }
+    clearPeerOpenTimeout();
     if (game && gameMode === 'online') {
       console.warn('Peer error during game:', err.type, err.message);
       handleConnectionLost();
@@ -2663,9 +2948,14 @@ function joinOnlineRoom(hostPeerId) {
       console.warn('Join error:', err.type, err.message);
       const sub = document.getElementById('waiting-sub');
       if (sub) sub.textContent = 'Could not connect — ' + (err.message || 'The link may have expired.');
-      setTimeout(() => { destroyPeer(); showScreen('home'); }, 2000);
+      setTimeout(() => {
+        if (generation !== peerLifecycleGeneration) return;
+        destroyPeer();
+        showScreen('home');
+      }, 2000);
     }
   });
+  return true;
 }
 
 const PEER_MESSAGE_MAX_BYTES = 128 * 1024;
@@ -3001,7 +3291,7 @@ function startQueueMatchmaking(opponentKind) {
   if (typeof window.agsPrepareSessionChat === 'function') window.agsPrepareSessionChat();
   if (typeof window.agsSendEvent === 'function') window.agsSendEvent('matchmaking_started', { opponent: opponentKind });
   startFn(
-    function onFound(match) {
+    async function onFound(match) {
       if (!matchmakingActive) return;
       const memberUserIds = Array.isArray(match) ? match : match?.memberUserIds;
       const sessionId = match?.sessionId || '';
@@ -3029,31 +3319,78 @@ function startQueueMatchmaking(opponentKind) {
       document.getElementById('waiting-sub').textContent = `Setting up the board — you are ${playerColor === 'white' ? 'White' : 'Black'}.`;
 
       destroyPeer();
+      const peerGeneration = peerLifecycleGeneration;
       pendingChatContext = sessionId
         ? { type: 'session', sessionId }
         : null;
-      peer = new Peer(isHost ? peerId : undefined);
+      let createdPeer;
+      try {
+        createdPeer = await createGamePeer(isHost ? peerId : undefined);
+      } catch (error) {
+        if (peerGeneration !== peerLifecycleGeneration) return;
+        console.warn('Could not create matchmaking PeerJS connection:', error);
+        showPeerSetupFailure('Could not start the match connection. Check your connection and try again.', peerGeneration);
+        return;
+      }
+      if (peerGeneration !== peerLifecycleGeneration) {
+        try { createdPeer.destroy(); } catch {}
+        return;
+      }
+      peer = createdPeer;
       setupCallHandler();
+      attachPeerLifecycle(createdPeer, peerGeneration, 'Could not reconnect to the matched opponent. Please try again.');
+      armPeerOpenTimeout(createdPeer, peerGeneration, 'The match connection took too long to start. Check your connection and try again.');
 
       if (isHost) {
-        peer.on('open', () => {
-          peer.on('connection', conn => {
-            if (peerConn) return;
-            peerConn = conn;
-            setupPeerConnection(conn, 'host');
-          });
+        // Signaling reconnects can emit `open` more than once. Keep the
+        // connection listener outside it so one opponent creates one game.
+        createdPeer.on('connection', conn => {
+          if (peerGeneration !== peerLifecycleGeneration || peer !== createdPeer) {
+            try { conn.close(); } catch {}
+            return;
+          }
+          if (peerConn) {
+            try { conn.close(); } catch {}
+            return;
+          }
+          peerConn = conn;
+          setupPeerConnection(conn, 'host');
+        });
+        createdPeer.on('open', () => {
+          if (peerGeneration !== peerLifecycleGeneration || peer !== createdPeer) return;
+          clearPeerOpenTimeout();
         });
       } else {
-        peer.on('open', () => {
+        createdPeer.on('open', () => {
+          if (peerGeneration !== peerLifecycleGeneration || peer !== createdPeer) return;
+          clearPeerOpenTimeout();
+          if (peerConn) return;
           setTimeout(() => {
-            const conn = peer.connect(peerId, { reliable: true });
-            peerConn = conn;
-            setupPeerConnection(conn, 'joiner');
+            if (peerGeneration !== peerLifecycleGeneration || peer !== createdPeer) return;
+            if (peerConn) return;
+            try {
+              const conn = createdPeer.connect(peerId, { reliable: true });
+              peerConn = conn;
+              setupPeerConnection(conn, 'joiner');
+            } catch (error) {
+              console.warn('Could not connect to the matched opponent:', error);
+              showPeerSetupFailure('Could not connect to the matched opponent. Please try again.', peerGeneration);
+            }
           }, 1500);
         });
       }
 
-      peer.on('error', err => {
+      createdPeer.on('error', err => {
+        if (peerGeneration !== peerLifecycleGeneration || peer !== createdPeer) return;
+        if (isRetryablePeerSignalError(err)) {
+          console.warn('Matchmaking signaling interrupted; PeerJS is reconnecting:', err?.message || err);
+          const sub = document.getElementById('waiting-sub');
+          const spinner = document.getElementById('waiting-spinner');
+          if (sub) sub.textContent = 'Match service connection interrupted — reconnecting…';
+          if (spinner) spinner.style.display = 'block';
+          return;
+        }
+        clearPeerOpenTimeout();
         if (game && gameMode === 'online') {
           handleConnectionLost();
         } else {
@@ -3128,81 +3465,465 @@ function backFromContacts() {
 
 // ─── Video / Voice Chat ───────────────────────────────────────────────────────
 
+const VIDEO_CALL_CONNECT_TIMEOUT_MS = 30_000;
+const VIDEO_CALL_RECONNECT_GRACE_MS = 6_000;
+const VIDEO_CALL_RECOVERY_TIMEOUT_MS = 8_000;
+const VIDEO_CALL_MAX_ICE_RESTARTS = 2;
+const VIDEO_CALL_TELEMETRY_INTERVAL_MS = 15_000;
+
+function loadVideoCallDevicePreferences() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(VIDEO_CALL_DEVICE_PREFS_KEY) || '{}');
+    selectedCallAudioDeviceId = typeof saved.audioDeviceId === 'string' ? saved.audioDeviceId : '';
+    selectedCallVideoDeviceId = typeof saved.videoDeviceId === 'string' ? saved.videoDeviceId : '';
+    callFacingMode = saved.facingMode === 'environment' ? 'environment' : 'user';
+  } catch {
+    selectedCallAudioDeviceId = '';
+    selectedCallVideoDeviceId = '';
+    callFacingMode = 'user';
+  }
+}
+
+function saveVideoCallDevicePreferences() {
+  try {
+    localStorage.setItem(VIDEO_CALL_DEVICE_PREFS_KEY, JSON.stringify({
+      audioDeviceId: selectedCallAudioDeviceId,
+      videoDeviceId: selectedCallVideoDeviceId,
+      facingMode: callFacingMode,
+    }));
+  } catch {}
+}
+
+function getVideoCallRuntime() {
+  return window.chessVideoCall || null;
+}
+
+function setVideoCallState(state, message = '') {
+  videoCallState = state;
+  const panel = document.getElementById('video-chat-panel');
+  if (panel) panel.dataset.callState = state;
+  const status = document.getElementById('video-status');
+  if (status) {
+    const defaults = {
+      acquiring: 'Starting camera and microphone…',
+      calling: 'Calling…',
+      ringing: 'Incoming call…',
+      connecting: 'Connecting…',
+      reconnecting: 'Reconnecting…',
+      failed: 'Call connection failed',
+    };
+    status.textContent = message || defaults[state] || '';
+    status.style.display = state === 'connected' || state === 'idle' ? 'none' : 'flex';
+  }
+  const quality = document.getElementById('video-quality-indicator');
+  if (quality && state !== 'connected') {
+    quality.textContent = state === 'reconnecting' ? 'Reconnecting' : 'Connecting';
+    quality.className = 'video-quality-indicator connecting';
+  }
+}
+
+function showVideoCallPanel() {
+  const panel = document.getElementById('video-chat-panel');
+  if (panel) panel.style.display = 'flex';
+  const btn = document.getElementById('btn-video-chat');
+  if (btn) btn.textContent = '📵 End Call';
+}
+
+function clearVideoCallTimers() {
+  if (videoCallTimeout) clearTimeout(videoCallTimeout);
+  if (videoReconnectTimer) clearTimeout(videoReconnectTimer);
+  if (pendingCallTimeout) clearTimeout(pendingCallTimeout);
+  videoCallTimeout = null;
+  videoReconnectTimer = null;
+  pendingCallTimeout = null;
+}
+
+async function playCallVideo(video, offerRecovery = false) {
+  if (!video) return false;
+  try {
+    await video.play();
+    if (offerRecovery) {
+      const recovery = document.getElementById('btn-resume-remote-video');
+      if (recovery) recovery.hidden = true;
+    }
+    return true;
+  } catch (error) {
+    if (offerRecovery) {
+      const recovery = document.getElementById('btn-resume-remote-video');
+      if (recovery) recovery.hidden = false;
+      const detail = document.getElementById('video-network-detail');
+      if (detail) detail.textContent = 'Tap to start audio';
+    }
+    console.warn('[video-call] media playback was blocked:', error?.message || error);
+    return false;
+  }
+}
+
+async function resumeRemoteVideo() {
+  const remoteVideo = document.getElementById('remote-video');
+  const played = await playCallVideo(remoteVideo, true);
+  if (played && remoteMediaStream) setVideoCallState('connected');
+}
+
+function updateVideoCallQuality(sample) {
+  const quality = sample?.quality || 'connecting';
+  const indicator = document.getElementById('video-quality-indicator');
+  if (indicator) {
+    const labels = { good: 'Good', fair: 'Fair', poor: 'Poor', connecting: 'Connecting' };
+    indicator.textContent = labels[quality] || 'Connecting';
+    indicator.className = `video-quality-indicator ${quality}`;
+  }
+
+  const inboundVideo = sample?.inbound?.video || {};
+  const outboundVideo = sample?.outbound?.video || {};
+  const width = inboundVideo.width || outboundVideo.width;
+  const height = inboundVideo.height || outboundVideo.height;
+  const fps = inboundVideo.framesPerSecond || outboundVideo.framesPerSecond;
+  const rtt = sample?.network?.rttMs;
+  const details = [];
+  if (width && height) details.push(`${width}×${height}`);
+  if (fps) details.push(`${Math.round(fps)} fps`);
+  if (Number.isFinite(rtt)) details.push(`${Math.round(rtt)} ms`);
+  if (sample?.network?.relayed) details.push('Relay');
+  const detail = document.getElementById('video-network-detail');
+  if (detail) detail.textContent = details.join(' · ') || 'Measuring connection…';
+}
+
+function stopVideoCallMonitor() {
+  videoCallMonitor?.stop?.();
+  videoCallMonitor = null;
+}
+
+function startVideoCallMonitor(call) {
+  stopVideoCallMonitor();
+  const runtime = getVideoCallRuntime();
+  if (!runtime?.monitorCall) return;
+  videoCallMonitor = runtime.monitorCall(call, {
+    initialProfile: 'high',
+    onProfileChange(profile) {
+      if (call !== mediaCall) return;
+      const detail = document.getElementById('video-profile-detail');
+      if (detail) detail.textContent = `${profile[0].toUpperCase()}${profile.slice(1)} quality`;
+    },
+    onSample(sample) {
+      if (call !== mediaCall) return;
+      updateVideoCallQuality(sample);
+      const now = Date.now();
+      if (now - videoCallLastTelemetryAt < VIDEO_CALL_TELEMETRY_INTERVAL_MS) return;
+      videoCallLastTelemetryAt = now;
+      if (typeof window.agsSendEvent === 'function') {
+        window.agsSendEvent('video_call_quality', runtime.qualityTelemetryPayload(sample, sample.profile));
+      }
+    },
+  });
+}
+
+function describeVideoCallError(error) {
+  if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError') {
+    return 'Camera or microphone permission was denied. Allow access in your browser or device settings and try again.';
+  }
+  if (error?.name === 'NotFoundError' || error?.name === 'DevicesNotFoundError') {
+    return 'No working camera or microphone was found.';
+  }
+  if (error?.name === 'NotReadableError' || error?.name === 'TrackStartError') {
+    return 'The camera or microphone is already in use by another app.';
+  }
+  return error?.message || 'Could not start the camera and microphone.';
+}
+
+async function acquireLocalCallMedia(generation) {
+  const runtime = getVideoCallRuntime();
+  await runtime?.startNativeAudio?.();
+  const preferences = {
+    profile: 'high',
+    audioDeviceId: selectedCallAudioDeviceId,
+    videoDeviceId: selectedCallVideoDeviceId,
+    facingMode: callFacingMode,
+  };
+  let stream;
+  try {
+    stream = runtime?.acquireMedia
+      ? await runtime.acquireMedia(preferences)
+      : await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+  } catch (error) {
+    const staleDevicePreference = (selectedCallAudioDeviceId || selectedCallVideoDeviceId) &&
+      ['NotFoundError', 'OverconstrainedError', 'DevicesNotFoundError'].includes(error?.name);
+    if (!staleDevicePreference || !runtime?.acquireMedia) throw error;
+    selectedCallAudioDeviceId = '';
+    selectedCallVideoDeviceId = '';
+    saveVideoCallDevicePreferences();
+    stream = await runtime.acquireMedia({ profile: 'high', facingMode: callFacingMode });
+  }
+
+  if (generation !== videoCallGeneration) {
+    stream.getTracks().forEach(track => track.stop());
+    return null;
+  }
+  audioEnabled = true;
+  camEnabled = true;
+  localStream = stream;
+  const localVideo = document.getElementById('local-video');
+  if (localVideo) {
+    localVideo.srcObject = stream;
+    await playCallVideo(localVideo);
+  }
+  await runtime?.startNativeAudio?.();
+  await refreshVideoCallDevices();
+  return stream;
+}
+
+function attachRemoteCallStream(call, stream) {
+  if (call !== mediaCall) return;
+  remoteMediaStream = stream;
+  const remoteVideo = document.getElementById('remote-video');
+  if (remoteVideo) {
+    remoteVideo.srcObject = stream;
+    playCallVideo(remoteVideo, true).catch(() => {});
+  }
+  for (const track of stream.getTracks()) {
+    track.addEventListener?.('ended', () => {
+      if (call === mediaCall && stream.getTracks().every(candidate => candidate.readyState === 'ended')) {
+        endVideoChat('remote-media-ended', true);
+      }
+    });
+    track.addEventListener?.('mute', () => {
+      if (call !== mediaCall) return;
+      const detail = document.getElementById('video-network-detail');
+      if (detail && videoCallState === 'connected') detail.textContent = 'Remote media paused…';
+    });
+  }
+  if (videoCallTimeout) clearTimeout(videoCallTimeout);
+  videoCallTimeout = null;
+  const firstConnection = !videoCallStartedAt;
+  if (firstConnection) videoCallStartedAt = Date.now();
+  setVideoCallState('connected');
+  if (firstConnection && typeof window.agsSendEvent === 'function') {
+    window.agsSendEvent('video_call_connected', {
+      setup_time_ms: Math.max(0, Date.now() - videoCallAttemptStartedAt),
+      direction: videoCallDirection,
+    });
+  }
+}
+
+function armVideoCallConnectTimeout(call) {
+  if (videoCallTimeout) clearTimeout(videoCallTimeout);
+  videoCallTimeout = setTimeout(() => {
+    if (call === mediaCall && !remoteMediaStream) endVideoChat('connect-timeout', true);
+  }, VIDEO_CALL_CONNECT_TIMEOUT_MS);
+}
+
+function scheduleVideoIceRecovery(call, delay = VIDEO_CALL_RECONNECT_GRACE_MS) {
+  if (call !== mediaCall || videoReconnectTimer) return;
+  setVideoCallState('reconnecting');
+  videoReconnectTimer = setTimeout(() => {
+    videoReconnectTimer = null;
+    attemptVideoIceRecovery(call);
+  }, delay);
+}
+
+function attemptVideoIceRecovery(call) {
+  if (call !== mediaCall) return;
+  const pc = call.peerConnection;
+  const connected = pc?.connectionState === 'connected' || ['connected', 'completed'].includes(pc?.iceConnectionState);
+  if (connected) {
+    videoReconnectAttempts = 0;
+    if (remoteMediaStream) setVideoCallState('connected');
+    return;
+  }
+  if (!pc?.restartIce || videoReconnectAttempts >= VIDEO_CALL_MAX_ICE_RESTARTS) {
+    endVideoChat('connection-failed', true);
+    return;
+  }
+  videoReconnectAttempts += 1;
+  setVideoCallState('reconnecting', `Reconnecting… (${videoReconnectAttempts}/${VIDEO_CALL_MAX_ICE_RESTARTS})`);
+  try {
+    pc.restartIce();
+  } catch (error) {
+    console.warn('[video-call] ICE restart failed:', error?.message || error);
+  }
+  videoReconnectTimer = setTimeout(() => {
+    videoReconnectTimer = null;
+    attemptVideoIceRecovery(call);
+  }, VIDEO_CALL_RECOVERY_TIMEOUT_MS);
+}
+
+function handleVideoPeerConnectionState(call) {
+  if (call !== mediaCall) return;
+  const pc = call.peerConnection;
+  const state = pc?.connectionState || pc?.iceConnectionState || '';
+  const iceState = pc?.iceConnectionState || '';
+  if (state === 'connected' || ['connected', 'completed'].includes(iceState)) {
+    if (videoReconnectTimer) clearTimeout(videoReconnectTimer);
+    videoReconnectTimer = null;
+    videoReconnectAttempts = 0;
+    if (remoteMediaStream) setVideoCallState('connected');
+  } else if (state === 'disconnected' || iceState === 'disconnected') {
+    scheduleVideoIceRecovery(call);
+  } else if (state === 'failed' || iceState === 'failed') {
+    if (videoReconnectTimer) clearTimeout(videoReconnectTimer);
+    videoReconnectTimer = null;
+    scheduleVideoIceRecovery(call, 0);
+  } else if (state === 'closed' && !videoCallEnding) {
+    endVideoChat('remote-ended', true);
+  }
+}
+
+function bindMediaCall(call, direction) {
+  videoCallDirection = direction;
+  videoReconnectAttempts = 0;
+  remoteMediaStream = null;
+  call.on('stream', stream => attachRemoteCallStream(call, stream));
+  call.on('close', () => {
+    if (call === mediaCall && !videoCallEnding) endVideoChat('remote-ended', true);
+  });
+  call.on('error', error => {
+    if (call !== mediaCall || videoCallEnding) return;
+    console.error('[video-call] media connection error:', error);
+    if (typeof window.agsSendEvent === 'function') {
+      window.agsSendEvent('video_call_error', {
+        error_type: String(error?.type || error?.name || 'media-error').slice(0, 40),
+      });
+    }
+    endVideoChat('media-error', true);
+  });
+  const pc = call.peerConnection;
+  pc?.addEventListener?.('connectionstatechange', () => handleVideoPeerConnectionState(call));
+  pc?.addEventListener?.('iceconnectionstatechange', () => handleVideoPeerConnectionState(call));
+  armVideoCallConnectTimeout(call);
+  startVideoCallMonitor(call);
+}
+
 async function startVideoChat() {
-  if (mediaCall) { endVideoChat(); return; }
+  if (mediaCall || videoCallState !== 'idle') { endVideoChat(); return; }
   // Friends-only: the button is hidden for non-friends, but guard the entry
   // point too (console/data-click invocation must not reach a stranger).
   if (!videoChatAllowed) {
     alert('Video chat is only available between friends. Add your opponent as a friend after the game!');
     return;
   }
-  if (!navigator.mediaDevices?.getUserMedia) {
-    alert('Video chat requires HTTPS.\n\nRestart the server using start_server.command — it now serves HTTPS automatically.');
+  if (!navigator.mediaDevices?.getUserMedia || !peer || !remotePeerId) {
+    alert(!navigator.mediaDevices?.getUserMedia
+      ? 'Video chat requires camera and microphone access over a secure connection.'
+      : 'The game connection is not ready for a video call yet.');
     return;
   }
+  const generation = ++videoCallGeneration;
+  videoCallAttemptStartedAt = Date.now();
+  videoCallStartedAt = 0;
+  videoCallDirection = 'outgoing';
+  videoCallLastTelemetryAt = 0;
+  showVideoCallPanel();
+  setVideoCallState('acquiring');
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    document.getElementById('local-video').srcObject = localStream;
-    document.getElementById('video-status').style.display = 'flex';
-    document.getElementById('video-chat-panel').style.display = 'flex';
-    document.getElementById('btn-video-chat').textContent = '📵 End Call';
-
-    if (typeof window.agsSendEvent === 'function') window.agsSendEvent('video_call_started', {});
-    mediaCall = peer.call(remotePeerId, localStream);
-    mediaCall.on('stream', remoteStream => {
-      document.getElementById('remote-video').srcObject = remoteStream;
-      document.getElementById('video-status').style.display = 'none';
-    });
-    mediaCall.on('close', endVideoChat);
-    mediaCall.on('error', endVideoChat);
-  } catch (e) {
-    alert('Could not access camera/microphone:\n' + e.message);
-    endVideoChat();
+    const stream = await acquireLocalCallMedia(generation);
+    if (!stream || generation !== videoCallGeneration) return;
+    setVideoCallState('calling');
+    const infrastructure = getVideoCallRuntime()?.getInfrastructureStatus?.() || {};
+    if (typeof window.agsSendEvent === 'function') {
+      window.agsSendEvent('video_call_started', {
+        direction: 'outgoing',
+        managed_turn: !!infrastructure.managedTurnLoaded,
+      });
+    }
+    const call = peer.call(remotePeerId, stream);
+    if (!call) throw new Error('The peer connection could not create a media call.');
+    mediaCall = call;
+    bindMediaCall(call, 'outgoing');
+  } catch (error) {
+    if (generation !== videoCallGeneration) return;
+    const message = describeVideoCallError(error);
+    endVideoChat('media-access-error');
+    alert(message);
   }
 }
 
 async function acceptVideoCall() {
+  const call = pendingCall;
+  if (!call || mediaCall) return;
   document.getElementById('video-call-notification').style.display = 'none';
   if (!navigator.mediaDevices?.getUserMedia) {
-    alert('Video chat requires HTTPS.\n\nRestart the server using start_server.command — it now serves HTTPS automatically.');
+    alert('Video chat requires camera and microphone access over a secure connection.');
     declineVideoCall();
     return;
   }
+  if (pendingCallTimeout) clearTimeout(pendingCallTimeout);
+  pendingCallTimeout = null;
+  const generation = ++videoCallGeneration;
+  videoCallAttemptStartedAt = Date.now();
+  videoCallStartedAt = 0;
+  videoCallDirection = 'incoming';
+  videoCallLastTelemetryAt = 0;
+  showVideoCallPanel();
+  setVideoCallState('acquiring');
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    document.getElementById('local-video').srcObject = localStream;
-    document.getElementById('video-status').style.display = 'none';
-    document.getElementById('video-chat-panel').style.display = 'flex';
-    document.getElementById('btn-video-chat').textContent = '📵 End Call';
-
-    pendingCall.answer(localStream);
-    if (typeof window.agsSendEvent === 'function') window.agsSendEvent('video_call_accepted', {});
-    mediaCall    = pendingCall;
-    pendingCall  = null;
-    mediaCall.on('stream', remoteStream => {
-      document.getElementById('remote-video').srcObject = remoteStream;
-    });
-    mediaCall.on('close', endVideoChat);
-    mediaCall.on('error', endVideoChat);
-  } catch (e) {
-    alert('Could not access camera/microphone:\n' + e.message);
-    declineVideoCall();
+    const stream = await acquireLocalCallMedia(generation);
+    if (!stream || generation !== videoCallGeneration) return;
+    if (pendingCall !== call) {
+      endVideoChat('remote-ended', true);
+      return;
+    }
+    pendingCall = null;
+    mediaCall = call;
+    call.answer(stream);
+    setVideoCallState('connecting');
+    if (typeof window.agsSendEvent === 'function') {
+      window.agsSendEvent('video_call_accepted', { direction: 'incoming' });
+    }
+    bindMediaCall(call, 'incoming');
+  } catch (error) {
+    if (generation !== videoCallGeneration) return;
+    const message = describeVideoCallError(error);
+    endVideoChat('media-access-error');
+    alert(message);
   }
 }
 
 function declineVideoCall() {
   document.getElementById('video-call-notification').style.display = 'none';
-  if (pendingCall) { try { pendingCall.close(); } catch {} pendingCall = null; }
+  if (pendingCallTimeout) clearTimeout(pendingCallTimeout);
+  pendingCallTimeout = null;
+  const call = pendingCall;
+  pendingCall = null;
+  if (call) { try { call.close(); } catch {} }
+  if (!mediaCall) setVideoCallState('idle');
 }
 
-function endVideoChat() {
-  if (mediaCall)   { try { mediaCall.close();  } catch {} mediaCall  = null; }
+function endVideoChat(reason = 'local-ended', notify = false) {
+  if (videoCallEnding) return;
+  videoCallEnding = true;
+  videoCallGeneration += 1;
+  const activeCall = mediaCall;
+  const activePendingCall = pendingCall;
+  mediaCall = null;
+  pendingCall = null;
+  clearVideoCallTimers();
+  stopVideoCallMonitor();
+  if (activeCall) { try { activeCall.close(); } catch {} }
+  if (activePendingCall) { try { activePendingCall.close(); } catch {} }
   if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-  pendingCall  = null;
+  if (remoteMediaStream) { remoteMediaStream.getTracks().forEach(t => t.stop()); remoteMediaStream = null; }
+  getVideoCallRuntime()?.stopNativeAudio?.();
+  if (videoCallAttemptStartedAt && typeof window.agsSendEvent === 'function') {
+    window.agsSendEvent('video_call_ended', {
+      reason: String(reason || 'ended').slice(0, 40),
+      direction: videoCallDirection,
+      connected: !!videoCallStartedAt,
+      duration_ms: videoCallStartedAt ? Math.max(0, Date.now() - videoCallStartedAt) : 0,
+    });
+  }
   audioEnabled = true;
   camEnabled   = true;
+  videoReconnectAttempts = 0;
+  videoCallAttemptStartedAt = 0;
+  videoCallStartedAt = 0;
+  videoCallLastTelemetryAt = 0;
+  videoCallDirection = '';
+  setVideoCallState('idle');
   const panel = document.getElementById('video-chat-panel');
-  if (panel) panel.style.display = 'none';
+  if (panel) {
+    panel.style.display = 'none';
+    panel.classList.remove('expanded');
+  }
   const notif = document.getElementById('video-call-notification');
   if (notif) notif.style.display = 'none';
   const rv = document.getElementById('remote-video');
@@ -3215,6 +3936,32 @@ function endVideoChat() {
   if (btnCam) { btnCam.textContent = '📹'; btnCam.classList.remove('muted'); }
   const btnVC = document.getElementById('btn-video-chat');
   if (btnVC) btnVC.textContent = '📹 Video Chat';
+  const recovery = document.getElementById('btn-resume-remote-video');
+  if (recovery) recovery.hidden = true;
+  const settings = document.getElementById('video-device-settings');
+  if (settings) settings.hidden = true;
+  const expand = document.getElementById('btn-expand-video');
+  if (expand) expand.setAttribute('aria-pressed', 'false');
+  const quality = document.getElementById('video-quality-indicator');
+  if (quality) {
+    quality.textContent = 'Connecting';
+    quality.className = 'video-quality-indicator connecting';
+  }
+  const networkDetail = document.getElementById('video-network-detail');
+  if (networkDetail) networkDetail.textContent = '';
+  const profileDetail = document.getElementById('video-profile-detail');
+  if (profileDetail) profileDetail.textContent = 'High quality';
+  if (notify && typeof showConnBanner === 'function') {
+    const messages = {
+      'connect-timeout': 'Video call timed out before connecting.',
+      'connection-failed': 'Video call ended because the connection could not recover.',
+      'media-error': 'Video call ended because of a media connection error.',
+      'remote-ended': 'The other player ended the video call.',
+      'remote-media-ended': 'The other player stopped sharing call media.',
+    };
+    showConnBanner(messages[reason] || 'Video call ended.', reason === 'remote-ended' ? 'warning' : 'error');
+  }
+  videoCallEnding = false;
 }
 
 function toggleAudio() {
@@ -3233,6 +3980,165 @@ function toggleVideoFeed() {
   const btn = document.getElementById('btn-toggle-cam');
   btn.textContent = camEnabled ? '📹' : '🚫';
   btn.classList.toggle('muted', !camEnabled);
+}
+
+function fillCallDeviceSelect(select, devices, selectedId, fallbackLabel) {
+  if (!select) return;
+  const current = selectedId || select.value;
+  select.innerHTML = '';
+  devices.forEach((device, index) => {
+    const option = document.createElement('option');
+    option.value = device.deviceId;
+    option.textContent = device.label || `${fallbackLabel} ${index + 1}`;
+    select.appendChild(option);
+  });
+  if (!devices.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = `Default ${fallbackLabel.toLowerCase()}`;
+    select.appendChild(option);
+  }
+  if (current && devices.some(device => device.deviceId === current)) select.value = current;
+}
+
+async function refreshVideoCallDevices() {
+  const runtime = getVideoCallRuntime();
+  if (!runtime?.enumerateInputDevices) return;
+  try {
+    const { audioInputs, videoInputs } = await runtime.enumerateInputDevices();
+    fillCallDeviceSelect(
+      document.getElementById('video-audio-input'),
+      audioInputs,
+      selectedCallAudioDeviceId || localStream?.getAudioTracks()[0]?.getSettings?.().deviceId,
+      'Microphone'
+    );
+    fillCallDeviceSelect(
+      document.getElementById('video-camera-input'),
+      videoInputs,
+      selectedCallVideoDeviceId || localStream?.getVideoTracks()[0]?.getSettings?.().deviceId,
+      'Camera'
+    );
+  } catch (error) {
+    console.warn('[video-call] could not enumerate devices:', error?.message || error);
+  }
+}
+
+async function replaceVideoCallDevice(kind, deviceId) {
+  const runtime = getVideoCallRuntime();
+  if (!runtime?.replaceInputTrack || !mediaCall || !localStream) return;
+  const select = document.getElementById(kind === 'audio' ? 'video-audio-input' : 'video-camera-input');
+  if (select) select.disabled = true;
+  try {
+    const result = await runtime.replaceInputTrack({
+      call: mediaCall,
+      stream: localStream,
+      kind,
+      deviceId,
+      facingMode: callFacingMode,
+    });
+    if (kind === 'audio') selectedCallAudioDeviceId = deviceId || result.settings?.deviceId || '';
+    else selectedCallVideoDeviceId = deviceId || result.settings?.deviceId || '';
+    saveVideoCallDevicePreferences();
+    const localVideo = document.getElementById('local-video');
+    if (localVideo) {
+      localVideo.srcObject = null;
+      localVideo.srcObject = localStream;
+      playCallVideo(localVideo).catch(() => {});
+    }
+    await refreshVideoCallDevices();
+  } catch (error) {
+    console.warn('[video-call] could not switch device:', error);
+    showConnBanner?.(describeVideoCallError(error), 'error');
+  } finally {
+    if (select) select.disabled = false;
+  }
+}
+
+async function switchVideoCallCamera() {
+  callFacingMode = callFacingMode === 'user' ? 'environment' : 'user';
+  let nextDeviceId = '';
+  try {
+    const devices = await getVideoCallRuntime()?.enumerateInputDevices?.();
+    const cameras = devices?.videoInputs || [];
+    const currentDeviceId = localStream?.getVideoTracks()[0]?.getSettings?.().deviceId || selectedCallVideoDeviceId;
+    if (cameras.length > 1) {
+      const currentIndex = cameras.findIndex(device => device.deviceId === currentDeviceId);
+      nextDeviceId = cameras[(currentIndex + 1 + cameras.length) % cameras.length]?.deviceId || '';
+    }
+  } catch {}
+  selectedCallVideoDeviceId = nextDeviceId;
+  saveVideoCallDevicePreferences();
+  await replaceVideoCallDevice('video', nextDeviceId);
+}
+
+function toggleVideoCallSettings() {
+  const settings = document.getElementById('video-device-settings');
+  if (!settings) return;
+  settings.hidden = !settings.hidden;
+  if (!settings.hidden) refreshVideoCallDevices();
+}
+
+function toggleVideoPanelSize() {
+  const panel = document.getElementById('video-chat-panel');
+  const button = document.getElementById('btn-expand-video');
+  if (!panel) return;
+  const expanded = panel.classList.toggle('expanded');
+  button?.setAttribute('aria-pressed', String(expanded));
+  if (button) button.title = expanded ? 'Restore call window' : 'Enlarge call window';
+}
+
+function bindVideoCallControls() {
+  loadVideoCallDevicePreferences();
+  const bindings = [
+    ['btn-resume-remote-video', 'click', resumeRemoteVideo],
+    ['btn-video-settings', 'click', toggleVideoCallSettings],
+    ['btn-switch-camera', 'click', switchVideoCallCamera],
+    ['btn-expand-video', 'click', toggleVideoPanelSize],
+  ];
+  for (const [id, eventName, handler] of bindings) {
+    const element = document.getElementById(id);
+    if (element && !element.dataset.videoCallBound) {
+      element.dataset.videoCallBound = 'true';
+      element.addEventListener(eventName, handler);
+    }
+  }
+  const audioSelect = document.getElementById('video-audio-input');
+  if (audioSelect && !audioSelect.dataset.videoCallBound) {
+    audioSelect.dataset.videoCallBound = 'true';
+    audioSelect.addEventListener('change', () => replaceVideoCallDevice('audio', audioSelect.value));
+  }
+  const cameraSelect = document.getElementById('video-camera-input');
+  if (cameraSelect && !cameraSelect.dataset.videoCallBound) {
+    cameraSelect.dataset.videoCallBound = 'true';
+    cameraSelect.addEventListener('change', () => replaceVideoCallDevice('video', cameraSelect.value));
+  }
+  const remoteVideo = document.getElementById('remote-video');
+  if (remoteVideo && !remoteVideo.dataset.videoCallBound) {
+    remoteVideo.dataset.videoCallBound = 'true';
+    remoteVideo.addEventListener('playing', () => {
+      if (remoteMediaStream) {
+        document.getElementById('btn-resume-remote-video')?.setAttribute('hidden', '');
+        setVideoCallState('connected');
+      }
+    });
+    const showBuffering = () => {
+      if (videoCallState !== 'connected') return;
+      const detail = document.getElementById('video-network-detail');
+      if (detail) detail.textContent = 'Buffering…';
+    };
+    remoteVideo.addEventListener('waiting', showBuffering);
+    remoteVideo.addEventListener('stalled', showBuffering);
+  }
+  navigator.mediaDevices?.addEventListener?.('devicechange', () => {
+    if (localStream) refreshVideoCallDevices();
+  });
+  getVideoCallRuntime()?.addNativeAudioListener?.(event => {
+    if (!mediaCall) return;
+    const detail = document.getElementById('video-network-detail');
+    if (event?.status === 'interrupted' && detail) detail.textContent = 'Audio interrupted…';
+    if (event?.status === 'resumed') getVideoCallRuntime()?.startNativeAudio?.();
+    if (event?.status === 'route-changed') refreshVideoCallDevices();
+  });
 }
 
 // ─── Contacts ─────────────────────────────────────────────────────────────────
@@ -3490,6 +4396,7 @@ window.addEventListener('beforeunload', () => {
 window.addEventListener('DOMContentLoaded', () => {
   hydrateStaticPieceIcons();
   renderLeaderboard();
+  bindVideoCallControls();
   // ?peer= (a live-match invite link) is no longer auto-joined here — it goes
   // through src/main.js's initAuth() first, which gates it behind the
   // sign-in screen (#screen-invite) before calling window.agsJoinPeer.
