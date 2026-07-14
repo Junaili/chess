@@ -136,6 +136,18 @@ func (h *monetizationHandler) applyClawbacks(userID string, entitlements []clubE
 		if activeKeys[key] {
 			continue
 		}
+		// §6.5 scopes clawback to entitlements that are "now revoked" — a
+		// period whose window simply ran out is a normally-consumed month,
+		// not a refund. AGS hides revoked and expired entitlements from its
+		// queries alike (live-verified 2026-07-14), so the two cases are
+		// told apart by the period end encoded in the txKey: an absent
+		// entitlement whose period end is still in the future can only mean
+		// it was revoked mid-period.
+		if entry.Kind == "club-period" {
+			if end, ok := periodEndFromTxKey(key); !ok || !end.After(now) {
+				continue
+			}
+		}
 		clawKey := txKeyClawback(key)
 		if _, exists := ledger.Debits[clawKey]; exists {
 			continue // cheap skip using the snapshot; mutateLedger below is the real (fresh-read) guard

@@ -118,6 +118,7 @@ func (h *monetizationHandler) queryItemsByCategory(categoryPath string) (agsItem
 // ---------------------------------------------------------------------------
 
 type clubEntitlement struct {
+	ID        string // AGS entitlement id — needed to revoke on refund (§6.6)
 	SKU       string
 	Status    string
 	StartDate string
@@ -125,6 +126,10 @@ type clubEntitlement struct {
 	Origin    string // "stripe" | "apple" | "" (best-effort, derived from AGS `origin`)
 }
 
+// isActive: note that AGS hides entitlements from its queries entirely once
+// their endDate passes (live-verified 2026-07-14 — expired ones vanish even
+// without activeOnly=true), so the grace addend below is belt-and-braces for
+// clock skew only; a lapsed window never reaches this check in practice.
 func (e clubEntitlement) isActive(now time.Time) bool {
 	if !strings.EqualFold(e.Status, "ACTIVE") {
 		return false
@@ -141,6 +146,7 @@ func (e clubEntitlement) isActive(now time.Time) bool {
 
 type agsEntitlementsResponse struct {
 	Data []struct {
+		ID        string `json:"id"`
 		ItemID    string `json:"itemId"`
 		Sku       string `json:"sku"`
 		Status    string `json:"status"`
@@ -151,9 +157,7 @@ type agsEntitlementsResponse struct {
 }
 
 // activeClubEntitlements returns the caller's own club standing across all 4
-// SKUs (used by /club/status for the "self" source) — lifetime SKUs via
-// plain entitlements, monthly SKUs via AGS-native Subscriptions (see
-// monetization_subscription.go's file header for why the split exists).
+// SKUs (used by /club/status for the "self" source).
 func (h *monetizationHandler) activeClubEntitlements(userID string) ([]clubEntitlement, error) {
 	all := make([]string, 0, len(clubSKUs))
 	for sku := range clubSKUs {
@@ -162,9 +166,11 @@ func (h *monetizationHandler) activeClubEntitlements(userID string) ([]clubEntit
 	return h.activeClubStatus(userID, all)
 }
 
-// activeClubEntitlementsFiltered is the DEPRECATED entitlement-only path —
-// kept only for lifetime-SKU callers. New code should call activeClubStatus,
-// which correctly routes monthly SKUs to Subscriptions instead.
+// activeClubEntitlementsFiltered queries the user's active entitlements for
+// each sku. This is the sole club-standing source for ALL SKUs: lifetime ones
+// have no window, monthly ones carry an endDate equal to the billing period
+// end (granted per paid Stripe invoice; synced by AGS for Apple IAP). AGS's
+// activeOnly filter drops expired/revoked windows on its own.
 func (h *monetizationHandler) activeClubEntitlementsFiltered(userID string, skus []string) ([]clubEntitlement, error) {
 	token, err := h.clientCredentialsToken()
 	if err != nil {
@@ -208,49 +214,59 @@ func (h *monetizationHandler) activeClubEntitlementsFiltered(userID string, skus
 				origin = "stripe"
 			}
 			out = append(out, clubEntitlement{
-				SKU: sku, Status: e.Status, StartDate: e.StartDate, EndDate: e.EndDate, Origin: origin,
+				ID: e.ID, SKU: sku, Status: e.Status, StartDate: e.StartDate, EndDate: e.EndDate, Origin: origin,
 			})
 		}
 	}
 	return out, nil
 }
 
-// activeClubStatus is the correct entry point for any caller that needs a
-// user's club standing across a set of SKUs: it routes lifetime SKUs through
-// plain entitlements and monthly SKUs through AGS Subscriptions, returning
-// both normalized into the same []clubEntitlement shape so
-// bestActiveEntitlement's ranking logic doesn't need to know the
-// difference.
+// activeClubStatus returns a user's club standing across a set of SKUs. All
+// SKUs — lifetime and monthly — live on plain DURABLE entitlements: this AGS
+// deployment has no subscription support (platformSubscribe rejects the
+// items with 40121 and the SUBSCRIPTION item type doesn't exist here — see
+// dev-plan/subscription-entitlement-redesign.md), so Stripe and Apple own
+// recurring billing and AGS only records the resulting access windows.
 func (h *monetizationHandler) activeClubStatus(userID string, skus []string) ([]clubEntitlement, error) {
-	var lifetimeSKUs, monthlySKUs []string
-	for _, sku := range skus {
-		if clubSKUs[sku].Monthly {
-			monthlySKUs = append(monthlySKUs, sku)
-		} else {
-			lifetimeSKUs = append(lifetimeSKUs, sku)
-		}
-	}
+	return h.activeClubEntitlementsFiltered(userID, skus)
+}
 
-	var out []clubEntitlement
-	if len(lifetimeSKUs) > 0 {
-		entitlements, err := h.activeClubEntitlementsFiltered(userID, lifetimeSKUs)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, entitlements...)
+// revokeClubEntitlements revokes every currently-active entitlement the user
+// holds for sku (§6.6: "charge.refunded: revoke the matching entitlement").
+// Idempotent: revoked/expired entitlements no longer appear in the
+// activeOnly query, so a webhook retry finds nothing left to revoke.
+func (h *monetizationHandler) revokeClubEntitlements(userID, sku string) error {
+	entitlements, err := h.activeClubEntitlementsFiltered(userID, []string{sku})
+	if err != nil {
+		return err
 	}
-	for _, sku := range monthlySKUs {
-		subs, err := h.queryUserSubscriptionsBySKU(userID, sku)
-		if err != nil {
-			// One SKU's subscription query failing must not blank out
-			// everything else — same resilience rule as the entitlement
-			// loop above (a missing item/misconfigured SKU shouldn't 500
-			// the whole status call).
+	token, err := h.clientCredentialsToken()
+	if err != nil {
+		return err
+	}
+	for _, e := range entitlements {
+		if e.ID == "" {
 			continue
 		}
-		out = append(out, subs...)
+		endpoint := fmt.Sprintf("%s/platform/admin/namespaces/%s/users/%s/entitlements/%s/revoke",
+			h.agsBaseURL, url.PathEscape(h.namespace), url.PathEscape(userID), url.PathEscape(e.ID))
+		req, err := http.NewRequest(http.MethodPut, endpoint, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := h.httpClient.Do(req)
+		if err != nil {
+			return err
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		status := resp.StatusCode
+		resp.Body.Close()
+		if status != http.StatusOK {
+			return fmt.Errorf("revoke entitlement %s for %s returned %d", e.ID, userID, status)
+		}
 	}
-	return out, nil
+	return nil
 }
 
 type grantEntitlementRequest struct {
@@ -264,8 +280,10 @@ type grantEntitlementRequest struct {
 }
 
 // grantClubEntitlement grants one unit of sku to userID. endDate is nil for
-// lifetime SKUs; for monthly SKUs it's the entitlement window's expiry
-// (period_end + grace, per §6.6).
+// lifetime SKUs; for monthly SKUs it MUST be the billing period end exactly —
+// reconcileDecisions re-derives the period coin txKey from the entitlement's
+// endDate, so any offset between this value and the webhook's txKeyPeriod
+// argument would double-credit the period's coins.
 func (h *monetizationHandler) grantClubEntitlement(userID, sku, source, origin string, endDate *time.Time) error {
 	itemID, err := h.items.itemID(sku)
 	if err != nil {

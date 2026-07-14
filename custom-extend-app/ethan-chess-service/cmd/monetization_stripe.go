@@ -278,11 +278,13 @@ func (h *monetizationHandler) stripeWebhook(w http.ResponseWriter, r *http.Reque
 		handleErr = h.handleSubscriptionDeleted(event.Data.Object)
 	}
 	if handleErr != nil {
-		// Log-and-200: Stripe retries on non-2xx, and most failure modes here
-		// (a transient AGS hiccup) are exactly what we want retried. A
-		// permanently malformed event would retry forever, but that's a
-		// visible ops signal (repeated log lines) rather than a silent loss.
-		fmt.Printf("[monetization] stripe webhook %s failed (will retry): %v\n", event.Type, handleErr)
+		// Non-2xx makes Stripe retry with backoff for days AND surfaces the
+		// failure in Stripe's own webhook dashboard. The 2026-07-14 outage
+		// (every invoice.paid dying on a dead AGS call) went unnoticed
+		// precisely because this used to log-and-200.
+		fmt.Printf("[monetization] stripe webhook %s failed (Stripe will retry): %v\n", event.Type, handleErr)
+		writeMonetizationError(w, http.StatusInternalServerError, "webhook_failed", "Webhook processing failed.")
+		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -433,37 +435,16 @@ func (h *monetizationHandler) handleInvoicePaid(raw json.RawMessage) error {
 	}
 	endDateISO := time.Unix(periodEnd, 0).UTC().Format(time.RFC3339)
 
-	// AGS-native Subscription instead of a manually-tracked DURABLE
-	// entitlement window (see monetization_subscription.go's file header):
-	// first invoice creates the subscription via platformSubscribe;
-	// renewals extend the SAME subscriptionId via grantSubscriptionDays so
-	// one AGS entity persists across the member's whole lifetime.
-	ledgerBefore, _, err := h.readLedger(userID)
-	if err != nil {
-		return fmt.Errorf("read ledger for subscription lookup: %w", err)
-	}
-	if subscriptionID := ledgerBefore.Subscriptions[sku]; subscriptionID != "" {
-		if err := h.grantSubscriptionDays(userID, subscriptionID, monthlyPeriodDays, "stripe-renewal:"+invoice.ID); err != nil {
-			return fmt.Errorf("extend subscription %s: %w", subscriptionID, err)
-		}
-	} else {
-		itemID, err := h.items.itemID(sku)
-		if err != nil {
-			return fmt.Errorf("resolve itemId for %s: %w", sku, err)
-		}
-		newSubscriptionID, err := h.platformSubscribeUser(userID, itemID, monthlyPeriodDays, "stripe-initial:"+invoice.ID, "STRIPE")
-		if err != nil {
-			return fmt.Errorf("create subscription for %s/%s: %w", userID, sku, err)
-		}
-		if _, _, err := h.mutateLedger(userID, func(l *monetizationLedger) bool {
-			if l.Subscriptions[sku] != "" {
-				return false // a concurrent delivery already recorded one — don't clobber it
-			}
-			l.Subscriptions[sku] = newSubscriptionID
-			return true
-		}); err != nil {
-			return fmt.Errorf("persist subscriptionId for %s/%s: %w", userID, sku, err)
-		}
+	// Time-boxed DURABLE entitlement, windowed to the Stripe billing period
+	// (dev-plan/subscription-entitlement-redesign.md — this AGS deployment
+	// has no subscription support, so Stripe alone owns recurring billing).
+	// Renewals grant a fresh window; expired windows drop out of AGS queries
+	// on their own. The endDate is the same instant txKeyPeriod keys the
+	// coin credit with below — reconcileDecisions re-derives that key from
+	// the entitlement's endDate, and a mismatch would double-credit.
+	end := time.Unix(periodEnd, 0).UTC()
+	if err := h.grantClubEntitlement(userID, sku, "PURCHASE", "Other", &end); err != nil {
+		return fmt.Errorf("grant period entitlement for %s/%s: %w", userID, sku, err)
 	}
 
 	if invoice.AmountPaid <= 0 {
@@ -504,10 +485,11 @@ type stripeSubscriptionObject struct {
 	} `json:"metadata"`
 }
 
-// handleSubscriptionDeleted cancels the corresponding AGS-native Subscription
-// (non-immediate: AGS's own grace/period-end handling matches the lifecycle
-// rule "access until period end", the same behavior the old comment
-// described for the entitlement-window design this replaced).
+// handleSubscriptionDeleted needs no AGS call at all: monthly access is a
+// time-boxed entitlement that lapses at its period end on its own, which IS
+// the "access until period end" cancellation rule (§11). Kept as a handled
+// event so the Stripe webhook config stays unchanged and the cancellation is
+// visible in the service log.
 func (h *monetizationHandler) handleSubscriptionDeleted(raw json.RawMessage) error {
 	var sub stripeSubscriptionObject
 	if err := json.Unmarshal(raw, &sub); err != nil {
@@ -517,17 +499,7 @@ func (h *monetizationHandler) handleSubscriptionDeleted(raw json.RawMessage) err
 	if userID == "" || !isClubSKU(sku) {
 		return nil // not a Club subscription
 	}
-	ledger, _, err := h.readLedger(userID)
-	if err != nil {
-		return fmt.Errorf("read ledger: %w", err)
-	}
-	subscriptionID := ledger.Subscriptions[sku]
-	if subscriptionID == "" {
-		return nil // never recorded (e.g. the very first invoice failed before we stored it) — nothing to cancel
-	}
-	if err := h.cancelAGSSubscription(userID, subscriptionID, false, "stripe-subscription-deleted:"+sub.ID); err != nil {
-		return fmt.Errorf("cancel AGS subscription %s: %w", subscriptionID, err)
-	}
+	fmt.Printf("[monetization] stripe subscription %s (%s/%s) cancelled — access lapses when the current entitlement window ends\n", sub.ID, userID, sku)
 	return nil
 }
 
@@ -562,6 +534,14 @@ func (h *monetizationHandler) handleChargeRefunded(raw json.RawMessage) error {
 	}
 	if _, already := ledger.Debits[clawKey]; already {
 		return nil
+	}
+
+	// §6.6: a refund revokes the entitlement itself, not just the coins.
+	// Runs BEFORE the coin clawback is reserved so a failure here leaves the
+	// whole handler retryable (Stripe redelivers on our 5xx; the clawKey
+	// guard hasn't been written yet, and re-revoking is a no-op).
+	if err := h.revokeClubEntitlements(userID, sku); err != nil {
+		return fmt.Errorf("revoke entitlements for %s/%s: %w", userID, sku, err)
 	}
 
 	balance, err := h.getWalletBalance(userID)

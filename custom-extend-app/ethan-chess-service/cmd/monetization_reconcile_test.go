@@ -144,3 +144,79 @@ func TestEntitlementActiveWithinGracePeriod(t *testing.T) {
 		t.Fatal("expected entitlement to have lapsed after the grace period")
 	}
 }
+
+// The webhook keys periods with "…T00:00:00Z" while AGS echoes entitlement
+// endDates as "…T00:00:00.000Z" — txKeyPeriod must canonicalize both to ONE
+// key or reconciliation double-credits every period (§6.5 trap).
+func TestTxKeyPeriodCanonicalizesMillisecondEndDates(t *testing.T) {
+	webhook := txKeyPeriod("club-family-monthly", "2026-08-11T00:00:00Z")
+	agsEcho := txKeyPeriod("club-family-monthly", "2026-08-11T00:00:00.000Z")
+	if webhook != agsEcho {
+		t.Fatalf("same period produced two keys: %q vs %q", webhook, agsEcho)
+	}
+	if webhook != "period:club-family-monthly:2026-08-11T00:00:00Z" {
+		t.Fatalf("canonical key = %q", webhook)
+	}
+}
+
+func TestReconcileDecisionsCanonicalizesAGSEndDateAgainstWebhookKey(t *testing.T) {
+	now := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+	// Entitlement endDate exactly as AGS echoes it (milliseconds)…
+	entitlements := []clubEntitlement{{SKU: "club-family-monthly", Status: "ACTIVE", EndDate: "2026-08-11T00:00:00.000Z"}}
+	ledger := newLedger()
+	// …but the webhook already credited the period under its own formatting.
+	ledger.Credits["period:club-family-monthly:2026-08-11T00:00:00Z"] = ledgerEntry{Amount: 399, Kind: "club-period"}
+
+	decisions := reconcileDecisions(entitlements, ledger, now)
+	if len(decisions) != 0 {
+		t.Fatalf("expected 0 decisions (period already credited by the webhook), got %d: %#v", len(decisions), decisions)
+	}
+}
+
+func TestPeriodEndFromTxKey(t *testing.T) {
+	end, ok := periodEndFromTxKey("period:club-family-monthly:2026-08-11T00:00:00Z")
+	if !ok || !end.Equal(time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("parse failed: ok=%v end=%v", ok, end)
+	}
+	if _, ok := periodEndFromTxKey("life:club-individual-lifetime"); ok {
+		t.Fatal("lifetime key must not parse as a period key")
+	}
+	if _, ok := periodEndFromTxKey("period:garbage"); ok {
+		t.Fatal("malformed period key must not parse")
+	}
+}
+
+// §6.5 scopes clawback to REVOKED entitlements. A period that ran out
+// normally (its end date is in the past, so AGS no longer returns the
+// entitlement) is a fully-consumed month — the coins stay.
+func TestApplyClawbacksSkipsNaturallyExpiredPeriods(t *testing.T) {
+	transport := &stripeWebhookRoundTripper{}
+	h := testMonetizationHandler(transport) // now = 2026-07-12T12:00Z
+
+	ledger := newLedger()
+	ledger.Credits["period:club-family-monthly:2026-07-01T00:00:00Z"] = ledgerEntry{Amount: 399, Kind: "club-period"}
+
+	if err := h.applyClawbacks("user-1", nil, ledger); err != nil {
+		t.Fatal(err)
+	}
+	if transport.debits != 0 {
+		t.Fatalf("a normally-expired period must NOT be clawed back, got %d debits", transport.debits)
+	}
+}
+
+// An absent entitlement whose period end is still in the FUTURE can only
+// mean it was revoked mid-period (Apple refund) — that one IS clawed back.
+func TestApplyClawbacksDebitsRevokedMidPeriodCredit(t *testing.T) {
+	transport := &stripeWebhookRoundTripper{}
+	h := testMonetizationHandler(transport) // now = 2026-07-12T12:00Z
+
+	ledger := newLedger()
+	ledger.Credits["period:club-family-monthly:2026-08-11T00:00:00Z"] = ledgerEntry{Amount: 399, Kind: "club-period"}
+
+	if err := h.applyClawbacks("user-1", nil, ledger); err != nil {
+		t.Fatal(err)
+	}
+	if transport.debits != 1 {
+		t.Fatalf("a mid-period revocation must be clawed back exactly once, got %d debits", transport.debits)
+	}
+}

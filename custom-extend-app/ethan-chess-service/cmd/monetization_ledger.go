@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -39,28 +40,50 @@ type monetizationLedger struct {
 	// Counters backs Open Journal Day narrative quotas (§8.5): keys like
 	// "narr:2026-07-12" or "narr-week:2026-W28" mapping to a use count.
 	Counters map[string]int `json:"counters,omitempty"`
-	// Subscriptions maps a monthly club SKU to its AGS-native subscriptionId
-	// (from platformSubscribe's response). Renewals extend the SAME
-	// subscription via grantSubscriptionDays rather than creating a new one
-	// each period. Lifetime SKUs never appear here — they stay on the plain
-	// DURABLE-entitlement grant path (AGS Subscriptions model recurring
-	// billing, which a one-time purchase isn't).
-	Subscriptions map[string]string `json:"subscriptions,omitempty"`
 }
 
 func newLedger() monetizationLedger {
 	return monetizationLedger{
-		Credits:       map[string]ledgerEntry{},
-		Debits:        map[string]ledgerEntry{},
-		Counters:      map[string]int{},
-		Subscriptions: map[string]string{},
+		Credits:  map[string]ledgerEntry{},
+		Debits:   map[string]ledgerEntry{},
+		Counters: map[string]int{},
 	}
 }
 
 // txKey formats (§6.4/§6.5). All period credits — Stripe or Apple — use the
 // SAME platform-neutral key so reconciliation and the webhook can never both
 // credit the same billing period.
-func txKeyPeriod(sku, endDateISO string) string { return "period:" + sku + ":" + endDateISO }
+
+// txKeyPeriod canonicalizes the timestamp to second-precision RFC3339 before
+// keying: the Stripe webhook keys with its own formatting ("…T00:00:00Z")
+// while reconciliation re-derives the key from the AGS entitlement's echoed
+// endDate ("…T00:00:00.000Z" — AGS adds milliseconds). Without one canonical
+// form those are two different ledger keys for the same billing period, and
+// the §6.5 double-credit trap reopens.
+func txKeyPeriod(sku, endDateISO string) string {
+	if t, err := time.Parse(time.RFC3339, endDateISO); err == nil {
+		endDateISO = t.UTC().Format(time.RFC3339)
+	}
+	return "period:" + sku + ":" + endDateISO
+}
+
+// periodEndFromTxKey recovers the period-end timestamp encoded in a
+// `period:<sku>:<endDateISO>` txKey (SKUs never contain ':').
+func periodEndFromTxKey(key string) (time.Time, bool) {
+	rest, ok := strings.CutPrefix(key, "period:")
+	if !ok {
+		return time.Time{}, false
+	}
+	i := strings.Index(rest, ":")
+	if i < 0 {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, rest[i+1:])
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
 func txKeyLifetime(sku string) string           { return "life:" + sku }
 func txKeyHighFive(matchID, senderID string) string {
 	return "hf:" + matchID + ":" + senderID
@@ -121,9 +144,6 @@ func (h *monetizationHandler) readLedger(userID string) (monetizationLedger, str
 	}
 	if ledger.Counters == nil {
 		ledger.Counters = map[string]int{}
-	}
-	if ledger.Subscriptions == nil {
-		ledger.Subscriptions = map[string]string{}
 	}
 	return ledger, updatedAt, nil
 }
