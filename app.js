@@ -169,6 +169,8 @@ let currentOpponent = null;
 let currentOpponentBlocked = false;
 let activeSafetyReport = null;
 let pendingFriendMatchInvite = null;
+let pendingFriendMatchInviteTimer = null;
+let activeFriendInviteId = '';
 let matchStartedAt = null;
 let matchHistoryRecorded = false;
 // Resignation reuses game.status = 'checkmate' (so all the existing win/loss
@@ -1670,6 +1672,7 @@ function destroyPeer() {
   if (peerConn) { try { peerConn.close(); } catch {} peerConn = null; }
   if (peer)     { try { peer.destroy();   } catch {} peer = null; }
   currentInviteLink = '';
+  activeFriendInviteId = '';
   resetChatState();
   updateChatAvailability();
   hideConnBanner();
@@ -1771,7 +1774,12 @@ window.agsCheckResumableMatch = async function() {
   if (window.agsIsResumable?.(record) ?? true) {
     showResumePrompt(record);
   } else {
-    await resolveExpiredMatch(record);
+    try {
+      await resolveExpiredMatch(record);
+    } catch (error) {
+      console.warn('Could not verify the expired match:', error);
+      showConnBanner('Could not verify the match result. Please try again when online.', 'error');
+    }
   }
 };
 
@@ -1780,7 +1788,7 @@ window.agsResumeActiveMatch = function() {
   const record = pendingResumeRecord;
   pendingResumeRecord = null;
   hideResumePrompt();
-  attemptResume(record);
+  void attemptResume(record);
 };
 
 window.agsDiscardActiveMatch = function() {
@@ -1811,10 +1819,27 @@ async function attemptResume(record) {
 
   showConnBanner(`Reconnecting to ${record.opponentName}…`, 'warning');
 
-  const [myLive, theirLive] = await Promise.all([
-    window.agsFetchLiveMatch?.(record.myUserId),
-    window.agsFetchLiveMatch?.(record.opponentUserId),
-  ]);
+  let myLive;
+  let theirLive;
+  try {
+    const fetchLiveMatch = window.agsFetchLiveMatchStrict || window.agsFetchLiveMatch;
+    if (typeof fetchLiveMatch !== 'function') throw new Error('Saved-match service is unavailable.');
+    [myLive, theirLive] = await Promise.all([
+      fetchLiveMatch(record.myUserId),
+      fetchLiveMatch(record.opponentUserId),
+    ]);
+  } catch (error) {
+    if (peerGeneration !== peerLifecycleGeneration) return;
+    console.warn('Could not load the saved match state:', error);
+    showConnBanner('Could not load the saved match. Check your connection; retrying…', 'warning');
+    setTimeout(() => {
+      if (peerGeneration !== peerLifecycleGeneration) return;
+      const current = readActiveMatch();
+      if (current?.matchId === record.matchId) void attemptResume(current);
+    }, 10_000);
+    return;
+  }
+  if (peerGeneration !== peerLifecycleGeneration) return;
   const myMoves = myLive?.matchId === record.matchId && Array.isArray(myLive.moves) ? myLive.moves : [];
   const theirMoves = theirLive?.matchId === record.matchId && Array.isArray(theirLive.moves) ? theirLive.moves : [];
   const moves = window.agsPickAuthoritativeMoves?.(myMoves, theirMoves) ?? myMoves;
@@ -1935,7 +1960,10 @@ async function attemptResume(record) {
         if (peerGeneration === peerLifecycleGeneration) void attemptResume(current);
       }, 10_000);
     } else if (current) {
-      resolveExpiredMatch(current);
+      void resolveExpiredMatch(current).catch(error => {
+        console.warn('Could not resolve the expired match:', error);
+        showConnBanner('Could not verify the match result. Please try again when online.', 'error');
+      });
     }
   });
 }
@@ -1949,7 +1977,10 @@ async function attemptResume(record) {
 // "Race note" for the (rare, accepted) case where both sides reach this at
 // the same moment.
 async function resolveExpiredMatch(record) {
-  const theirLive = await window.agsFetchLiveMatch?.(record.opponentUserId);
+  const fetchLiveMatch = window.agsFetchLiveMatchStrict || window.agsFetchLiveMatch;
+  if (typeof fetchLiveMatch !== 'function') throw new Error('Saved-match service is unavailable.');
+  const theirLive = await fetchLiveMatch(record.opponentUserId);
+  if (readActiveMatch()?.matchId !== record.matchId) return;
   const theirResolution = theirLive?.resolvedForfeit;
   const iAmTheLoser = theirResolution?.matchId === record.matchId
     && theirResolution.loserUserId === record.myUserId;
@@ -1971,29 +2002,37 @@ async function resolveExpiredMatch(record) {
     blackName: record.myColor === 'black' ? myName : record.opponentName,
   };
 
-  if (iAmTheLoser) {
-    window.agsIncrementLoss?.();
-    window.agsIncrementGamePlayed?.('online');
-    window.agsUpdateStreak?.();
+  const persistOutcome = async (score, history) => {
     if (typeof record.opponentRatingAtStart === 'number') {
       window.agsSetOpponentRating?.(record.opponentRatingAtStart);
-      window.agsRecordEloResult?.(0);
     }
-    window.agsRecordMatchHistory?.({ ...historyEntry, result: 'loss' });
+    const writes = [
+      score === 1 ? window.agsIncrementWin : window.agsIncrementLoss,
+      () => window.agsIncrementGamePlayed?.('online'),
+      window.agsUpdateStreak,
+      typeof record.opponentRatingAtStart === 'number'
+        ? () => window.agsRecordEloResult?.(score)
+        : null,
+      () => window.agsRecordMatchHistory?.(history),
+    ].filter(Boolean).map(write => Promise.resolve().then(() => write?.()));
+    const results = await Promise.allSettled(writes);
+    if (results.some(result => result.status === 'rejected')) {
+      console.warn('Some expired-match outcome writes could not be saved.');
+    }
+  };
+
+  if (iAmTheLoser) {
+    await persistOutcome(0, { ...historyEntry, result: 'loss' });
     showConnBanner(`You didn't reconnect in time — recorded as a loss vs ${record.opponentName}.`, 'error');
   } else {
-    await window.agsResolveMatchForfeit?.(record.myUserId, record.matchId, record.opponentUserId);
-    window.agsIncrementWin?.();
-    window.agsIncrementGamePlayed?.('online');
-    window.agsUpdateStreak?.();
-    if (typeof record.opponentRatingAtStart === 'number') {
-      window.agsSetOpponentRating?.(record.opponentRatingAtStart);
-      window.agsRecordEloResult?.(1);
+    if (typeof window.agsResolveMatchForfeit !== 'function') {
+      throw new Error('Match-resolution service is unavailable.');
     }
-    window.agsRecordMatchHistory?.({ ...historyEntry, result: 'win' });
+    await window.agsResolveMatchForfeit(record.myUserId, record.matchId, record.opponentUserId);
+    await persistOutcome(1, { ...historyEntry, result: 'win' });
     showConnBanner(`${record.opponentName} didn't reconnect in time — recorded as a win.`, 'success');
   }
-  clearActiveMatch();
+  if (readActiveMatch()?.matchId === record.matchId) clearActiveMatch();
 }
 
 function startHeartbeat(conn) {
@@ -2578,7 +2617,12 @@ async function activateChatForCurrentMatch() {
 
 function flushMoveQueue(conn) {
   while (moveQueue.length > 0 && conn?.open) {
-    try { conn.send(moveQueue.shift()); } catch { break; }
+    try {
+      conn.send(moveQueue[0]);
+      moveQueue.shift();
+    } catch {
+      break;
+    }
   }
 }
 
@@ -2597,7 +2641,7 @@ function handleConnectionLost() {
     // The side that *didn't* reload (still logged in, tab still open) never
     // re-triggers hydrateAuthenticatedUser — without this, only a fresh login
     // would ever see the resume prompt, leaving this side with no way back in.
-    window.agsCheckResumableMatch?.();
+    void window.agsCheckResumableMatch?.();
   }, 2500);
 }
 
@@ -2814,27 +2858,69 @@ function startFriendMatchInvite(friend) {
   gameMode = 'online';
   playerColor = 'white';
   setCurrentOpponent(friend.displayName || 'Friend', friend.userId);
-  createOnlineRoom({ friendInvite: friend });
+  void createOnlineRoom({ friendInvite: friend });
   pendingChatContext = { type: 'personal', otherUserId: friend.userId };
 }
 
-async function sendFriendMatchInvite(friend, peerId) {
-  const inviteId = 'invite-' + Math.random().toString(36).slice(2);
-  const result = await window.agsSendMatchInvite(friend.userId, {
-    inviteId,
-    peerId,
-    sentAt: new Date().toISOString(),
-  });
+async function sendFriendMatchInvite(friend, peerId, generation = peerLifecycleGeneration, existingInviteId = '') {
+  const inviteId = existingInviteId || ('invite-' + (globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)));
+  if (generation === peerLifecycleGeneration) activeFriendInviteId = inviteId;
+  let result;
+  try {
+    result = await window.agsSendMatchInvite(friend.userId, {
+      inviteId,
+      peerId,
+      sentAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.warn('[invite] match delivery failed:', error);
+    result = {
+      ok: false,
+      retryable: true,
+      error: 'Could not send the match invite. Check your connection and retry.',
+    };
+  }
+
+  if (generation !== peerLifecycleGeneration || peer?.id !== peerId) return result;
 
   const sub = document.getElementById('waiting-sub');
   if (!result?.ok) {
-    if (sub) sub.textContent = result?.error || 'Could not send the match invite. You can still share the link below.';
-    return;
+    if (sub) sub.textContent = `${result?.error || 'Could not send the match invite.'} You can still share the link below.`;
+    if (result?.retryable) {
+      const row = document.querySelector('#waiting-share-row .share-row');
+      let retry = row?.querySelector('[data-retry-friend-invite]');
+      if (row && !retry) {
+        retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'share-chip share-chip-copy';
+        retry.dataset.retryFriendInvite = 'true';
+        retry.textContent = '↻ Retry invite';
+        retry.addEventListener('click', async () => {
+          retry.disabled = true;
+          retry.textContent = 'Retrying…';
+          const retried = await sendFriendMatchInvite(friend, peerId, generation, inviteId);
+          if (!retried?.ok && retried?.retryable && generation === peerLifecycleGeneration) {
+            retry.disabled = false;
+            retry.textContent = '↻ Retry invite';
+          } else if (!retried?.ok) {
+            retry.remove();
+          }
+        });
+        row.appendChild(retry);
+      }
+    }
+    return result;
   }
-  if (sub) sub.textContent = `Invite sent to ${friend.displayName || 'your friend'}. Waiting for them to accept…`;
+  document.querySelector('#waiting-share-row [data-retry-friend-invite]')?.remove();
+  if (sub) {
+    const retryNote = result.attempts > 1 ? ' after reconnecting' : '';
+    sub.textContent = `Invite sent${retryNote} to ${friend.displayName || 'your friend'}. Waiting for them to accept…`;
+  }
+  return result;
 }
 
 function showFriendMatchInvite(invite) {
+  clearTimeout(pendingFriendMatchInviteTimer);
   pendingFriendMatchInvite = invite;
   const fromName = invite.fromName || 'A friend';
   const nameEl = document.getElementById('friend-match-invite-name');
@@ -2842,16 +2928,36 @@ function showFriendMatchInvite(invite) {
   if (nameEl) nameEl.textContent = `${fromName} invited you to play`;
   if (detailEl) detailEl.textContent = 'Accept to join the match now.';
   document.getElementById('friend-match-invite-notification').style.display = 'flex';
+  const sentAt = Date.parse(invite?.sentAt || '');
+  const remaining = Number.isFinite(sentAt)
+    ? Math.max(0, (10 * 60 * 1000) - (Date.now() - sentAt))
+    : 10 * 60 * 1000;
+  pendingFriendMatchInviteTimer = setTimeout(() => {
+    if (pendingFriendMatchInvite !== invite) return;
+    clearFriendMatchInvite();
+  }, remaining);
+}
+
+function clearFriendMatchInvite() {
+  clearTimeout(pendingFriendMatchInviteTimer);
+  pendingFriendMatchInviteTimer = null;
+  pendingFriendMatchInvite = null;
+  const notification = document.getElementById('friend-match-invite-notification');
+  if (notification) notification.style.display = 'none';
 }
 
 function acceptFriendMatchInvite() {
   const invite = pendingFriendMatchInvite;
-  pendingFriendMatchInvite = null;
-  document.getElementById('friend-match-invite-notification').style.display = 'none';
+  clearFriendMatchInvite();
   if (!invite?.peerId) return;
+  const sentAt = Date.parse(invite.sentAt || '');
+  if (Number.isFinite(sentAt) && Date.now() - sentAt > 10 * 60 * 1000) {
+    alert('That match invite has expired. Ask your friend to send a new one.');
+    return;
+  }
   gameMode = 'online';
   setCurrentOpponent(invite.fromName || 'Friend', invite.fromUserId || '');
-  joinOnlineRoom(invite.peerId);
+  void joinOnlineRoom(invite.peerId);
   if (invite.fromUserId) {
     pendingChatContext = { type: 'personal', otherUserId: invite.fromUserId };
   }
@@ -2859,20 +2965,32 @@ function acceptFriendMatchInvite() {
 
 function declineFriendMatchInvite() {
   const invite = pendingFriendMatchInvite;
-  pendingFriendMatchInvite = null;
-  document.getElementById('friend-match-invite-notification').style.display = 'none';
+  clearFriendMatchInvite();
   if (invite?.fromUserId && typeof window.agsSendMatchDecline === 'function') {
-    window.agsSendMatchDecline(invite.fromUserId, invite.inviteId);
+    void window.agsSendMatchDecline(invite.fromUserId, invite.inviteId)
+      .then(result => {
+        if (!result?.ok) console.warn('[invite] decline was not delivered:', result?.error || 'unknown error');
+      })
+      .catch(error => {
+        console.warn('[invite] decline delivery failed:', error);
+      });
   }
 }
 
 function handleMatchDeclined(invite) {
+  if (!activeFriendInviteId || invite?.inviteId !== activeFriendInviteId) return;
+  const generation = peerLifecycleGeneration;
+  activeFriendInviteId = '';
   const name = invite?.fromName || 'Your friend';
   const sub = document.getElementById('waiting-sub');
   if (sub) sub.textContent = `${name} declined your match invite.`;
   const spinner = document.getElementById('waiting-spinner');
   if (spinner) spinner.style.display = 'none';
-  setTimeout(() => { destroyPeer(); showScreen('home'); }, 2500);
+  setTimeout(() => {
+    if (generation !== peerLifecycleGeneration) return;
+    destroyPeer();
+    showScreen('home');
+  }, 2500);
 }
 
 window.startFriendMatchInvite = startFriendMatchInvite;
@@ -2880,6 +2998,7 @@ window.showFriendMatchInvite = showFriendMatchInvite;
 window.acceptFriendMatchInvite = acceptFriendMatchInvite;
 window.declineFriendMatchInvite = declineFriendMatchInvite;
 window.handleMatchDeclined = handleMatchDeclined;
+window.clearFriendMatchInvite = clearFriendMatchInvite;
 
 // Bridge for src/main.js: join a live-match invite link (?peer=) once the
 // sign-in gate on the invite screen has been resolved.
@@ -2986,10 +3105,38 @@ function isPeerMessageWithinLimit(value) {
 }
 
 function setupPeerConnection(conn, role) {
+  const generation = peerLifecycleGeneration;
+  let connectionOpened = !!conn.open;
+  let connectionOpenHandled = false;
+  let preGameFailureHandled = false;
   remotePeerId = conn.peer;
   connRole = role;
 
-  conn.on('open', () => {
+  const handlePreGameFailure = message => {
+    if (preGameFailureHandled || game || generation !== peerLifecycleGeneration || peerConn !== conn) return;
+    preGameFailureHandled = true;
+    stopHeartbeat();
+    peerConn = null;
+    remotePeerId = null;
+    if (role === 'host') {
+      const sub = document.getElementById('waiting-sub');
+      if (sub) sub.textContent = 'A connection attempt did not finish. Still waiting for your friend…';
+      return;
+    }
+    showPeerSetupFailure(message || 'Could not connect to the match. The invite may have expired.', generation);
+  };
+
+  const connectionOpenTimer = connectionOpened ? null : setTimeout(() => {
+    if (connectionOpened || generation !== peerLifecycleGeneration || peerConn !== conn) return;
+    handlePreGameFailure('The match connection timed out. The invite may have expired.');
+    try { conn.close(); } catch {}
+  }, PEER_OPEN_TIMEOUT_MS);
+
+  const handleConnectionOpen = () => {
+    if (connectionOpenHandled || generation !== peerLifecycleGeneration || peerConn !== conn) return;
+    connectionOpenHandled = true;
+    connectionOpened = true;
+    if (connectionOpenTimer) clearTimeout(connectionOpenTimer);
     startHeartbeat(conn);
 
     if (role === 'host') {
@@ -2999,11 +3146,19 @@ function setupPeerConnection(conn, role) {
         updateChatAvailability();
         hideConnBanner();
       } else {
+        activeFriendInviteId = '';
         const joinerColor = playerColor === 'white' ? 'black' : 'white';
         const myName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'Opponent';
         const myId   = window.agsCurrentUserId || '';
         const myRating = window.agsGetRating?.() ?? null;
-        conn.send({ type: 'game_start', yourColor: joinerColor, opponentName: myName, opponentId: myId, rating: myRating });
+        try {
+          conn.send({ type: 'game_start', yourColor: joinerColor, opponentName: myName, opponentId: myId, rating: myRating });
+        } catch (error) {
+          console.warn('Could not send the initial game state:', error);
+          handlePreGameFailure('Could not start the match connection. Still waiting for your friend…');
+          try { conn.close(); } catch {}
+          return;
+        }
         startGame();
       }
     } else {
@@ -3018,7 +3173,9 @@ function setupPeerConnection(conn, role) {
 
     flushMoveQueue(conn);
     updateChatAvailability();
-  });
+  };
+  conn.on('open', handleConnectionOpen);
+  if (conn.open) queueMicrotask(handleConnectionOpen);
 
   conn.on('data', data => {
     if (!isPeerMessageWithinLimit(data) || typeof data.type !== 'string') {
@@ -3153,17 +3310,25 @@ function setupPeerConnection(conn, role) {
   });
 
   conn.on('close', () => {
+    if (connectionOpenTimer) clearTimeout(connectionOpenTimer);
     if (peerConn !== conn) return;   // stale event from a replaced/manually-closed connection
-    if (!game) { peerConn = null; return; }   // pre-game drop — clear so new connections are accepted
+    if (!game) {
+      handlePreGameFailure('The match connection closed before the game started. Ask your friend for a new invite.');
+      return;
+    }
     if (isGameActiveStatus(game.status)) {
       handleConnectionLost();
     }
   });
 
   conn.on('error', err => {
+    if (connectionOpenTimer) clearTimeout(connectionOpenTimer);
     console.error('Peer connection error:', err);
     if (peerConn !== conn) return;
-    if (!game) { peerConn = null; return; }
+    if (!game) {
+      handlePreGameFailure('Could not establish the match connection. Check your connection and try again.');
+      return;
+    }
     if (isGameActiveStatus(game.status)) {
       handleConnectionLost();
     }
@@ -3255,7 +3420,7 @@ function cancelWaiting() {
     matchmakingActive = false;
     stopMatchmakingWaitTimer();
     if (typeof window.agsCancelMatchmaking === 'function') {
-      window.agsCancelMatchmaking();
+      void window.agsCancelMatchmaking();
     }
     destroyPeer();
     showScreen('home');
@@ -4219,25 +4384,16 @@ function removeContact(address) {
 async function sendInviteToContact(name, address, link) {
   if (address.includes('@')) {
     const fromName = document.getElementById('ags-signedin-name')?.textContent || playerName || 'A friend';
-    const token = typeof window.agsGetToken === 'function' ? window.agsGetToken() : null;
-    const extendBase = (typeof __EXTEND_EMAIL_URL__ !== 'undefined' && __EXTEND_EMAIL_URL__)
-      ? __EXTEND_EMAIL_URL__
-      : '/extend';
-
     try {
-      const res = await fetch(`${extendBase}/invite/email`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: 'Bearer ' + token } : {}),
-        },
-        body: JSON.stringify({ to: address, from_name: fromName, invite_link: link }),
-      });
-      if (!res.ok) throw new Error('status ' + res.status);
+      if (typeof window.agsSendInviteEmail !== 'function') {
+        throw new Error('Invite email service is not ready.');
+      }
+      const result = await window.agsSendInviteEmail({ to: address, fromName, inviteLink: link });
+      if (!result?.ok) throw new Error(result?.error || 'Could not send the invite email.');
       showConnBanner(`Invite sent to ${name}!`, 'success');
     } catch (err) {
       console.warn('[invite] email send failed:', err);
-      showConnBanner('Could not send email — share the link below manually.', 'error');
+      showConnBanner(err?.message || 'Could not send email — share the link below manually.', 'error');
     }
   } else {
     const msg = `Hey ${name}! Let's play chess. Open this link to join my game: ${link}`;

@@ -15,6 +15,7 @@ import { resolveDisplayNames, cacheDisplayName } from './leaderboard.js'
 import { fetchPresenceMap } from './presence.js'
 import { moderateIncomingDisplayName } from './content-moderation.mjs'
 import { normalizeFamilyError, isNotInGroupResponse, resolveMemberRole } from './family-feedback.mjs'
+import { fetchWithTimeout } from './network.mjs'
 
 const CONFIGURATION_CODE = 'chess-family'
 
@@ -54,7 +55,7 @@ async function groupFetch(method, path, body) {
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...(body ? { 'Content-Type': 'application/json' } : {}),
     }
-    return fetch(`${baseURL}/group/${resolvedPath}`, {
+    return fetchWithTimeout(`${baseURL}/group/${resolvedPath}`, {
       method,
       headers,
       credentials: 'include',

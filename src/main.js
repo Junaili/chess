@@ -6,14 +6,14 @@ import { validateBirthYear, isBirthYearUnder13, isChildSession, buildConsentReco
 import { setQueueUIHandler, cancelLoginQueue } from './login-queue.js'
 import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
-import { installSessionKeepAlive, scheduleProactiveRefresh, subscribeAccessTokenRefresh } from './session.js'
+import { installSessionKeepAlive, refreshIfStale, scheduleProactiveRefresh, subscribeAccessTokenRefresh } from './session.js'
 import { fetchPendingLegalDocuments, fetchAcceptedLegalDocuments, fetchLegalAttachment, acceptLegalDocuments } from './legal.js'
 import { parseLegalMarkdown } from './legal-markdown.mjs'
 import { initStats, fetchStats, fetchLeaderboardPlayerStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave, recordEloResult } from './stats.js'
 import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache, fetchMergedAchievements } from './achievements.js'
 import { sendEvent, flushPendingEvents, captureUtm, clearPendingEvents } from './telemetry.js'
 import { readPrivacyPreferences, writePrivacyPreferences } from './privacy-preferences.mjs'
-import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching, fetchLiveMatch, resolveMatchForfeit } from './spectator.js'
+import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching, fetchLiveMatch, fetchLiveMatchStrict, resolveMatchForfeit } from './spectator.js'
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName, LEADERBOARD_VIEWS } from './leaderboard.js'
 import { computeMatchStats, summarizeCoachingGrades, combineCoachingSummaries } from './match-stats.mjs'
 import { deriveMatchRoles, computeDeadline, isPastDeadline, isResumable, pickAuthoritativeMoves } from './match-resume.mjs'
@@ -22,7 +22,7 @@ import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFrie
 import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite, rejectFamilyInvite, removeFamilyMember, leaveFamily, familyTransportAvailable, recordParentalConsent } from './family.js'
 import { initGusPanel, resetGusPanel, openGusProfile, refreshGusProfile, showGusTab, startGusMatchmaking as startGusMatchmakingFlow } from './gus.js'
 import { renderJournalTab, resetJournalState } from './journal.js'
-import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
+import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, refreshPresenceToken, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
 import {
   moderateIncomingChat,
@@ -82,7 +82,18 @@ const chatClient = createAgsChatClient({
 chatClient.subscribeState(state => window.handleAGSChatState?.(state))
 chatClient.subscribeMessages(message => window.handleAGSChatMessage?.(message))
 subscribeAccessTokenRefresh(accessToken => {
-  chatClient.refreshToken(accessToken).catch(() => {})
+  if (chatClient.snapshot().connected) {
+    void chatClient.refreshToken(accessToken).then(refreshed => {
+      if (!refreshed) console.warn('[Chat] token handoff missed; reconnecting with the new token')
+    }).catch(error => {
+      console.warn('[Chat] token refresh handoff failed:', error?.message || error)
+    })
+  }
+  void refreshPresenceToken(accessToken).then(refreshed => {
+    if (!refreshed) console.warn('[AGS presence] token handoff missed; reconnecting with the new token')
+  }).catch(error => {
+    console.warn('[AGS presence] token refresh handoff failed:', error?.message || error)
+  })
 })
 
 window.agsPrepareSessionChat = () => chatClient.prepareSessionChat()
@@ -343,6 +354,9 @@ let legalReaderTrigger = null
 let friendsState = { friends: [], incoming: [], outgoing: [] }
 let familyState = { group: null, members: [], incomingInvites: [] }
 let friendsRefreshTimer = null
+let friendsRefreshPromise = null
+let friendsRefreshQueued = false
+let friendsRefreshQueuedPreserveMessage = false
 let unsubscribePresenceUpdates = null
 let unsubscribeGameInvites = null
 let unsubscribeInviteJoins = null
@@ -611,28 +625,71 @@ async function reportReferral() {
   const inviter = sessionStorage.getItem('chess_invite_by')
   if (!inviter || inviter === currentUserId || !sdk.getToken()?.accessToken) return
   try {
-    await extendFetch('/referral', {
+    const response = await extendFetch('/referral', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ inviterUserId: inviter }),
     })
+    if (!response.ok) {
+      console.warn('[referral] report rejected:', response.status)
+      // Validation failures cannot improve on retry; transient/service errors
+      // retain the session marker so a later hydration can try again.
+      if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+        sessionStorage.removeItem('chess_invite_by')
+      }
+      return
+    }
     sendEvent('referral_reported', { inviter_user_id: inviter })
-  } catch {}
-  sessionStorage.removeItem('chess_invite_by')
+    sessionStorage.removeItem('chess_invite_by')
+  } catch (error) {
+    console.warn('[referral] report unavailable:', error?.message || error)
+  }
 }
+
+async function sendInviteEmail({ to, fromName, inviteLink }) {
+  if (!to || !inviteLink) return { ok: false, error: 'Email and invite link are required.' }
+  try {
+    const response = await extendFetch('/invite/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, from_name: fromName || 'A friend', invite_link: inviteLink }),
+    })
+    if (response.ok) return { ok: true }
+    const payload = await response.json().catch(() => ({}))
+    return {
+      ok: false,
+      error: response.status === 429
+        ? 'Too many invite emails were sent. Try again later.'
+        : (payload?.errorMessage || payload?.message || payload?.error || 'Could not send the invite email.'),
+    }
+  } catch (error) {
+    console.warn('[invite] email delivery failed:', error?.message || error)
+    return { ok: false, error: 'Could not reach the email service. Check your connection and try again.' }
+  }
+}
+
+// app.js is a classic script, so expose the authenticated/refreshing transport
+// as a narrow bridge instead of letting it make a second raw Extend fetch.
+window.agsSendInviteEmail = sendInviteEmail
 
 // Send the new player a welcome email via the Extend service. Best-effort:
 // runs after a successful email/password registration and never blocks signup.
 async function sendWelcomeEmail(emailAddress, displayName) {
   if (!emailAddress || !sdk.getToken()?.accessToken) return
   try {
-    await extendFetch('/welcome/email', {
+    const response = await extendFetch('/welcome/email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ to: emailAddress, display_name: displayName || '' }),
     })
+    if (!response.ok) {
+      console.warn('[welcome] email delivery rejected:', response.status)
+      return
+    }
     sendEvent('welcome_email_sent', { method: 'email' })
-  } catch {}
+  } catch (error) {
+    console.warn('[welcome] email delivery unavailable:', error?.message || error)
+  }
 }
 
 function addUtm(url, medium, campaign = 'player-invite') {
@@ -710,6 +767,12 @@ function mountShareRow(containerEl, url, opts = {}) {
 
   const row = document.createElement('div')
   row.className = 'share-row'
+  const emailStatus = emailTo ? document.createElement('p') : null
+  if (emailStatus) {
+    emailStatus.className = 'share-row-status'
+    emailStatus.setAttribute('role', 'status')
+    emailStatus.setAttribute('aria-live', 'polite')
+  }
 
   const copyBtn = document.createElement('button')
   copyBtn.className = 'share-chip share-chip-copy'
@@ -750,18 +813,23 @@ function mountShareRow(containerEl, url, opts = {}) {
     emailBtn.addEventListener('click', async () => {
       emailBtn.disabled = true
       emailBtn.textContent = 'Sending…'
-      try {
-        const res = await extendFetch('/invite/email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to: emailTo, from_name: fromName || 'A friend', invite_link: emailUrl }),
-        })
-        if (!res.ok) throw new Error('status ' + res.status)
+      const result = await sendInviteEmail({ to: emailTo, fromName, inviteLink: emailUrl })
+      if (result.ok) {
         fire('email')
+        emailStatus.textContent = `Invite email sent to ${emailTo}.`
+        emailStatus.classList.remove('error')
         emailBtn.textContent = '✅ Sent!'
-        setTimeout(() => { emailBtn.textContent = '✉️ Email'; emailBtn.disabled = false }, 3000)
-      } catch {
-        emailBtn.textContent = '✉️ Email'
+        setTimeout(() => {
+          emailBtn.textContent = '✉️ Email'
+          emailBtn.disabled = false
+          emailStatus.textContent = ''
+        }, 3000)
+      } else {
+        emailStatus.textContent = result.error
+        emailStatus.classList.add('error')
+        emailBtn.textContent = '↻ Retry email'
+        emailBtn.title = result.error
+        emailBtn.setAttribute('aria-label', `${result.error} Retry email`)
         emailBtn.disabled = false
       }
     })
@@ -788,6 +856,7 @@ function mountShareRow(containerEl, url, opts = {}) {
   }
 
   containerEl.appendChild(row)
+  if (emailStatus) containerEl.appendChild(emailStatus)
   return row
 }
 
@@ -880,7 +949,18 @@ async function hydrateAuthenticatedUser(profile) {
       // Fire-and-forget so hydration isn't blocked on the friend network calls.
       void (async () => {
         // Real-time nudge so the inviter's client auto-accepts (link invites).
-        sendInviteJoinNotification({ to: invitedBy, fromUserId: currentUserId, fromName: name }).catch(() => {})
+        void sendInviteJoinNotification({
+          to: invitedBy,
+          fromUserId: currentUserId,
+          fromName: name,
+        }).then(result => {
+          if (result?.ok) return
+          sessionStorage.removeItem(notifKey)
+          console.warn('[invite] join notification was not delivered:', result?.error || 'unknown error')
+        }).catch(error => {
+          sessionStorage.removeItem(notifKey)
+          console.warn('[invite] join notification failed:', error?.message || error)
+        })
         // Auto-connect as friends — accepting the invite is the consent. Accept
         // an existing request from the inviter, otherwise send one (the inviter
         // side auto-accepts via processIncomingInviteAcceptances / the join toast).
@@ -2250,6 +2330,7 @@ async function initAuth() {
   window.agsIsResumable = (record, now) => isResumable(record, now)
   window.agsPickAuthoritativeMoves = (mine, theirs) => pickAuthoritativeMoves(mine, theirs)
   window.agsFetchLiveMatch = (userId) => fetchLiveMatch(userId)
+  window.agsFetchLiveMatchStrict = (userId) => fetchLiveMatchStrict(userId)
   window.agsResolveMatchForfeit = (userId, matchId, loserUserId) => resolveMatchForfeit(userId, matchId, loserUserId)
   window.agsIncrementWin = async () => {
     if (!currentUserId) return
@@ -3430,14 +3511,16 @@ async function runFriendAction(action, successMessage) {
   return true
 }
 
-async function refreshFriendsUI(showLoading = true, preserveMessage = false) {
+async function performFriendsRefresh(showLoading, preserveMessage) {
   if (!currentUserId) {
     renderFriendsPanel(false)
     renderFamilyPanel(false)
     return
   }
+  const userId = currentUserId
   if (showLoading) setFriendsMessage('Loading friends...')
   const state = await fetchFriendState()
+  if (currentUserId !== userId) return
   if (!state.ok) {
     setFriendsMessage(state.error, 'error')
     renderFriendsPanel(true)
@@ -3451,10 +3534,41 @@ async function refreshFriendsUI(showLoading = true, preserveMessage = false) {
 
   // Family rides the same refresh cycle (login, 15s timer, lobby reconnect) —
   // fire-and-forget so a family hiccup never blocks the friends list.
-  refreshFamilyUI(false)
+  void refreshFamilyUI(false)
 
   const anyAccepted = await processIncomingInviteAcceptances(state.incoming)
-  if (anyAccepted) await refreshFriendsUI(false)
+  if (anyAccepted && currentUserId === userId) {
+    await performFriendsRefresh(false, preserveMessage)
+  }
+}
+
+async function refreshFriendsUI(showLoading = true, preserveMessage = false) {
+  if (friendsRefreshPromise) {
+    // Coalesce timer/Lobby/manual refresh storms, but remember that one more
+    // pass is needed after the current snapshot so action-triggered updates
+    // cannot be overwritten by an older in-flight response.
+    friendsRefreshQueued = true
+    friendsRefreshQueuedPreserveMessage ||= preserveMessage
+    return friendsRefreshPromise
+  }
+
+  friendsRefreshPromise = (async () => {
+    let nextShowLoading = showLoading
+    let nextPreserveMessage = preserveMessage
+    do {
+      friendsRefreshQueued = false
+      friendsRefreshQueuedPreserveMessage = false
+      await performFriendsRefresh(nextShowLoading, nextPreserveMessage)
+      nextShowLoading = false
+      nextPreserveMessage = friendsRefreshQueuedPreserveMessage
+    } while (friendsRefreshQueued && currentUserId)
+  })()
+
+  try {
+    return await friendsRefreshPromise
+  } finally {
+    friendsRefreshPromise = null
+  }
 }
 
 function notifyNewFriendRequests(incoming = []) {
@@ -3479,7 +3593,7 @@ function notifyNewFriendRequests(incoming = []) {
 function startFriendsRefresh() {
   stopFriendsRefresh()
   friendsRefreshTimer = setInterval(() => {
-    if (currentUserId) refreshFriendsUI(false)
+    if (currentUserId) void refreshFriendsUI(false)
   }, 15000)
 }
 
@@ -3569,6 +3683,7 @@ function stopGameInviteUpdates() {
     unsubscribeGameInvites()
     unsubscribeGameInvites = null
   }
+  window.clearFriendMatchInvite?.()
 }
 
 function startInviteJoinUpdates() {
@@ -3912,8 +4027,10 @@ async function refreshFamilyUI(showLoading = true) {
     renderFamilyPanel(false)
     return
   }
+  const userId = currentUserId
   if (showLoading) setFamilyMessage('Loading family...')
   const state = await fetchFamilyState()
+  if (currentUserId !== userId) return
   if (!state.ok) {
     setFamilyMessage(state.error, 'error')
     renderFamilyPanel(true)
@@ -4607,11 +4724,28 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
 
 window.addEventListener('beforeunload', disconnectPresence)
 window.addEventListener('pagehide', pausePresence)
+async function restoreRealtimeAfterResume() {
+  try {
+    await refreshIfStale()
+  } catch (error) {
+    console.warn('[AGS lifecycle] session refresh after resume failed:', error?.message || error)
+  } finally {
+    // A transient refresh failure must not leave realtime permanently paused;
+    // Presence will reconnect persistently and the session timer will retry.
+    if (sdk.getToken()?.accessToken) resumePresence()
+  }
+}
+
+window.addEventListener('pageshow', () => { void restoreRealtimeAfterResume() })
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') {
+  const native = !!window.Capacitor?.isNativePlatform?.()
+  if (document.visibilityState === 'hidden' && native) {
+    // iOS suspends background sockets; close cleanly and reconnect with a
+    // fresh token on foreground. Web tabs stay connected so browser game
+    // invite notifications can actually arrive while the tab is hidden.
     pausePresence()
-  } else {
-    resumePresence()
+  } else if (document.visibilityState === 'visible') {
+    void restoreRealtimeAfterResume()
   }
 })
 

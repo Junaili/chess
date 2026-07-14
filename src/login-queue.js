@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from './network.mjs'
+
 // AGS Login Queue handling.
 //
 // When IAM is enabled with a login queue and is at capacity, the login
@@ -78,7 +80,7 @@ function interruptibleSleep(ms, isCancelled) {
 
 async function refreshTicket(ticketInfo) {
   try {
-    const resp = await fetch(ticketInfo.refresh.href, {
+    const resp = await fetchWithTimeout(ticketInfo.refresh.href, {
       method: ticketInfo.refresh.action || 'GET',
       headers: { Authorization: `Bearer ${ticketInfo.ticket}` },
     })
@@ -93,7 +95,7 @@ async function refreshTicket(ticketInfo) {
 async function releaseTicket(ticketInfo) {
   try {
     if (!ticketInfo.cancel || !ticketInfo.cancel.href) return
-    await fetch(ticketInfo.cancel.href, {
+    await fetchWithTimeout(ticketInfo.cancel.href, {
       method: ticketInfo.cancel.action || 'DELETE',
       headers: { Authorization: `Bearer ${ticketInfo.ticket}` },
     })
@@ -106,7 +108,7 @@ async function releaseTicket(ticketInfo) {
 // payload on success, the (still-queued) ticket if not yet admitted, or null.
 async function finalize(baseURL, authHeader, ticket) {
   try {
-    const resp = await fetch(`${baseURL}/iam/v3/oauth/token`, {
+    const resp = await fetchWithTimeout(`${baseURL}/iam/v3/oauth/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',

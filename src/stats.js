@@ -129,32 +129,40 @@ function normalizeMatchHistory(value) {
   }
 }
 
-export async function fetchMatchHistory(userId) {
+async function fetchMatchHistoryStrict(userId) {
   if (!userId) return []
+  const api = cloudSaveApi()
+  let res
   try {
-    const api = cloudSaveApi()
-    let res
-    try {
-      res = await api.getPublic_ByUserId_ByKey(userId, MATCH_HISTORY_KEY)
-    } catch (e) {
-      if (e?.response?.status !== 404) throw e
-      res = await api.getRecord_ByUserId_ByKey(userId, MATCH_HISTORY_KEY)
-    }
-    const history = normalizeMatchHistory(res.data?.value?.matches)
-      .filter(match => match?.endedAt && match?.durationMs)
-      .map(match => ({
-        ...match,
-        opponentName: moderateIncomingDisplayName(match.opponentName, 'Opponent'),
-        whiteName: moderateIncomingDisplayName(match.whiteName, 'White'),
-        blackName: moderateIncomingDisplayName(match.blackName, 'Black'),
-      }))
-      .sort((a, b) => Date.parse(b.endedAt) - Date.parse(a.endedAt))
-    if (localStorage.getItem('ags_match_history_debug') === '1') {
-      console.debug('[AGS match history] fetched', { userId, count: history.length, record: res.data })
-    }
-    return history
+    res = await api.getPublic_ByUserId_ByKey(userId, MATCH_HISTORY_KEY)
   } catch (e) {
-    if (e?.response?.status === 404) return []
+    if (e?.response?.status !== 404) throw e
+    try {
+      res = await api.getRecord_ByUserId_ByKey(userId, MATCH_HISTORY_KEY)
+    } catch (privateError) {
+      if (privateError?.response?.status === 404) return []
+      throw privateError
+    }
+  }
+  const history = normalizeMatchHistory(res.data?.value?.matches)
+    .filter(match => match?.endedAt && match?.durationMs)
+    .map(match => ({
+      ...match,
+      opponentName: moderateIncomingDisplayName(match.opponentName, 'Opponent'),
+      whiteName: moderateIncomingDisplayName(match.whiteName, 'White'),
+      blackName: moderateIncomingDisplayName(match.blackName, 'Black'),
+    }))
+    .sort((a, b) => Date.parse(b.endedAt) - Date.parse(a.endedAt))
+  if (localStorage.getItem('ags_match_history_debug') === '1') {
+    console.debug('[AGS match history] fetched', { userId, count: history.length, record: res.data })
+  }
+  return history
+}
+
+export async function fetchMatchHistory(userId) {
+  try {
+    return await fetchMatchHistoryStrict(userId)
+  } catch (e) {
     console.warn('[AGS match history] fetch:', e?.message || e)
     return []
   }
@@ -178,7 +186,10 @@ export async function recordMatchHistory(match) {
     if (localStorage.getItem('ags_match_history_debug') === '1') {
       console.debug('[AGS match history] record build', MATCH_HISTORY_BUILD)
     }
-    const current = await fetchMatchHistory(match.playerUserId)
+    // A failed read is not an empty history. The forgiving UI helper would
+    // otherwise let a brief CloudSave outage replace every saved match with
+    // just this new entry.
+    const current = await fetchMatchHistoryStrict(match.playerUserId)
     const entry = {
       id: match.id || `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       mode: match.mode || 'unknown',

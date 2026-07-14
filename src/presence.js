@@ -1,5 +1,13 @@
 import { Lobby } from '@accelbyte/sdk-lobby'
 import { sdk } from './ags-client.js'
+import {
+  classifyPersonalChatResponse,
+  createDeliveryDeduper,
+  deliverWithRetry,
+  isStaleDelivery,
+  serializePersonalChatPayload,
+} from './realtime-delivery.mjs'
+import { parseMatchFoundNotification } from './matchmaking-recovery.mjs'
 
 const AVAILABILITY = {
   offline: 0,
@@ -20,15 +28,18 @@ let currentStatus = 'offline'
 let heartbeatTimer = null
 let reconnectTimer = null
 let reconnectAttempts = 0
-let openWaiters = []
+let openWaiters = new Set()
 let pendingStatusRequests = new Map()
 let pendingPersonalChatRequests = new Map()
+let pendingTokenRefreshRequests = new Map()
 let presenceListeners = new Set()
 let gameInviteListeners = new Set()
 let lobbyOpenListeners = new Set()
 let inviteJoinListeners = new Set()
 let friendsChangeListeners = new Set()
+let matchFoundListeners = new Set()
 const knownPresence = new Map()  // userId (normalised) → last confirmed presence
+const seenRealtimeDeliveries = createDeliveryDeduper()
 
 const HEARTBEAT_MS    = 45000    // re-send presence every 45 s to prevent server idle timeout
 // A brand-new account's just-issued token commonly fails its first Lobby
@@ -41,10 +52,11 @@ const FAST_RECONNECT_DELAYS_MS = [300, 800, 1500]
 const FAST_RECONNECT_ATTEMPTS = FAST_RECONNECT_DELAYS_MS.length
 const RECONNECT_DELAY_MS = 1500  // base for the slow phase; doubles each attempt, capped at 60s
 const RECONNECT_MAX_MS = 60000
-const RECONNECT_MAX_ATTEMPTS = 8 // give up after this many consecutive failures
+const RECONNECT_WARN_ATTEMPT = 8
 const OFFLINE_FLUSH_MS = 1000
-const CONNECT_TIMEOUT_MS = 2500
+const CONNECT_TIMEOUT_MS = 10000
 const FRIENDS_STATUS_TIMEOUT_MS = 5000
+const INVITE_MAX_AGE_MS = 10 * 60 * 1000
 
 function debugPresence(...args) {
   try {
@@ -60,8 +72,16 @@ try {
 } catch {}
 
 function lobbyId() {
-  if (crypto?.randomUUID) return crypto.randomUUID().replace(/-/g, '')
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().replace(/-/g, '')
   return 'presence-' + Math.random().toString(36).slice(2)
+}
+
+function settleOpenWaiters(opened) {
+  for (const waiter of openWaiters) {
+    clearTimeout(waiter.timer)
+    waiter.resolve(opened)
+  }
+  openWaiters.clear()
 }
 
 // Tear down a dead socket and schedule a reconnect. Shared by onClose and (for
@@ -73,23 +93,28 @@ function handleSocketDown(socket) {
   debugPresence('down')
   lobbyConnected = false
   lobbyWs = null
+  try { socket.disconnect() } catch {}
   pendingStatusRequests.forEach(pending => pending.resolve(null))
   pendingStatusRequests.clear()
   pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
   pendingPersonalChatRequests.clear()
+  pendingTokenRefreshRequests.forEach(pending => pending.resolve(null))
+  pendingTokenRefreshRequests.clear()
+  if (currentStatus === 'offline') settleOpenWaiters(false)
   scheduleReconnect()
 }
 
 function scheduleReconnect() {
   if (currentStatus === 'offline' || reconnectTimer) return
-  if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
-    console.warn('[AGS presence] giving up reconnect after', reconnectAttempts, 'attempts')
-    reconnectAttempts = 0
-    return
+  if (reconnectAttempts === RECONNECT_WARN_ATTEMPT) {
+    console.warn('[AGS presence] Lobby is still unavailable; continuing background reconnects')
   }
   const delay = reconnectAttempts < FAST_RECONNECT_ATTEMPTS
     ? FAST_RECONNECT_DELAYS_MS[reconnectAttempts]
-    : Math.min(RECONNECT_DELAY_MS * (2 ** (reconnectAttempts - FAST_RECONNECT_ATTEMPTS)), RECONNECT_MAX_MS)
+    : Math.min(
+        RECONNECT_DELAY_MS * (2 ** Math.min(reconnectAttempts - FAST_RECONNECT_ATTEMPTS, 8)),
+        RECONNECT_MAX_MS,
+      )
   reconnectAttempts++
   debugPresence('schedule-reconnect', { attempt: reconnectAttempts, delay })
   reconnectTimer = setTimeout(() => {
@@ -103,17 +128,29 @@ function scheduleReconnect() {
 
 function ensureLobbyConnected() {
   if (lobbyWs) return lobbyWs
+  if (!sdk.getToken()?.accessToken) return null
 
-  const socket = Lobby.WebSocket(sdk)
-  lobbyWs = socket
-  let opened = false
-  socket.connect()
+  let socket
+  try {
+    socket = Lobby.WebSocket(sdk)
+    lobbyWs = socket
+    // The generated SDK only lets listeners be registered after connect()
+    // creates its native WebSocket. Browser open events are asynchronous, so
+    // the listeners below are still attached before the handshake completes.
+    socket.connect()
+  } catch (error) {
+    lobbyWs = null
+    lobbyConnected = false
+    debugPresence('connect-throw', error?.message || error)
+    scheduleReconnect()
+    return null
+  }
   socket.onMessage(raw => {
     if (lobbyWs !== socket) return
     const message = parseLobbyMessage(raw)
     debugPresence('message', { raw, message })
     if (message?.type === 'friendsStatusResponse') {
-      console.log('[AGS presence] friendsStatusResponse received:', {
+      debugPresence('friends-status-response', {
         responseId: message.id,
         code: message.code,
         friendIds: message.friendIds || message.friendsId,
@@ -125,15 +162,33 @@ function ensureLobbyConnected() {
       if (pending) {
         pendingStatusRequests.delete(key)
         pending.resolve(message)
-      } else {
-        console.warn('[AGS presence] friendsStatusResponse ID not matched — dropped:', message.id)
-      }
+      } else debugPresence('unmatched-friends-status-response', message.id)
     } else if (message?.type === 'personalChatResponse') {
       const pending = pendingPersonalChatRequests.get(normalizeId(message.id))
       if (pending) {
         pendingPersonalChatRequests.delete(normalizeId(message.id))
         pending.resolve(message)
       }
+    } else if (message?.type === 'errorNotif') {
+      // Lobby reports protocol-level failures (including payload-too-large)
+      // through errorNotif, not personalChatResponse. Correlate it by request
+      // id so the UI gets the real error immediately instead of waiting five
+      // seconds, tearing down a healthy socket, and repeating the same send.
+      const key = normalizeId(message.id)
+      const pending = pendingPersonalChatRequests.get(key)
+      if (pending && (!message.requestType || message.requestType === 'personalChatRequest')) {
+        pendingPersonalChatRequests.delete(key)
+        pending.resolve(message)
+      }
+    } else if (message?.type === 'refreshTokenResponse') {
+      const key = normalizeId(message.id)
+      const pending = pendingTokenRefreshRequests.get(key)
+      if (pending) {
+        pendingTokenRefreshRequests.delete(key)
+        pending.resolve(message)
+      }
+    } else if (message?.type === 'messageNotif' && message?.topic === 'OnMatchFound') {
+      notifyMatchFound(message)
     } else if (message?.type === 'personalChatNotif' || message?.type === 'messageNotif') {
       notifyGameInvite(message)
     } else if (message?.type === 'userStatusNotif') {
@@ -150,23 +205,28 @@ function ensureLobbyConnected() {
   }, true)
   socket.onOpen(() => {
     if (lobbyWs !== socket) return
-    opened = true
     lobbyConnected = true
     reconnectAttempts = 0
     debugPresence('open')
-    openWaiters.splice(0).forEach(resolve => resolve(true))
+    settleOpenWaiters(true)
     if (queuedStatus) {
       sendPresence(queuedStatus)
       queuedStatus = null
     }
-    lobbyOpenListeners.forEach(cb => { try { cb() } catch {} })
+    lobbyOpenListeners.forEach(listener => {
+      try {
+        listener()
+      } catch (error) {
+        console.warn('[AGS presence] Lobby-open listener:', error?.message || error)
+      }
+    })
   })
   socket.onClose(() => handleSocketDown(socket))
   socket.onError(err => {
     if (lobbyWs !== socket) return
-    const detail = err instanceof ErrorEvent
+    const detail = typeof ErrorEvent !== 'undefined' && err instanceof ErrorEvent
       ? err.message
-      : err instanceof Event
+      : typeof Event !== 'undefined' && err instanceof Event
         ? `WebSocket ${err.type} — readyState=${err.target?.readyState}, url=${err.target?.url}`
         : (err?.message || String(err))
     // Quiet for the first few fast-retry attempts (see FAST_RECONNECT_*): a
@@ -178,28 +238,29 @@ function ensureLobbyConnected() {
     } else {
       debugPresence('error (retrying)', detail)
     }
-    openWaiters.splice(0).forEach(resolve => resolve(false))
-    pendingStatusRequests.forEach(pending => pending.resolve(null))
-    pendingStatusRequests.clear()
-    pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
-    pendingPersonalChatRequests.clear()
-    // Defensive: a connection that never opened should always be followed by a
-    // 'close' event, but don't stake reconnection on it — tear down and retry
-    // now rather than risk waiting on a 'close' that's delayed or never comes.
-    if (!opened) handleSocketDown(socket)
+    // A WebSocket error leaves delivery state uncertain whether or not the
+    // browser emits a prompt close event. Replace it now; handleSocketDown's
+    // identity guard makes a later close event harmless.
+    handleSocketDown(socket)
   })
   return socket
 }
 
 function waitForLobbyOpen(timeoutMs = CONNECT_TIMEOUT_MS) {
   if (lobbyConnected) return Promise.resolve(true)
-  ensureLobbyConnected()
   return new Promise(resolve => {
-    const timer = setTimeout(() => resolve(false), timeoutMs)
-    openWaiters.push(opened => {
-      clearTimeout(timer)
-      resolve(opened)
-    })
+    const waiter = { resolve, timer: null }
+    waiter.timer = setTimeout(() => {
+      openWaiters.delete(waiter)
+      resolve(false)
+    }, timeoutMs)
+    openWaiters.add(waiter)
+    const socket = ensureLobbyConnected()
+    if (!socket) {
+      clearTimeout(waiter.timer)
+      openWaiters.delete(waiter)
+      resolve(false)
+    }
   })
 }
 
@@ -209,7 +270,7 @@ function sleep(ms) {
 
 function sendPresence(status) {
   const ws = ensureLobbyConnected()
-  if (!lobbyConnected) {
+  if (!ws || !lobbyConnected) {
     queuedStatus = status
     debugPresence('queue-status', status)
     return
@@ -235,6 +296,7 @@ function sendPresence(status) {
   } catch (e) {
     debugPresence('set-status-error', e?.message || e)
     queuedStatus = status
+    handleSocketDown(ws)
   }
 }
 
@@ -270,13 +332,13 @@ export function setPresenceStatus(status) {
 export function disconnectPresence() {
   stopHeartbeat()
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
-  if (!lobbyWs) return
+  const socket = lobbyWs
   try {
-    if (lobbyConnected) {
+    if (socket && lobbyConnected) {
       sendPresence('offline')
-      lobbyWs.sendOfflineNotification({ id: lobbyId() })
+      socket.sendOfflineNotification({ id: lobbyId() })
     }
-    lobbyWs.disconnect()
+    socket?.disconnect()
   } catch (e) {
     console.warn('[AGS presence] disconnect:', e?.message || e)
   } finally {
@@ -284,6 +346,14 @@ export function disconnectPresence() {
     queuedStatus = null
     lobbyWs = null
     lobbyConnected = false
+    reconnectAttempts = 0
+    settleOpenWaiters(false)
+    pendingStatusRequests.forEach(pending => pending.resolve(null))
+    pendingStatusRequests.clear()
+    pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
+    pendingPersonalChatRequests.clear()
+    pendingTokenRefreshRequests.forEach(pending => pending.resolve(null))
+    pendingTokenRefreshRequests.clear()
   }
 }
 
@@ -301,11 +371,13 @@ export async function refreshPresenceConnection() {
   lobbyWs = null
   lobbyConnected = false
   queuedStatus = null
-  openWaiters.splice(0).forEach(resolve => resolve(false))
+  settleOpenWaiters(false)
   pendingStatusRequests.forEach(pending => pending.resolve(null))
   pendingStatusRequests.clear()
   pendingPersonalChatRequests.forEach(pending => pending.resolve(null))
   pendingPersonalChatRequests.clear()
+  pendingTokenRefreshRequests.forEach(pending => pending.resolve(null))
+  pendingTokenRefreshRequests.clear()
 
   try {
     previousSocket?.disconnect()
@@ -323,13 +395,19 @@ export async function refreshPresenceConnection() {
 
 export async function signOutPresence() {
   if (!sdk.getToken()?.accessToken) return
-  const opened = await waitForLobbyOpen()
-  if (opened && lobbyWs) {
-    sendPresence('offline')
-    lobbyWs.sendOfflineNotification({ id: lobbyId() })
-    await sleep(OFFLINE_FLUSH_MS)
+  try {
+    const opened = await waitForLobbyOpen()
+    if (opened && lobbyWs) {
+      sendPresence('offline')
+      lobbyWs.sendOfflineNotification({ id: lobbyId() })
+      await sleep(OFFLINE_FLUSH_MS)
+    }
+  } catch (error) {
+    console.warn('[AGS presence] offline notification failed:', error?.message || error)
+  } finally {
+    // Signing out must never be blocked by a failed best-effort Lobby send.
+    disconnectPresence()
   }
-  disconnectPresence()
 }
 
 export function pausePresence() {
@@ -340,6 +418,47 @@ export function pausePresence() {
 export function resumePresence() {
   if (!sdk.getToken()?.accessToken) return
   setPresenceStatus('online')
+}
+
+// Keep an established Lobby socket authenticated when the proactive session
+// refresh rotates the access token. If the refresh acknowledgement is lost,
+// replace the socket so the next connection is guaranteed to use the new token.
+export async function refreshPresenceToken(accessToken) {
+  if (!accessToken || currentStatus === 'offline') return true
+  const opened = await waitForLobbyOpen()
+  const socket = lobbyWs
+  if (!opened || !socket) {
+    if (socket) handleSocketDown(socket)
+    return false
+  }
+
+  const id = lobbyId()
+  const key = normalizeId(id)
+  const acknowledged = await new Promise(resolve => {
+    const timer = setTimeout(() => {
+      pendingTokenRefreshRequests.delete(key)
+      resolve(false)
+    }, FRIENDS_STATUS_TIMEOUT_MS)
+    pendingTokenRefreshRequests.set(key, {
+      resolve: response => {
+        clearTimeout(timer)
+        resolve(response?.code === 0)
+      },
+    })
+    try {
+      socket.sendRefreshToken({ id, token: accessToken })
+    } catch (error) {
+      pendingTokenRefreshRequests.delete(key)
+      clearTimeout(timer)
+      debugPresence('refresh-token-send-error', error?.message || error)
+      resolve(false)
+    }
+  })
+
+  if (!acknowledged && lobbyWs === socket) {
+    handleSocketDown(socket)
+  }
+  return acknowledged
 }
 
 export function subscribePresenceUpdates(listener) {
@@ -393,64 +512,120 @@ export function subscribeInviteJoins(listener) {
   return () => inviteJoinListeners.delete(listener)
 }
 
-export async function sendInviteJoinNotification({ to, fromUserId, fromName }) {
-  const opened = await waitForLobbyOpen(5000)
-  if (!opened || !lobbyWs) return { ok: false }
-  const id = lobbyId()
-  try {
-    lobbyWs.sendPersonalChat({
-      id,
-      to,
-      payload: JSON.stringify({ type: 'chess-invite-clicked', fromUserId, fromName }),
-      receivedAt: new Date().toISOString(),
-    })
-    debugPresence('invite-join-sent', { to, fromUserId })
-    return { ok: true }
-  } catch {
-    return { ok: false }
-  }
+export function subscribeMatchFound(listener) {
+  matchFoundListeners.add(listener)
+  return () => matchFoundListeners.delete(listener)
 }
 
-export async function sendGameInvite({ from, to, payload }) {
+function notifyMatchFound(message) {
+  const match = parseMatchFoundNotification(message)
+  if (!match) return
+  debugPresence('match-found', match)
+  matchFoundListeners.forEach(listener => {
+    try {
+      listener(match)
+    } catch (error) {
+      console.warn('[AGS presence] match-found listener:', error?.message || error)
+    }
+  })
+}
+
+async function sendPersonalChatOnce({ from, to, payload }) {
+  const serialized = serializePersonalChatPayload(payload)
+  if (!serialized.ok) {
+    return { ok: false, retryable: false, error: serialized.error }
+  }
   const opened = await waitForLobbyOpen()
-  if (!opened || !lobbyWs) {
-    return { ok: false, error: 'Could not connect to AGS Lobby.' }
+  const socket = lobbyWs
+  if (!opened || !socket) {
+    return { ok: false, retryable: true, error: 'Could not connect to AGS Lobby.' }
   }
 
   const id = lobbyId()
+  const key = normalizeId(id)
   const message = {
     id,
     from,
     to,
-    payload: JSON.stringify(payload),
+    payload: serialized.value,
     receivedAt: new Date().toISOString(),
   }
 
   return new Promise(resolve => {
     const timer = setTimeout(() => {
-      pendingPersonalChatRequests.delete(id)
-      resolve({ ok: false, error: 'Invite request timed out.' })
+      pendingPersonalChatRequests.delete(key)
+      if (lobbyWs === socket) handleSocketDown(socket)
+      resolve({ ok: false, retryable: true, error: 'Invite delivery timed out.' })
     }, FRIENDS_STATUS_TIMEOUT_MS)
 
-    pendingPersonalChatRequests.set(id, {
+    pendingPersonalChatRequests.set(key, {
       resolve: response => {
         clearTimeout(timer)
-        if (response?.code === 0) {
-          resolve({ ok: true })
-        } else {
-          resolve({ ok: false, error: 'Could not send match invite.' })
+        const result = classifyPersonalChatResponse(response)
+        if (!result.ok) {
+          debugPresence('personal-chat-rejected', {
+            code: response?.code,
+            requestType: response?.requestType,
+            type: payload?.type,
+          })
         }
+        resolve(result)
       },
     })
 
-    debugPresence('send-game-invite', message)
+    debugPresence('send-personal-chat', { id, from, to, type: payload?.type })
     try {
-      lobbyWs.sendPersonalChat(message)
-    } catch (e) {
-      pendingPersonalChatRequests.delete(id)
+      socket.sendPersonalChat(message)
+    } catch (error) {
+      pendingPersonalChatRequests.delete(key)
       clearTimeout(timer)
-      resolve({ ok: false, error: 'Connection lost while sending invite.' })
+      handleSocketDown(socket)
+      resolve({ ok: false, retryable: true, error: 'Connection lost while sending the invite.' })
     }
+  })
+}
+
+async function deliverPersonalPayload({ from, to, payload }) {
+  if (!from || !to) {
+    return { ok: false, retryable: false, error: 'Invite sender and recipient are required.', attempts: 0 }
+  }
+  const result = await deliverWithRetry(() => sendPersonalChatOnce({ from, to, payload }))
+  const { cause, ...safeResult } = result
+  debugPresence('personal-chat-delivery', {
+    type: payload?.type,
+    deliveryId: payload?.deliveryId || payload?.inviteId,
+    ok: safeResult.ok,
+    attempts: safeResult.attempts,
+  })
+  return safeResult
+}
+
+export async function sendInviteJoinNotification({ to, fromUserId, fromName }) {
+  const sentAt = new Date().toISOString()
+  const deliveryId = `join-${lobbyId()}`
+  return deliverPersonalPayload({
+    from: fromUserId,
+    to,
+    payload: {
+      type: 'chess-invite-clicked',
+      deliveryId,
+      fromUserId,
+      fromName,
+      sentAt,
+    },
+  })
+}
+
+export async function sendGameInvite({ from, to, payload }) {
+  const deliveryId = payload?.inviteId || payload?.deliveryId || `invite-${lobbyId()}`
+  return deliverPersonalPayload({
+    from,
+    to,
+    payload: {
+      ...payload,
+      deliveryId,
+      sentAt: payload?.sentAt || new Date().toISOString(),
+    },
   })
 }
 
@@ -476,22 +651,39 @@ function notifyGameInvite(message) {
   } catch {
     return
   }
+  if (isStaleDelivery(payload?.sentAt, INVITE_MAX_AGE_MS)) {
+    debugPresence('stale-realtime-delivery', { type: payload?.type, sentAt: payload?.sentAt })
+    return
+  }
+  const fromUserId = payload?.fromUserId || message.from
+  const knownTypes = ['chess-invite-clicked', 'chess-match-invite', 'chess-match-declined']
+  if (!knownTypes.includes(payload?.type) || !fromUserId) return
+  if (payload.type === 'chess-match-invite' && !payload.peerId) return
+
+  const deliveryId = payload?.inviteId || payload?.deliveryId || message.id
+  if (seenRealtimeDeliveries.isDuplicate(`${payload?.type}:${fromUserId}:${deliveryId}`)) {
+    debugPresence('duplicate-realtime-delivery', { type: payload?.type, deliveryId })
+    return
+  }
   if (payload?.type === 'chess-invite-clicked') {
     const join = {
-      fromUserId: payload.fromUserId || message.from,
+      fromUserId,
       fromName: payload.fromName || null,
     }
     debugPresence('invite-join', join)
-    inviteJoinListeners.forEach(listener => { try { listener(join) } catch {} })
+    inviteJoinListeners.forEach(listener => {
+      try {
+        listener(join)
+      } catch (error) {
+        console.warn('[AGS presence] invite-join listener:', error?.message || error)
+      }
+    })
     return
   }
-  const knownTypes = ['chess-match-invite', 'chess-match-declined']
-  if (!knownTypes.includes(payload?.type)) return
-  if (payload.type === 'chess-match-invite' && !payload.peerId) return
 
   const invite = {
     ...payload,
-    fromUserId: payload.fromUserId || message.from,
+    fromUserId,
     toUserId: message.to,
     receivedAt: message.receivedAt,
   }
@@ -601,7 +793,7 @@ async function requestFriendsStatus() {
   return new Promise(resolve => {
     const timer = setTimeout(() => {
       pendingStatusRequests.delete(key)
-      console.warn('[AGS presence] friendsStatusRequest timed out — no response for id:', id)
+      debugPresence('friends-status-timeout', { id })
       resolve(null)
     }, FRIENDS_STATUS_TIMEOUT_MS)
 
@@ -611,7 +803,6 @@ async function requestFriendsStatus() {
         resolve(message)
       },
     })
-    console.log('[AGS presence] sendFriendsStatus, id:', id, 'key:', key)
     debugPresence('friends-status-request', { id })
     try {
       lobbyWs.sendFriendsStatus({ id })

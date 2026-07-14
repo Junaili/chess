@@ -17,6 +17,14 @@ export const sdk = AccelByte.SDK({
     namespace: import.meta.env.VITE_ACCELBYTE_NAMESPACE,
   },
   axiosConfig: {
-    request: { withCredentials: true },
+    // Bound every generated REST call. In particular, a hung matchmaking poll
+    // must not overlap forever with later polls on a degraded mobile network.
+    request: { withCredentials: true, timeout: 15_000 },
+  },
+  // presence.js owns reconnect/backoff so there is exactly one socket state
+  // machine. Running the SDK's reconnect loop alongside it can create two
+  // competing connections after a close or token refresh.
+  webSocketConfig: {
+    allowReconnect: false,
   },
 })

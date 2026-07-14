@@ -4,7 +4,8 @@ const ENVELOPE_END = 'CaEd'
 const REQUEST_TIMEOUT_MS = 10_000
 const SESSION_TOPIC_TIMEOUT_MS = 15_000
 const SESSION_TOPIC_RETRY_INTERVAL_MS = 500
-const MAX_RECONNECT_ATTEMPTS = 5
+const RECONNECT_BASE_DELAY_MS = 1_000
+const RECONNECT_MAX_DELAY_MS = 60_000
 
 export class AgsChatError extends Error {
   constructor(message, { code = null, kind = 'service', cause = null } = {}) {
@@ -83,6 +84,9 @@ export class AgsChatClient {
     requestTimeoutMs = REQUEST_TIMEOUT_MS,
     sessionTopicTimeoutMs = SESSION_TOPIC_TIMEOUT_MS,
     sessionTopicRetryIntervalMs = SESSION_TOPIC_RETRY_INTERVAL_MS,
+    connectTimeoutMs = requestTimeoutMs,
+    reconnectBaseDelayMs = RECONNECT_BASE_DELAY_MS,
+    reconnectMaxDelayMs = RECONNECT_MAX_DELAY_MS,
   }) {
     this.baseURL = baseURL
     this.namespace = namespace
@@ -93,6 +97,9 @@ export class AgsChatClient {
     this.requestTimeoutMs = requestTimeoutMs
     this.sessionTopicTimeoutMs = sessionTopicTimeoutMs
     this.sessionTopicRetryIntervalMs = sessionTopicRetryIntervalMs
+    this.connectTimeoutMs = connectTimeoutMs
+    this.reconnectBaseDelayMs = reconnectBaseDelayMs
+    this.reconnectMaxDelayMs = reconnectMaxDelayMs
 
     this.socket = null
     this.chatSessionId = ''
@@ -112,6 +119,7 @@ export class AgsChatClient {
     this.connectResolve = null
     this.connectReject = null
     this.reconnectTimer = null
+    this.connectTimer = null
     this.reconnectAttempts = 0
     this.restoreOnConnect = false
     this.activationGeneration = 0
@@ -121,7 +129,11 @@ export class AgsChatClient {
 
   subscribeState(listener) {
     this.stateListeners.add(listener)
-    listener({ state: this.state, detail: this.stateDetail, topicId: this.activeTopicId })
+    try {
+      listener({ state: this.state, detail: this.stateDetail, topicId: this.activeTopicId })
+    } catch (error) {
+      console.warn('[Chat] state listener:', error?.message || error)
+    }
     return () => this.stateListeners.delete(listener)
   }
 
@@ -148,6 +160,10 @@ export class AgsChatClient {
       return this.snapshot()
     }
     if (this.connectPromise) return this.connectPromise
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
     return this._openSocket(false)
   }
 
@@ -275,6 +291,8 @@ export class AgsChatClient {
     this.seenChats.clear()
     clearTimeout(this.reconnectTimer)
     this.reconnectTimer = null
+    clearTimeout(this.connectTimer)
+    this.connectTimer = null
     this.reconnectAttempts = 0
     this.activationGeneration += 1
     this._rejectTopicWaiters(new AgsChatError('Chat activation cancelled.', { kind: 'cancelled' }))
@@ -317,22 +335,38 @@ export class AgsChatClient {
       const error = new AgsChatError('Could not open AGS Chat.', { kind: 'connection', cause })
       const failedPromise = this.connectPromise
       this._rejectConnect(error)
-      this._setState('unavailable', error.message)
+      // Construction can fail transiently too (for example while iOS is
+      // restoring network reachability). Keep the same persistent reconnect
+      // policy used for close/error/handshake failures.
+      this._scheduleReconnect()
       return failedPromise
     }
 
     this.socket = socket
     socket.addEventListener('message', event => {
+      if (this.socket !== socket) return
       this._receive(event.data).catch(error => console.warn('[Chat] invalid message:', error))
     })
     socket.addEventListener('error', () => {
-      if (!this._socketIsOpen() && this.connectReject) {
-        this._rejectConnect(new AgsChatError('Could not connect to AGS Chat.', { kind: 'connection' }))
-      }
+      if (this.socket !== socket || this._socketIsOpen()) return
+      const error = new AgsChatError('Could not connect to AGS Chat.', { kind: 'connection' })
+      this.socket = null
+      this._rejectConnect(error)
+      try { socket.close(4000, 'connect-error') } catch {}
+      this._scheduleReconnect()
     })
     socket.addEventListener('close', event => {
       if (this.socket === socket) this._handleClose(event)
     })
+    clearTimeout(this.connectTimer)
+    this.connectTimer = setTimeout(() => {
+      if (this.socket !== socket || !this.connectReject) return
+      const error = new AgsChatError('AGS Chat connection timed out.', { kind: 'connection' })
+      this.socket = null
+      this._rejectConnect(error)
+      try { socket.close(4000, 'connect-timeout') } catch {}
+      this._scheduleReconnect()
+    }, this.connectTimeoutMs)
     return this.connectPromise
   }
 
@@ -574,7 +608,11 @@ export class AgsChatClient {
           previous.message !== chat.message) {
         const updated = { ...chat, source: 'update' }
         this.seenChats.set(chat.chatId, updated)
-        for (const listener of this.messageListeners) listener(updated)
+        for (const listener of this.messageListeners) {
+          try { listener(updated) } catch (error) {
+            console.warn('[Chat] message listener:', error?.message || error)
+          }
+        }
       }
       return
     }
@@ -583,7 +621,11 @@ export class AgsChatClient {
     if (this.seenChats.size > 1000) {
       this.seenChats.delete(this.seenChats.keys().next().value)
     }
-    for (const listener of this.messageListeners) listener(event)
+    for (const listener of this.messageListeners) {
+      try { listener(event) } catch (error) {
+        console.warn('[Chat] message listener:', error?.message || error)
+      }
+    }
   }
 
   _applyErrorState(error) {
@@ -600,26 +642,40 @@ export class AgsChatClient {
   }
 
   _handleClose() {
+    clearTimeout(this.connectTimer)
+    this.connectTimer = null
     this.socket = null
     this.fragmentBuffer = ''
     this.activeTopicId = ''
     this._rejectPending(new AgsChatError('AGS Chat connection closed.', { kind: 'connection' }))
     this._rejectConnect(new AgsChatError('AGS Chat connection closed.', { kind: 'connection' }))
+    this._scheduleReconnect()
+  }
+
+  _scheduleReconnect() {
     if (!this.desiredConnected || this.explicitDisconnect) {
       this._setState('idle', '')
       return
     }
-    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-      this._setState('unavailable', 'Match chat could not reconnect.')
-      return
-    }
-    const delay = Math.min(16_000, 1000 * (2 ** this.reconnectAttempts))
+    if (this.reconnectTimer) return
+    const delay = Math.min(
+      this.reconnectMaxDelayMs,
+      this.reconnectBaseDelayMs * (2 ** Math.min(this.reconnectAttempts, 8)),
+    )
     this.reconnectAttempts += 1
+    if (this.reconnectAttempts === 6) {
+      console.warn('[Chat] AGS Chat is still unavailable; continuing background reconnects')
+    }
     this._setState('reconnecting', 'Reconnecting match chat…')
-    clearTimeout(this.reconnectTimer)
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
       this.connectPromise = null
-      this._openSocket(true).catch(() => {})
+      this._openSocket(true).catch(error => {
+        if (!this.socket && this.desiredConnected && !this.explicitDisconnect) {
+          console.warn('[Chat] reconnect attempt failed:', error?.message || error)
+          this._scheduleReconnect()
+        }
+      })
     }, delay)
   }
 
@@ -631,10 +687,16 @@ export class AgsChatClient {
     this.state = state
     this.stateDetail = detail || ''
     const event = { state, detail: this.stateDetail, topicId: this.activeTopicId }
-    for (const listener of this.stateListeners) listener(event)
+    for (const listener of this.stateListeners) {
+      try { listener(event) } catch (error) {
+        console.warn('[Chat] state listener:', error?.message || error)
+      }
+    }
   }
 
   _resolveConnect() {
+    clearTimeout(this.connectTimer)
+    this.connectTimer = null
     const resolve = this.connectResolve
     this.connectPromise = null
     this.connectResolve = null
@@ -643,6 +705,8 @@ export class AgsChatClient {
   }
 
   _rejectConnect(error) {
+    clearTimeout(this.connectTimer)
+    this.connectTimer = null
     const reject = this.connectReject
     this.connectPromise = null
     this.connectResolve = null

@@ -369,6 +369,67 @@ test('refreshes the token over the active Chat websocket', async () => {
   client.disconnect();
 });
 
+test('reconnects after a dropped Chat socket and isolates UI listener errors', async () => {
+  const { client, socket } = await connectedClient({ reconnectBaseDelayMs: 1 });
+  let healthyListenerCalls = 0;
+  client.subscribeState(() => { throw new Error('broken UI listener'); });
+  client.subscribeState(() => { healthyListenerCalls += 1; });
+
+  socket.close(1006, 'network lost');
+  await new Promise(resolve => setTimeout(resolve, 5));
+  const replacement = FakeWebSocket.instances.at(-1);
+  assert.notEqual(replacement, socket);
+  replacement.emit('message', JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'eventConnected',
+    params: { sessionId: 'chat-session-2' },
+  }));
+  await tick();
+
+  assert.equal(client.snapshot().state, 'connected');
+  assert.ok(healthyListenerCalls >= 2);
+  client.disconnect();
+});
+
+test('retries when constructing the Chat websocket fails transiently', async () => {
+  const { createAgsChatClient } = await chatModulePromise;
+  FakeWebSocket.instances.length = 0;
+  class FlakyWebSocket extends FakeWebSocket {
+    static attempts = 0;
+
+    constructor(...args) {
+      FlakyWebSocket.attempts += 1;
+      if (FlakyWebSocket.attempts === 1) throw new Error('network is restoring');
+      super(...args);
+    }
+  }
+
+  const client = createAgsChatClient({
+    baseURL: 'https://example.accelbyte.test',
+    namespace: 'chess',
+    getAccessToken: () => 'header.payload.signature',
+    getUserId: () => 'user-a',
+    WebSocketImpl: FlakyWebSocket,
+    reconnectBaseDelayMs: 1,
+    connectTimeoutMs: 50,
+  });
+
+  await assert.rejects(client.connect(), /Could not open AGS Chat/);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  const replacement = FakeWebSocket.instances.at(-1);
+  assert.ok(replacement);
+  replacement.emit('message', JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'eventConnected',
+    params: { sessionId: 'chat-session-restored' },
+  }));
+  await tick();
+
+  assert.equal(client.snapshot().state, 'connected');
+  assert.equal(FlakyWebSocket.attempts, 2);
+  client.disconnect();
+});
+
 test('PeerJS game frames contain no text-chat or chat-history payloads', () => {
   const appSource = fs.readFileSync(path.resolve(__dirname, '../../app.js'), 'utf8');
   assert.doesNotMatch(appSource, /type:\s*['"]chat['"]/);

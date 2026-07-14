@@ -30,7 +30,15 @@ export function refreshOnce() {
       .then(result => {
         const accessToken = sdk.getToken()?.accessToken
         if (result?.ok && accessToken) {
-          for (const listener of accessTokenRefreshListeners) listener(accessToken)
+          for (const listener of accessTokenRefreshListeners) {
+            try {
+              Promise.resolve(listener(accessToken)).catch(error => {
+                console.warn('[AGS session] async token listener:', error?.message || error)
+              })
+            } catch (error) {
+              console.warn('[AGS session] token listener:', error?.message || error)
+            }
+          }
         }
         return result
       })
@@ -58,9 +66,20 @@ export function scheduleProactiveRefresh() {
   // If we can't read exp, fall back to a conservative 10-minute cadence.
   const delay = expMs ? Math.max(5000, expMs - Date.now() - 60_000) : 600_000
   refreshTimer = setTimeout(async () => {
-    if (sdk.getToken()?.accessToken || hasStoredSession()) await refreshOnce()
-    scheduleProactiveRefresh()
+    try {
+      if (sdk.getToken()?.accessToken || hasStoredSession()) await refreshOnce()
+    } catch (error) {
+      console.warn('[AGS session] proactive refresh:', error?.message || error)
+    } finally {
+      scheduleProactiveRefresh()
+    }
   }, delay)
+}
+
+function refreshAfterResume() {
+  void refreshIfStale().catch(error => {
+    console.warn('[AGS session] resume refresh:', error?.message || error)
+  })
 }
 
 // Refresh immediately if the token is missing or expires within `withinMs`.
@@ -107,11 +126,11 @@ export function installSessionKeepAlive() {
   // Web: refresh when the tab becomes visible / regains focus.
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') refreshIfStale()
+      if (document.visibilityState === 'visible') refreshAfterResume()
     })
   }
   if (typeof window !== 'undefined') {
-    window.addEventListener('focus', () => refreshIfStale())
+    window.addEventListener('focus', refreshAfterResume)
   }
 
   // Native iOS/iPad: refresh the moment the app comes back to the foreground,
@@ -119,9 +138,11 @@ export function installSessionKeepAlive() {
   if (typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.()) {
     import('@capacitor/app')
       .then(({ App }) => {
-        App.addListener('appStateChange', ({ isActive }) => { if (isActive) refreshIfStale() })
-        App.addListener('resume', () => refreshIfStale())
+        App.addListener('appStateChange', ({ isActive }) => { if (isActive) refreshAfterResume() })
+        App.addListener('resume', refreshAfterResume)
       })
-      .catch(() => {})
+      .catch(error => {
+        console.warn('[AGS session] native lifecycle unavailable:', error?.message || error)
+      })
   }
 }

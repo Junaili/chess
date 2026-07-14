@@ -5,6 +5,7 @@ import { getDeviceId } from './anon-id.js'
 import { moderateIncomingDisplayName, validateDisplayNameLocally } from './content-moderation.mjs'
 import { buildUsername } from './auth-data.mjs'
 import { extendFetch } from './extend-client.js'
+import { fetchWithTimeout, friendlyNetworkError } from './network.mjs'
 
 // True when running inside the Capacitor native shell (iOS app), where the
 // app is served from capacitor://localhost and in-WebView OAuth redirects are
@@ -225,7 +226,7 @@ async function exchangeGoogleIdToken(idToken) {
   }
   const { baseURL, clientId } = getAuthConfig()
   try {
-    const resp = await fetch(`${baseURL}/iam/v3/oauth/platforms/google/token`, {
+    const resp = await fetchWithTimeout(`${baseURL}/iam/v3/oauth/platforms/google/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -277,7 +278,7 @@ export async function loginWithApple() {
     if (!identityToken) return { ok: false, error: 'Apple sign-in returned no token.' }
 
     const { baseURL, clientId } = getAuthConfig()
-    const resp = await fetch(`${baseURL}/iam/v3/oauth/platforms/apple/token`, {
+    const resp = await fetchWithTimeout(`${baseURL}/iam/v3/oauth/platforms/apple/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -334,7 +335,7 @@ export async function reauthorizeAppleForDeletion() {
 export async function loginWithPassword(identifier, password) {
   const { baseURL, clientId } = getAuthConfig()
   try {
-    const resp = await fetch(`${baseURL}/iam/v3/oauth/token`, {
+    const resp = await fetchWithTimeout(`${baseURL}/iam/v3/oauth/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -364,14 +365,14 @@ export async function loginWithPassword(identifier, password) {
     setSession(payload)
     return { ok: true, data: payload }
   } catch (e) {
-    return { ok: false, error: e?.message || 'Could not sign in with username and password.' }
+    return { ok: false, error: friendlyNetworkError(e, 'Could not sign in with username and password.') }
   }
 }
 
 export async function requestPasswordReset(emailAddress) {
   const { baseURL, namespace } = getAuthConfig()
   try {
-    const resp = await fetch(`${baseURL}/iam/v3/public/namespaces/${encodeURIComponent(namespace)}/users/forgot`, {
+    const resp = await fetchWithTimeout(`${baseURL}/iam/v3/public/namespaces/${encodeURIComponent(namespace)}/users/forgot`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -388,14 +389,14 @@ export async function requestPasswordReset(emailAddress) {
     }
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: e?.message || 'Could not send the reset code. Please try again.' }
+    return { ok: false, error: friendlyNetworkError(e, 'Could not send the reset code. Please try again.') }
   }
 }
 
 export async function resetPassword({ emailAddress, code, newPassword }) {
   const { baseURL, clientId, namespace } = getAuthConfig()
   try {
-    const resp = await fetch(`${baseURL}/iam/v3/public/namespaces/${encodeURIComponent(namespace)}/users/reset`, {
+    const resp = await fetchWithTimeout(`${baseURL}/iam/v3/public/namespaces/${encodeURIComponent(namespace)}/users/reset`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -415,7 +416,7 @@ export async function resetPassword({ emailAddress, code, newPassword }) {
     }
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: e?.message || 'Could not reset your password. Check the code and try again.' }
+    return { ok: false, error: friendlyNetworkError(e, 'Could not reset your password. Check the code and try again.') }
   }
 }
 
@@ -427,7 +428,7 @@ export async function refreshSession() {
   }
 
   try {
-    const resp = await fetch(`${baseURL}/iam/v3/oauth/token`, {
+    const resp = await fetchWithTimeout(`${baseURL}/iam/v3/oauth/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -448,7 +449,7 @@ export async function refreshSession() {
     setSession(payload)
     return { ok: true, data: payload }
   } catch (e) {
-    return { ok: false, error: e?.message || 'Could not refresh your session.' }
+    return { ok: false, error: friendlyNetworkError(e, 'Could not refresh your session.') }
   }
 }
 
@@ -472,7 +473,7 @@ export async function registerWithPassword({ emailAddress, displayName, password
   }
 
   try {
-    const resp = await fetch(`${baseURL}/iam/v4/public/namespaces/${namespace}/users`, {
+    const resp = await fetchWithTimeout(`${baseURL}/iam/v4/public/namespaces/${namespace}/users`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -488,7 +489,7 @@ export async function registerWithPassword({ emailAddress, displayName, password
 
     return { ok: true, data: body }
   } catch (e) {
-    return { ok: false, error: e?.message || 'Could not create your account.' }
+    return { ok: false, error: friendlyNetworkError(e, 'Could not create your account.') }
   }
 }
 

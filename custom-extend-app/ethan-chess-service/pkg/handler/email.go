@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
@@ -25,11 +26,15 @@ type InviteRequest struct {
 	InviteLink string
 }
 
-func SendInviteEmail(req InviteRequest) error {
+const smtpDeliveryTimeout = 30 * time.Second
+
+func SendInviteEmail(ctx context.Context, req InviteRequest) error {
 	if err := ValidateInviteRequest(req); err != nil {
 		return err
 	}
-	if err := sendGmail(req); err != nil {
+	ctx, cancel := context.WithTimeout(ctx, smtpDeliveryTimeout)
+	defer cancel()
+	if err := sendGmail(ctx, req); err != nil {
 		log.Printf("[email] send failed: %v", err)
 		return fmt.Errorf("email delivery failed: %w", err)
 	}
@@ -42,11 +47,13 @@ type WelcomeRequest struct {
 	DisplayName string
 }
 
-func SendWelcomeEmail(req WelcomeRequest) error {
+func SendWelcomeEmail(ctx context.Context, req WelcomeRequest) error {
 	if err := ValidateWelcomeRequest(req); err != nil {
 		return err
 	}
-	if err := sendGmailMessage(strings.TrimSpace(req.To), func(from string) string {
+	ctx, cancel := context.WithTimeout(ctx, smtpDeliveryTimeout)
+	defer cancel()
+	if err := sendGmailMessage(ctx, strings.TrimSpace(req.To), func(from string) string {
 		return buildWelcomeMessage(from, req)
 	}); err != nil {
 		log.Printf("[email] welcome send failed: %v", err)
@@ -355,8 +362,8 @@ func randomToken(n int) string {
 	return hex.EncodeToString(buf)
 }
 
-func sendGmail(req InviteRequest) error {
-	return sendGmailMessage(req.To, func(from string) string {
+func sendGmail(ctx context.Context, req InviteRequest) error {
+	return sendGmailMessage(ctx, req.To, func(from string) string {
 		return buildInviteMessage(from, req)
 	})
 }
@@ -365,7 +372,7 @@ func sendGmail(req InviteRequest) error {
 // delivers a single message to one recipient. The message is built lazily via
 // buildMessage once the verified From address is known. Shared by the invite
 // and welcome email paths.
-func sendGmailMessage(to string, buildMessage func(from string) string) error {
+func sendGmailMessage(ctx context.Context, to string, buildMessage func(from string) string) error {
 	from := os.Getenv("GMAIL_USER")
 	password := os.Getenv("GMAIL_APP_PW")
 	if from == "" || password == "" {
@@ -380,15 +387,36 @@ func sendGmailMessage(to string, buildMessage func(from string) string) error {
 	auth := smtp.PlainAuth("", from, password, "smtp.gmail.com")
 
 	tlsCfg := &tls.Config{ServerName: "smtp.gmail.com", MinVersion: tls.VersionTLS12}
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	conn, err := tls.DialWithDialer(dialer, "tcp", "smtp.gmail.com:465", tlsCfg)
+	dialer := &net.Dialer{Timeout: 8 * time.Second}
+	rawConn, err := dialer.DialContext(ctx, "tcp", "smtp.gmail.com:465")
 	if err != nil {
 		return fmt.Errorf("dial smtp.gmail.com:465: %w", err)
 	}
+	conn := tls.Client(rawConn, tlsCfg)
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+	deadline := time.Now().Add(smtpDeliveryTimeout)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
+	}
+	if err := conn.SetDeadline(deadline); err != nil {
 		return fmt.Errorf("set smtp deadline: %w", err)
 	}
+	if err := conn.HandshakeContext(ctx); err != nil {
+		return fmt.Errorf("smtp tls handshake: %w", err)
+	}
+
+	// net/smtp has no context-aware operations. Closing the connection makes a
+	// cancellation (including a disconnected HTTP client) interrupt Auth/Data
+	// immediately instead of continuing a send the caller can no longer observe.
+	stopCancellationWatch := make(chan struct{})
+	defer close(stopCancellationWatch)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-stopCancellationWatch:
+		}
+	}()
 
 	client, err := smtp.NewClient(conn, "smtp.gmail.com")
 	if err != nil {

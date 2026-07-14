@@ -246,9 +246,12 @@ func main() {
 		Handler:           securityHeadersMiddleware(http.MaxBytesHandler(mux, 64<<10)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    16 << 10,
+		// Auth introspection can consume up to 10 seconds before SMTP begins.
+		// Invite/welcome delivery is independently capped at 30 seconds, so the
+		// server must leave enough room to return the actual delivery result.
+		WriteTimeout:   45 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 16 << 10,
 	}
 
 	go func() {

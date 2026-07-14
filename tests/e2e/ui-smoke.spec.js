@@ -138,6 +138,98 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#screen-register')).toBeVisible();
   });
 
+  test('temporary PeerJS signaling loss keeps an invite room alive after reconnect', async ({ page }) => {
+    await gotoApp(page);
+    await page.evaluate(async () => {
+      class FakePeer {
+        constructor() {
+          this.id = 'stable-host-peer';
+          this.open = false;
+          this.disconnected = false;
+          this.destroyed = false;
+          this.reconnectCalls = 0;
+          this.listeners = new Map();
+        }
+        on(name, handler) {
+          const handlers = this.listeners.get(name) || [];
+          handlers.push(handler);
+          this.listeners.set(name, handlers);
+          return this;
+        }
+        emit(name, value) {
+          for (const handler of this.listeners.get(name) || []) handler(value);
+        }
+        reconnect() {
+          this.reconnectCalls += 1;
+          this.disconnected = false;
+          this.open = true;
+          queueMicrotask(() => this.emit('open', this.id));
+        }
+        destroy() {
+          this.destroyed = true;
+          this.open = false;
+        }
+      }
+
+      const fakePeer = new FakePeer();
+      window.__inviteStabilityPeer = fakePeer;
+      window.chessVideoCall = {
+        ...window.chessVideoCall,
+        createPeer: async () => fakePeer,
+      };
+      await window.createOnlineRoom();
+      fakePeer.open = true;
+      fakePeer.emit('open', fakePeer.id);
+
+      // PeerJS emits these in this order for a recoverable signaling loss.
+      fakePeer.emit('error', { type: 'network', message: 'Lost connection to server.' });
+      fakePeer.open = false;
+      fakePeer.disconnected = true;
+      fakePeer.emit('disconnected', fakePeer.id);
+    });
+
+    await expect(page.locator('#screen-waiting')).toBeVisible();
+    await expect(page.locator('#waiting-sub')).toContainText(/waiting for your friend/i);
+    // The old error path destroyed the successfully reconnected room at 2s.
+    await page.waitForTimeout(2_300);
+    const peerState = await page.evaluate(() => ({
+      destroyed: window.__inviteStabilityPeer.destroyed,
+      reconnectCalls: window.__inviteStabilityPeer.reconnectCalls,
+      open: window.__inviteStabilityPeer.open,
+    }));
+    expect(peerState).toEqual({ destroyed: false, reconnectCalls: 1, open: true });
+    await expect(page.locator('#screen-waiting')).toBeVisible();
+  });
+
+  test('invite email failures are visible and can be retried successfully', async ({ page }) => {
+    let attempts = 0;
+    await page.route('**/extend/invite/email', async route => {
+      attempts += 1;
+      await route.fulfill(attempts === 1
+        ? { status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Email service is temporarily unavailable.' }) }
+        : { status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    });
+    await gotoApp(page);
+    await page.evaluate(() => {
+      const host = document.createElement('div');
+      host.id = 'invite-email-test';
+      document.getElementById('screen-home').appendChild(host);
+      window.agsShareRow(host, 'https://junaili.github.io/chess/?peer=test', {
+        emailTo: 'friend@example.com',
+        fromName: 'Tester',
+      });
+    });
+
+    const host = page.locator('#invite-email-test');
+    await host.locator('button.share-chip-email').click();
+    await expect(host.locator('.share-row-status')).toContainText(/temporarily unavailable/i);
+    await expect(host.getByRole('button', { name: /retry email/i })).toBeEnabled();
+
+    await host.getByRole('button', { name: /retry email/i }).click();
+    await expect(host.locator('.share-row-status')).toContainText(/sent to friend@example.com/i);
+    expect(attempts).toBe(2);
+  });
+
   test('registration and chat filters reject inappropriate language locally', async ({ page }) => {
     await gotoApp(page);
     await page.getByRole('button', { name: 'Create Free Account' }).click();

@@ -6,6 +6,7 @@ import {
   normalizeDocumentLocation,
   rowsFromLegalPayload,
 } from './legal-data.mjs'
+import { fetchWithTimeout, friendlyNetworkError } from './network.mjs'
 
 const ACCEPT_RETRY_DELAYS_MS = [0, 750, 1500]
 
@@ -50,7 +51,7 @@ async function hydrateLegalDocument(document, baseURL, namespace, authorization)
   }
 
   try {
-    const resp = await fetch(
+    const resp = await fetchWithTimeout(
       `${baseURL}/agreement/public/namespaces/${encodeURIComponent(namespace)}/localized-policy-versions/${encodeURIComponent(document.localizedPolicyVersionId)}`,
       {
         method: 'GET',
@@ -88,7 +89,7 @@ export async function fetchPendingLegalDocuments() {
   const { baseURL, namespace } = getLegalConfig()
 
   try {
-    const resp = await fetch(`${baseURL}/agreement/public/eligibilities/namespaces/${namespace}`, {
+    const resp = await fetchWithTimeout(`${baseURL}/agreement/public/eligibilities/namespaces/${namespace}`, {
       method: 'GET',
       headers: {
         Authorization: headers.Authorization,
@@ -113,7 +114,7 @@ export async function fetchPendingLegalDocuments() {
     )
     return { ok: true, documents: hydrated }
   } catch (e) {
-    return { ok: false, error: e?.message || 'Could not load legal documents.', documents: [] }
+    return { ok: false, error: friendlyNetworkError(e, 'Could not load legal documents.'), documents: [] }
   }
 }
 
@@ -123,7 +124,7 @@ export async function fetchAcceptedLegalDocuments() {
 
   const { baseURL, namespace } = getLegalConfig()
   try {
-    const resp = await fetch(`${baseURL}/agreement/public/agreements/policies`, {
+    const resp = await fetchWithTimeout(`${baseURL}/agreement/public/agreements/policies`, {
       method: 'GET',
       headers: {
         Authorization: headers.Authorization,
@@ -151,7 +152,7 @@ export async function fetchAcceptedLegalDocuments() {
   } catch (error) {
     return {
       ok: false,
-      error: error?.message || 'Could not load accepted legal documents.',
+      error: friendlyNetworkError(error, 'Could not load accepted legal documents.'),
       documents: [],
     }
   }
@@ -216,7 +217,7 @@ export async function acceptLegalDocuments(documents) {
       await wait(ACCEPT_RETRY_DELAYS_MS[attempt])
     }
     try {
-      const resp = await fetch(`${baseURL}/agreement/public/agreements/policies`, {
+      const resp = await fetchWithTimeout(`${baseURL}/agreement/public/agreements/policies`, {
         method: 'POST',
         headers,
         body: JSON.stringify(acceptedPolicies),
@@ -232,7 +233,7 @@ export async function acceptLegalDocuments(documents) {
         'Could not accept the legal documents.'
       if (resp.status !== 429 && resp.status < 500) break
     } catch (error) {
-      lastError = error?.message || lastError
+      lastError = friendlyNetworkError(error, lastError)
     }
   }
   return { ok: false, error: lastError }

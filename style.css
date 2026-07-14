@@ -5957,6 +5957,22 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   line-height: 1.45;
 }
 
+.share-row-status {
+  min-height: 1.2em;
+  margin: 6px 0 0;
+  color: var(--success, #72d59b);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.share-row-status:empty {
+  display: none;
+}
+
+.share-row-status.error {
+  color: var(--danger, #ff8d86);
+}
+
 .share-chip {
   display: inline-flex;
   align-items: center;

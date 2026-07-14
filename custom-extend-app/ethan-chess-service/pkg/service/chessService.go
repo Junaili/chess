@@ -19,7 +19,7 @@ func NewChessServiceServer() *ChessServiceServer {
 	return &ChessServiceServer{}
 }
 
-func (s *ChessServiceServer) SendInvite(_ context.Context, req *pb.SendInviteRequest) (*pb.SendInviteResponse, error) {
+func (s *ChessServiceServer) SendInvite(ctx context.Context, req *pb.SendInviteRequest) (*pb.SendInviteResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
@@ -32,7 +32,7 @@ func (s *ChessServiceServer) SendInvite(_ context.Context, req *pb.SendInviteReq
 	if err := handler.ValidateInviteRequest(invite); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	if err := handler.SendInviteEmail(invite); err != nil {
+	if err := handler.SendInviteEmail(ctx, invite); err != nil {
 		log.Printf("[service] email delivery failed: %v", err)
 		return nil, status.Error(codes.Internal, "email delivery failed")
 	}
@@ -40,7 +40,7 @@ func (s *ChessServiceServer) SendInvite(_ context.Context, req *pb.SendInviteReq
 	return &pb.SendInviteResponse{Ok: true}, nil
 }
 
-func (s *ChessServiceServer) SendWelcome(_ context.Context, req *pb.SendWelcomeRequest) (*pb.SendWelcomeResponse, error) {
+func (s *ChessServiceServer) SendWelcome(ctx context.Context, req *pb.SendWelcomeRequest) (*pb.SendWelcomeResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
@@ -52,7 +52,7 @@ func (s *ChessServiceServer) SendWelcome(_ context.Context, req *pb.SendWelcomeR
 	if err := handler.ValidateWelcomeRequest(welcome); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	if err := handler.SendWelcomeEmail(welcome); err != nil {
+	if err := handler.SendWelcomeEmail(ctx, welcome); err != nil {
 		log.Printf("[service] welcome email delivery failed: %v", err)
 		return nil, status.Error(codes.Internal, "email delivery failed")
 	}
