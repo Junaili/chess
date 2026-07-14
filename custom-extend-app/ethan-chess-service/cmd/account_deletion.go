@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -32,6 +33,12 @@ type accountDeletionHandler struct {
 	applePrivateKey string
 	httpClient      *http.Client
 	now             func() time.Time
+
+	// monetization is set post-construction in main.go (nil-safe: existing
+	// tests construct accountDeletionHandler directly and never set this).
+	// Used for the dev-plan §11.8 integration: cancel any Stripe subscription
+	// and flag an active Apple-billed Club plan before/during deletion.
+	monetization *monetizationHandler
 }
 
 func newAccountDeletionHandlerFromEnv() *accountDeletionHandler {
@@ -80,10 +87,29 @@ func (h *accountDeletionHandler) requirements(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// dev-plan §11.8: surface Club billing state so the client can warn
+	// "deleting your account does not cancel your App Store subscription"
+	// (Apple) or simply note that a web subscription will be cancelled
+	// automatically (Stripe) — and forfeited coins, if any.
+	var appleClubActive bool
+	var coinBalance int64
+	if h.monetization != nil {
+		if entitlements, err := h.monetization.activeClubEntitlements(userID); err == nil {
+			if best := bestActiveEntitlement(entitlements, h.monetization.now()); best != nil && best.Origin == "apple" {
+				appleClubActive = true
+			}
+		}
+		if balance, err := h.monetization.getWalletBalance(userID); err == nil {
+			coinBalance = balance
+		}
+	}
+
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"available":                    true,
 		"appleLinked":                  appleLinked,
 		"appleReauthorizationRequired": appleLinked,
+		"appleClubSubscriptionActive":  appleClubActive,
+		"coinBalance":                  coinBalance,
 	})
 }
 
@@ -131,6 +157,17 @@ func (h *accountDeletionHandler) deleteAccount(w http.ResponseWriter, r *http.Re
 		if err := h.revokeAppleAuthorization(code); err != nil {
 			writeDeletionError(w, http.StatusBadGateway, "apple_revocation_failed", "Apple authorization could not be revoked. Your account was not deleted; try again.")
 			return
+		}
+	}
+
+	// dev-plan §11.8: cancel any Stripe subscription before submitting GDPR
+	// deletion. Log-and-continue on failure — deletion must never be blocked
+	// by a Stripe hiccup, but an orphaned subscription needs manual cleanup.
+	if h.monetization != nil {
+		if ledger, _, err := h.monetization.readLedger(userID); err == nil && ledger.StripeCustomerID != "" {
+			if err := h.monetization.cancelStripeSubscriptionsForCustomer(ledger.StripeCustomerID); err != nil {
+				log.Printf("[account-deletion] failed to cancel Stripe subscriptions for user %s (customer %s), needs manual cleanup: %v", userID, ledger.StripeCustomerID, err)
+			}
 		}
 	}
 

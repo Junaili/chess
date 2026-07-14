@@ -31,6 +31,7 @@ docs/
 # Agent-generated scratch output (plans, generated blog/report drafts) — not app code
 plan/
 output/
+dev-plan/
 
 # Marketing trailer video exports (regenerate from trailer*.html if ever restored)
 ethans-chess-trailer*.gif

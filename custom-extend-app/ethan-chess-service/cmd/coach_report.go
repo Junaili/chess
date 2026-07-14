@@ -94,6 +94,13 @@ type coachReportHandler struct {
 	// Seams for tests: production wires these to llm.FromEnv()/llm.New().
 	configured  func() bool
 	newProvider func() (llm.Provider, error)
+
+	// gate is the Open Journal Days / Club entitlement check (dev-plan §8.5).
+	// nil means "no gate" (every existing unit test constructs the handler
+	// without one, and that must keep working unmodified) — production
+	// wiring in main.go sets this to monetization.coachReportGate after
+	// construction so newCoachReportHandler's signature doesn't change.
+	gate func(userID, callerToken string) (coachGateDecision, error)
 }
 
 func newCoachReportHandler(botDir string) *coachReportHandler {
@@ -262,6 +269,23 @@ func (h *coachReportHandler) report(w http.ResponseWriter, r *http.Request) {
 	if !h.configured() {
 		fmt.Fprint(w, `{"available":false}`)
 		return
+	}
+	if h.gate != nil {
+		decision, err := h.gate(sub, accessTokenFromContext(r.Context()))
+		if err != nil {
+			log.Printf("[coach] gate check failed for %s: %v", sub, err)
+			// Fail OPEN on a gate-check error (network hiccup talking to
+			// AGS): the deterministic report must never be blocked by an
+			// unrelated outage, and worst case this costs one extra LLM call
+			// on a rare error path — not a meaningful abuse vector.
+		} else if !decision.Allowed {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error":   "club_required",
+				"message": "Coach Gus notes are a Club perk — or come back on an Open Journal Day!",
+			})
+			return
+		}
 	}
 	if !h.userLimiter.allow(sub) || !h.globalLimiter.allow("coach-report") {
 		http.Error(w, `{"error":"coach gus needs a breather — try again later"}`, http.StatusTooManyRequests)

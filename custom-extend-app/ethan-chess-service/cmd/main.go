@@ -154,6 +154,9 @@ func main() {
 	// Native account deletion. The authenticated user comes from token
 	// introspection; Apple credentials and the AGS S2S client stay server-side.
 	accountDeletion := newAccountDeletionHandlerFromEnv()
+	// Club subscription + Ethan Coins (dev-plan §11.8): cancel Stripe subs and
+	// warn about Apple subs before/during deletion. Wired here (after
+	// `monetization` is constructed below) — see the assignment further down.
 	mux.Handle(basePath+"/account/deletion-requirements",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(accountDeletion.requirements))))
 	mux.Handle(basePath+"/account/deletion",
@@ -193,10 +196,31 @@ func main() {
 	mux.Handle(basePath+"/bot/challenge",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(gus.challenge))))
 
+	// Club subscription + Ethan Coins (dev-plan/subscription-coins-implementation-plan.md).
+	monetization := newMonetizationHandlerFromEnv()
+	accountDeletion.monetization = monetization
+	mux.Handle(basePath+"/club/status",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(monetization.status))))
+	mux.Handle(basePath+"/club/web-checkout",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(monetization.webCheckout))))
+	mux.Handle(basePath+"/club/web-portal",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(monetization.webPortal))))
+	mux.Handle(basePath+"/coins/highfive",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(monetization.highFive))))
+	mux.Handle(basePath+"/coins/give",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(monetization.give))))
+	// Stripe calls this directly (no browser origin, no player bearer token —
+	// auth is the webhook signature instead), so it's neither CORS- nor
+	// auth.wrap-gated like the routes above.
+	mux.HandleFunc(basePath+"/stripe/webhook", monetization.stripeWebhook)
+
 	// "Coach Gus" journal narrative (journal Phase 4): an optional LLM note in
 	// Gus's voice layered on the client's deterministic coach report. Degrades
-	// to {"available":false} when the LLM is unconfigured or failing.
+	// to {"available":false} when the LLM is unconfigured or failing. Gated by
+	// Club membership / Open Journal Days (dev-plan §8.5) once past the
+	// unconfigured-LLM short-circuit.
 	coach := newCoachReportHandler(botDir)
+	coach.gate = monetization.coachReportGate
 	mux.Handle(basePath+"/coach/report",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(coach.report))))
 
