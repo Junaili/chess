@@ -49,8 +49,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-BKbB7k34.js"></script>
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-BPtJfnnp.css">
+  <script type="module" crossorigin src="/chess/assets/index-CXDOdZBN.js"></script>
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-BaVXlVxR.css">
 </head>
 <body>
 
@@ -279,6 +279,23 @@
               <button class="btn-mini" data-click="window.agsOpenGusProfile && window.agsOpenGusProfile()">Stats &amp; Journal</button>
             </div>
           </section>
+          <!-- ── Ethan's Chess Club card: revealed by src/club.js once signed
+               in and /club/status answers. Child sessions get a static line
+               with no tap action — never a purchase entry point. ── -->
+          <section id="ags-club-panel" class="friends-panel club-panel" style="display:none">
+            <div class="friends-header">
+              <h3><span aria-hidden="true">♛</span> <span id="club-home-title">Ethan's Chess Club ♛</span></h3>
+              <button class="btn-mini" id="btn-club-open" data-purchase-ui="1" data-click="window.agsOpenClub && window.agsOpenClub()">Open →</button>
+            </div>
+            <p id="club-home-tagline" class="gus-home-tagline"></p>
+            <p id="club-home-coins" class="gus-home-record"></p>
+            <p id="club-home-static" class="gus-home-blurb" style="display:none"></p>
+            <!-- Coin store is reachable regardless of child/Club status — coins
+                 are allowance money kids can spend themselves (dev-plan §8). -->
+            <div class="friends-add-row">
+              <button class="btn-mini" id="btn-coin-store-open" data-click="window.agsOpenCoinStore && window.agsOpenCoinStore()">🛍️ Coin Store</button>
+            </div>
+          </section>
           <h3 class="lb-heading">Leaderboard</h3>
           <div class="lb-view-toggle" role="tablist" aria-label="Leaderboard time range">
             <button type="button" class="lb-view-btn active" data-lb-view="rating" data-click="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('rating')" role="tab" aria-selected="true">All Time</button>
@@ -384,6 +401,10 @@
           <span title="Elo-style rating: starts at 1200. Beating a higher-rated opponent gains more, losing to a lower-rated opponent costs more — up to about ±32 points per online match, scaled by the rating gap between you and your opponent.">Elo Style Rating</span>
           <strong id="profile-rating">—</strong>
         </div>
+        <div class="profile-stat">
+          <span title="High Fives received from opponents after a match">🙌 High Fives</span>
+          <strong id="profile-kudos">—</strong>
+        </div>
       </div>
       <div id="profile-friend-card" class="profile-friend-card">
         <p id="profile-friend-status" class="auth-message"></p>
@@ -416,39 +437,12 @@
             <span>Vs. Human</span>
             <strong id="profile-rate-vs-human">—</strong>
           </div>
-          <div class="profile-stat">
-            <span>Favorite opening</span>
-            <strong id="profile-favorite-opening">—</strong>
-          </div>
-          <div class="profile-stat">
-            <span>Time played</span>
-            <strong id="profile-time-played">—</strong>
-          </div>
-          <div class="profile-stat">
-            <span>Castling</span>
-            <strong id="profile-castling">—</strong>
-          </div>
-          <div class="profile-stat">
-            <span>Longest / shortest</span>
-            <strong id="profile-game-length">—</strong>
-          </div>
-          <div class="profile-stat">
-            <span>Fastest checkmate</span>
-            <strong id="profile-fastest-checkmate">—</strong>
-          </div>
-          <div class="profile-stat">
-            <span>Comeback wins</span>
-            <strong id="profile-comeback-wins">—</strong>
-          </div>
-          <div class="profile-stat">
-            <span>Game endings</span>
-            <strong id="profile-end-reasons">—</strong>
-          </div>
-          <div class="profile-stat">
-            <span>Toughest opponent</span>
-            <strong id="profile-nemesis">—</strong>
-          </div>
         </div>
+        <!-- Advanced stats (dev-plan §1.2: Club-gated, free tier sees a
+             locked upsell instead). Populated by renderAdvancedStats() in
+             main.js, not static markup, so free/Club/child states can swap
+             the whole block the same way match history does. -->
+        <div id="profile-advanced-stats" class="profile-stats-grid"></div>
       </section>
       </div>
       <div class="profile-panel" data-profile-panel="account">
@@ -501,6 +495,7 @@
           </div>
           <button type="button" id="btn-journal-generate" class="btn btn-primary">Write a new entry</button>
         </div>
+        <p id="journal-narrative-banner" class="journal-narrative-banner" style="display:none"></p>
         <div id="journal-entries" class="journal-entries"></div>
       </section>
       </div>
@@ -634,6 +629,33 @@
     </div>
   </div>
 
+  <!-- ── Ethan's Chess Club screen: status + web (Stripe) purchase flow.
+       Rendered by src/club.js. Native (iPad StoreKit) purchases are not
+       wired yet — purchase buttons render disabled on native. Child
+       sessions never see purchase buttons (data-purchase-ui marks every
+       purchase surface for the child-safety e2e sweep). ── -->
+  <div id="screen-club" class="screen">
+    <div class="profile-container club-profile-container">
+      <div class="profile-header">
+        <div>
+          <p class="auth-eyebrow">Membership</p>
+          <h2>Ethan's Chess Club ♛</h2>
+          <p id="club-status-line" class="gus-home-tagline"></p>
+        </div>
+        <button class="btn-mini" data-click="showScreen('home')">Back</button>
+      </div>
+      <p id="club-message" class="auth-message" aria-live="polite" style="display:none"></p>
+      <div id="club-purchase-grid" class="club-purchase-grid"></div>
+      <button type="button" class="btn-mini" id="btn-club-manage" style="display:none" data-click="window.agsClubManageSubscription && window.agsClubManageSubscription()">Manage subscription</button>
+      <button type="button" class="btn-mini" id="btn-club-restore" style="display:none" data-click="window.agsClubRestorePurchases && window.agsClubRestorePurchases()">Restore Purchases</button>
+      <p id="club-legal-note" class="club-legal-note" style="display:none">
+        Monthly plans auto-renew until cancelled; you can cancel anytime and keep access until the period ends.
+        Ethan Coins have no cash value and are non-refundable and non-transferable outside gifting.
+        See the <button type="button" class="privacy-text-button" data-click="window.agsOpenPolicy && window.agsOpenPolicy('terms')">Terms of Use</button> for details.
+      </p>
+    </div>
+  </div>
+
   <div id="offline-friends-overlay" class="offline-friends-overlay" hidden>
     <section class="offline-friends-dialog" role="dialog" aria-modal="true"
       aria-labelledby="offline-friends-title" aria-describedby="offline-friends-description">
@@ -646,6 +668,27 @@
         <button type="button" id="offline-friends-close" class="offline-friends-close" data-click="window.agsCloseOfflineFriends && window.agsCloseOfflineFriends()">Close</button>
       </header>
       <div id="offline-friends-list" class="offline-friends-list"></div>
+    </section>
+  </div>
+
+  <!-- ── Ethan Coins Store (cosmetics): modal overlay, not a full screen, so
+       it's reachable from home/profile without losing the underlying screen
+       (dev-plan §8). Rendered by src/coin-store.js. Reachable by child
+       sessions too — coins are allowance money, no purchase-ui gating here. -->
+  <div id="coin-store-overlay" class="offline-friends-overlay" hidden>
+    <section class="offline-friends-dialog coin-store-dialog" role="dialog" aria-modal="true"
+      aria-labelledby="coin-store-title" aria-describedby="coin-store-description">
+      <header class="offline-friends-header">
+        <div>
+          <p class="auth-eyebrow">Ethan Coins</p>
+          <h2 id="coin-store-title">Cosmetics Store</h2>
+          <p id="coin-store-description">Spend your coins on board themes, piece sets, victory effects, and flair.</p>
+          <p class="coin-store-balance-row">Balance: <strong id="coin-store-balance">0 🪙</strong></p>
+        </div>
+        <button type="button" id="coin-store-close" class="offline-friends-close" data-click="window.agsCloseCoinStore && window.agsCloseCoinStore()">Close</button>
+      </header>
+      <p id="coin-store-message" class="auth-message" aria-live="polite" style="display:none"></p>
+      <div id="coin-store-grid" class="coin-store-grid"></div>
     </section>
   </div>
 
@@ -1180,6 +1223,7 @@
         <button class="btn btn-secondary" id="btn-game-over-home" data-click="startNewGame()">Main Menu</button>
         <button class="btn btn-primary"   id="btn-rematch" data-click="requestRematch()" style="display:none">Rematch</button>
         <button class="btn btn-secondary" id="btn-add-match-friend" data-click="window.agsRequestLastOpponent && window.agsRequestLastOpponent()" style="display:none">Add Opponent</button>
+        <button class="btn btn-secondary" id="btn-high-five" data-click="sendHighFive()" style="display:none">🙌 High Five</button>
         <button class="btn btn-secondary" id="btn-journal-nudge" data-click="openJournalFromGameOver()" style="display:none">📓 Reflect in your journal</button>
       </div>
       <p id="rematch-message" class="rematch-message"></p>
@@ -1433,6 +1477,15 @@
       <button class="ijt-close" aria-label="Dismiss" data-click="this.closest('#invite-join-toast').classList.remove('show')">✕</button>
     </div>
     <p class="ijt-sub">They're ready to play — check your Friends panel.</p>
+  </div>
+
+  <!-- ── Club Toast (post-checkout confirmation) ─────────────────────────── -->
+  <div id="club-toast" class="invite-join-toast" role="status" aria-live="assertive">
+    <div class="ijt-top">
+      <span class="ijt-icon">♛</span>
+      <p class="ijt-title" id="club-toast-text">Welcome to Club!</p>
+      <button class="ijt-close" aria-label="Dismiss" data-click="this.closest('#club-toast').classList.remove('show')">✕</button>
+    </div>
   </div>
 </body>
 </html>

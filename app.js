@@ -183,6 +183,10 @@ let gameEndedByResignation = false;
 // disconnect. See docs/ags-plans (match resiliency plan) for the full design.
 const ACTIVE_MATCH_KEY = 'chess-active-match';
 let currentMatchId = null;
+// Snapshot of currentMatchId taken at the top of showGameOver(), before
+// clearActiveMatch() nulls it out — the High Five button needs a matchId
+// after the modal is already showing, when currentMatchId itself is gone.
+let lastCompletedMatchId = null;
 let gameOverCountdownTimer = null;
 let gameOverCountdownRemaining = 0;
 let boardFlipped = false;
@@ -426,6 +430,30 @@ function setCurrentOpponent(name, userId) {
   // every change (the host learns who it's playing only when player_info
   // arrives, after startGame()).
   updateVideoChatAvailability();
+}
+
+// Test seam (mirrors setCurrentOpponent above — this file is a plain
+// script, not a module, so there's no import.meta.env.DEV gate available;
+// e2e specs set match/opponent state directly the same way production code
+// does, via these exported setters, not by poking module-scoped `let`s).
+function setCurrentMatchIdForTesting(id) {
+  currentMatchId = id;
+}
+
+function setGameModeForTesting(mode) {
+  gameMode = mode;
+}
+
+function setPeerConnForTesting(fakeConn) {
+  peerConn = fakeConn;
+}
+
+// Mirrors exactly what resignGame() does to `game` internally — `game` is a
+// module-scoped `let`, not reachable as window.game from a test.
+function forceGameOverStateForTesting(status, winner) {
+  if (!game) return;
+  game.status = status;
+  game.winner = winner;
 }
 
 function startGame() {
@@ -1231,6 +1259,9 @@ function showGameOver() {
   renderMatchClocks();
   recordMatchHistoryOnce();
   window.agsClearLiveMatch?.()
+  // Must snapshot before clearActiveMatch() below nulls currentMatchId —
+  // the High Five button needs it after this function returns.
+  lastCompletedMatchId = currentMatchId;
 
   const won = game.status === 'checkmate' && game.winner === playerColor;
   const lost = game.status === 'checkmate' && game.winner && game.winner !== playerColor;
@@ -1287,6 +1318,24 @@ function showGameOver() {
       || String(currentOpponent.name || '').trim().toLowerCase() === String(window.agsGambitGusName || 'Gambit Gus').trim().toLowerCase()
     );
   if (addFriendBtn) addFriendBtn.style.display = isOnline && currentOpponent?.userId && !currentOpponentBlocked && !isGusOpponent ? '' : 'none';
+
+  // High Five (dev-plan §9): eligibility is decided by window.agsHighFiveButtonState
+  // (src/kudos-contract.mjs via src/main.js), the same identity/bot/blocked
+  // guards already computed just above — never guess a userId, never show
+  // this for a guest/bare-peer opponent.
+  const highFiveBtn = document.getElementById('btn-high-five');
+  if (highFiveBtn) {
+    const state = typeof window.agsHighFiveButtonState === 'function'
+      ? window.agsHighFiveButtonState({
+          gameMode, recipientUserId: currentOpponent?.userId || '', isBot: !!isGusOpponent,
+          isBlocked: currentOpponentBlocked, matchId: lastCompletedMatchId,
+        })
+      : { visible: false };
+    highFiveBtn.style.display = state.visible ? '' : 'none';
+    highFiveBtn.disabled = !!state.disabled;
+    if (state.visible) highFiveBtn.textContent = state.label;
+  }
+
   const matchFriendMessage = document.getElementById('match-friend-message');
   if (matchFriendMessage) matchFriendMessage.textContent = '';
   if (isOnline && currentOpponent?.userId && !isGusOpponent && typeof window.agsUpdateMatchFriendAction === 'function') {
@@ -1343,6 +1392,7 @@ function showGameOver() {
   }
 
   document.getElementById('game-over-modal').style.display = 'flex';
+  if (won) window.agsTriggerVictoryEffect?.();
   if (gameMode === 'online') startGameOverCountdown();
 }
 
@@ -1459,6 +1509,32 @@ function requestRematch() {
   setRematchMessage('Rematch request sent. Waiting for your opponent...', 'pending');
   peerConn.send({ type: 'rematch_request' });
   if (typeof window.agsSendEvent === 'function') window.agsSendEvent('rematch_requested', {});
+}
+
+// High Five (dev-plan §9). Server call is authoritative for coins/kudos;
+// the optional peer message below is purely a live "they saw it" nicety —
+// if the opponent isn't connected anymore, the next /club/status refresh on
+// their end still shows the correct balance regardless.
+function sendHighFive() {
+  const btn = document.getElementById('btn-high-five');
+  if (!btn || btn.disabled) return;
+  const recipientUserId = currentOpponent?.userId;
+  const matchId = lastCompletedMatchId;
+  if (!recipientUserId || !matchId || typeof window.agsSendHighFive !== 'function') return;
+
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  window.agsSendHighFive(matchId, recipientUserId).then(() => {
+    btn.textContent = '🙌 High Five sent';
+    try { if (peerConn?.open) peerConn.send({ type: 'highfive', fromName: getCurrentPlayerDisplayName() }); } catch {}
+    if (typeof window.agsSendEvent === 'function') window.agsSendEvent('highfive_sent', {});
+  }).catch(error => {
+    btn.disabled = false;
+    btn.textContent = originalText;
+    const messageEl = document.getElementById('match-friend-message');
+    if (messageEl) messageEl.textContent = error?.message || 'Could not send High Five. Try again.';
+  });
 }
 
 function acceptRematch() {
@@ -3306,6 +3382,14 @@ function setupPeerConnection(conn, role) {
       if (currentOpponentBlocked) return;
       playerColor = data.yourColor;
       startRematch();
+    } else if (data.type === 'highfive') {
+      // Live-only notification — the coins/kudos were already awarded
+      // server-side before this message was even sent (see sendHighFive()).
+      // If this arrives after the receiving player left, that's fine: their
+      // next /club/status refresh shows the correct balance regardless.
+      if (currentOpponentBlocked) return;
+      const fromName = sanitizePeerText(data.fromName, PEER_NAME_MAX_CHARS) || 'Your opponent';
+      showConnBanner(`🙌 ${fromName} sent you a High Five! +5 🪙`, 'success');
     }
   });
 
