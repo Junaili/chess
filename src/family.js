@@ -18,18 +18,16 @@ import { normalizeFamilyError, isNotInGroupResponse, resolveMemberRole } from '.
 
 const CONFIGURATION_CODE = 'chess-family'
 
-// AGS Group is called directly on web. The live AGS CORS policy allows the
-// GitHub Pages origin but not Capacitor's `capacitor://localhost` origin, so
-// native builds retain the narrow, player-token Extend proxy for this service.
-// Dev uses Vite's same-origin /group proxy.
-function requiresNativeGroupProxy() {
-  return !!window.Capacitor?.isNativePlatform?.()
+// Group's "not in any group" response is a 404, and the Group service's
+// response behavior is not consistent across browser origins. Keep the
+// production web and native builds behind the narrow, player-token Extend
+// proxy; dev/e2e stays on Vite's same-origin /group proxy.
+function usesExtendGroupProxy() {
+  return !import.meta.env.DEV && !!import.meta.env.VITE_EXTEND_EMAIL_URL
 }
 
 export function familyTransportAvailable() {
-  return requiresNativeGroupProxy()
-    ? !!import.meta.env.VITE_EXTEND_EMAIL_URL
-    : !!getConfig().baseURL
+  return import.meta.env.DEV ? !!getConfig().baseURL : usesExtendGroupProxy()
 }
 
 function getConfig() {
@@ -40,7 +38,7 @@ function getConfig() {
 async function groupFetch(method, path, body) {
   const { baseURL, namespace } = getConfig()
   const resolvedPath = path.replace('{ns}', encodeURIComponent(namespace))
-  if (requiresNativeGroupProxy()) {
+  if (usesExtendGroupProxy()) {
     const resp = await extendFetch(`/family/group/${resolvedPath}`, {
       method,
       headers: body ? { 'Content-Type': 'application/json' } : {},

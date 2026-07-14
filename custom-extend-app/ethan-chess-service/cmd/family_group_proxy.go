@@ -206,13 +206,23 @@ func (h *familyGroupProxy) forward(
 		contentType = "application/json"
 	}
 	w.Header().Set("Content-Type", contentType)
-	if normalizeNotJoined && resp.StatusCode == http.StatusNotFound {
+	if normalizeNotJoined && isNoJoinedGroupResponse(resp.StatusCode, raw) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"data":[]}`))
 		return
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(raw)
+}
+
+func isNoJoinedGroupResponse(status int, raw []byte) bool {
+	if status != http.StatusNotFound {
+		return false
+	}
+	var payload struct {
+		ErrorCode int `json:"errorCode"`
+	}
+	return json.Unmarshal(raw, &payload) == nil && payload.ErrorCode == 73034
 }
 
 func writeFamilyError(w http.ResponseWriter, status int, message string) {

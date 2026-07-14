@@ -93,6 +93,35 @@ func TestFamilyGroupProxyNormalizesNoJoinedGroup(t *testing.T) {
 	}
 }
 
+func TestFamilyGroupProxyPreservesOtherNotFound(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"errorCode":73035,"message":"group not found"}`)
+	}))
+	defer upstream.Close()
+
+	proxy := &familyGroupProxy{
+		baseURL:    upstream.URL,
+		namespace:  "seal-chessags",
+		httpClient: upstream.Client(),
+	}
+	req := newFamilyProxyRequest(http.MethodGet,
+		"/family/group/v2/public/namespaces/seal-chessags/users/me/groups?limit=10", "")
+	rec := httptest.NewRecorder()
+
+	proxy.handle(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"errorCode":73035`) {
+		t.Fatalf("unexpected response: %s", rec.Body.String())
+	}
+}
+
 func TestFamilyGroupProxyForwardsValidatedCreate(t *testing.T) {
 	t.Parallel()
 
