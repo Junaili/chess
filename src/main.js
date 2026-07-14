@@ -1,4 +1,5 @@
 import { Peer } from 'peerjs'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { ConfigApi as ChatConfigApi, TopicApi as ChatTopicApi } from '@accelbyte/sdk-chat'
 import { loginWithGoogle, loginWithApple, loginWithPassword, requestPasswordReset, resetPassword, registerWithPassword, registerChildAccount, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession, clearLocalAccountData } from './auth.js'
 import { validateBirthYear, isBirthYearUnder13, isChildSession, buildConsentRecord } from './family-safety.mjs'
@@ -45,8 +46,17 @@ import {
   submitAccountDeletion,
   validateDeletionConfirmation,
 } from './account-deletion.js'
+import { createVideoCallRuntime } from './video-call.mjs'
 
 window.Peer = Peer
+const nativeVideoCallAudio = registerPlugin('VideoCallAudio')
+window.chessVideoCall = createVideoCallRuntime({
+  Peer,
+  iceConfigUrl: import.meta.env.VITE_RTC_ICE_CONFIG_URL || '',
+  getAccessToken: () => sdk.getToken()?.accessToken || '',
+  nativeAudio: nativeVideoCallAudio,
+  isNativeIOS: () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios',
+})
 window.chessContentModeration = Object.freeze({
   moderateIncomingChat,
   moderateIncomingDisplayName,

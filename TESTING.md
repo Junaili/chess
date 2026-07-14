@@ -46,6 +46,32 @@ an iPad simulator. `test:ios` is kept out of `test:precommit` because
   leaderboard + stats fetch, friends list, achievements modal, matchmaking
   ticket create/cancel, and a two-player online match with move sync over PeerJS
   plus text delivery over AGS Chat.
+- **Video-call quality** (`tests/unit/video-call.test.cjs`,
+  `tests/e2e/video-chat-gate.spec.js`): capture constraints, TURN response
+  validation, privacy-safe WebRTC stats, adaptive quality transitions, media
+  call/answer wiring, device controls, mute, and teardown with fake media.
+
+## Video-call real-device matrix
+
+Browser automation verifies behavior, but camera, microphone, Bluetooth, and
+radio handoff quality must also be checked on physical devices before release.
+Use two accounts that are friends and record the quality badge plus the
+`video_call_quality` telemetry samples for each run.
+
+| Scenario | Required checks |
+| --- | --- |
+| iPhone ↔ desktop, Wi-Fi | Echo-free speech, lip sync, 720p when bandwidth allows, mute/camera controls |
+| iPad ↔ Android, cellular | Stable audio, adaptive video downgrade, portrait/landscape resize |
+| AirPods/Bluetooth headset | Correct input/output route, no speaker echo, route change survives reconnect |
+| Wi-Fi → cellular handoff | Reconnecting state appears, ICE restart recovers without ending the game |
+| 3–8% packet loss / 250–500 ms RTT | Voice remains intelligible, quality moves to Fair/Poor, video drops before audio |
+| TURN-forced call | Candidate type reports `relay`, UDP works, TCP/TLS fallback works on restricted networks |
+| Incoming phone/audio interruption on iOS | Call audio pauses and resumes with `.videoChat` routing restored |
+
+For a release candidate, run at least ten minutes per scenario and verify there
+are no repeated freezes, runaway quality oscillation, raw IP addresses, or
+device labels in telemetry. The iOS simulator smoke test proves native build and
+plugin registration only; it does not substitute for physical audio hardware.
 
 ## Live tests setup
 

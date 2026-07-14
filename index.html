@@ -1326,16 +1326,37 @@
   </div>
 
   <!-- ── Video Chat Panel ───────────────────────────────────────────────────── -->
-  <div id="video-chat-panel" class="video-chat-panel">
+  <div id="video-chat-panel" class="video-chat-panel" role="dialog" aria-label="Video call" data-call-state="idle">
+    <div class="video-call-header">
+      <div class="video-call-health" aria-live="polite">
+        <span id="video-quality-indicator" class="video-quality-indicator connecting">Connecting</span>
+        <span id="video-network-detail" class="video-network-detail"></span>
+        <span id="video-profile-detail" class="video-profile-detail">High quality</span>
+      </div>
+      <button type="button" class="video-header-btn" id="btn-expand-video" title="Enlarge call window" aria-label="Resize call window" aria-pressed="false">⛶</button>
+    </div>
     <div class="video-wrapper">
-      <video id="remote-video" class="remote-video" autoplay playsinline></video>
-      <video id="local-video"  class="local-video"  autoplay playsinline muted></video>
-      <div class="video-status" id="video-status">Calling…</div>
+      <video id="remote-video" class="remote-video" autoplay playsinline aria-label="Other player video"></video>
+      <video id="local-video" class="local-video" autoplay playsinline muted aria-label="Your camera preview"></video>
+      <div class="video-status" id="video-status" aria-live="polite">Calling…</div>
+      <button type="button" id="btn-resume-remote-video" class="video-playback-recovery" hidden>Tap to start video and audio</button>
+    </div>
+    <div id="video-device-settings" class="video-device-settings" hidden>
+      <label>
+        <span>Microphone</span>
+        <select id="video-audio-input" aria-label="Call microphone"><option value="">Default microphone</option></select>
+      </label>
+      <label>
+        <span>Camera</span>
+        <select id="video-camera-input" aria-label="Call camera"><option value="">Default camera</option></select>
+      </label>
+      <button type="button" id="btn-switch-camera" class="video-switch-camera">Switch front/back camera</button>
     </div>
     <div class="video-controls">
-      <button class="video-ctrl-btn" id="btn-toggle-audio" data-click="toggleAudio()" title="Mute mic" aria-label="Mute mic">🎤</button>
-      <button class="video-ctrl-btn" id="btn-toggle-cam" data-click="toggleVideoFeed()" title="Toggle camera" aria-label="Toggle camera">📹</button>
-      <button class="video-ctrl-btn danger" data-click="endVideoChat()" title="End call" aria-label="End call">📵</button>
+      <button type="button" class="video-ctrl-btn" id="btn-toggle-audio" data-click="toggleAudio()" title="Mute mic" aria-label="Mute mic">🎤</button>
+      <button type="button" class="video-ctrl-btn" id="btn-toggle-cam" data-click="toggleVideoFeed()" title="Toggle camera" aria-label="Toggle camera">📹</button>
+      <button type="button" class="video-ctrl-btn" id="btn-video-settings" title="Call devices" aria-label="Choose microphone and camera">⚙️</button>
+      <button type="button" class="video-ctrl-btn danger" data-click="endVideoChat()" title="End call" aria-label="End call">📵</button>
     </div>
   </div>
 

@@ -1,5 +1,159 @@
 import UIKit
 import Capacitor
+import AVFAudio
+
+@objc(VideoCallAudioPlugin)
+public class VideoCallAudioPlugin: CAPPlugin, CAPBridgedPlugin {
+    public let identifier = "VideoCallAudioPlugin"
+    public let jsName = "VideoCallAudio"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise)
+    ]
+
+    private let audioSession = AVAudioSession.sharedInstance()
+    private var callActive = false
+    private var previousCategory: AVAudioSession.Category?
+    private var previousMode: AVAudioSession.Mode?
+    private var previousOptions: AVAudioSession.CategoryOptions?
+
+    override public func load() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: audioSession
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange(_:)),
+            name: AVAudioSession.routeChangeNotification,
+            object: audioSession
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMediaServicesReset(_:)),
+            name: AVAudioSession.mediaServicesWereResetNotification,
+            object: audioSession
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    private func configureForVideoCall() throws {
+        if !callActive {
+            previousCategory = audioSession.category
+            previousMode = audioSession.mode
+            previousOptions = audioSession.categoryOptions
+        }
+        try audioSession.setCategory(
+            .playAndRecord,
+            mode: .videoChat,
+            options: [.allowBluetoothHFP, .defaultToSpeaker]
+        )
+        try? audioSession.setPreferredSampleRate(48_000)
+        try? audioSession.setPreferredIOBufferDuration(0.01)
+        try audioSession.setActive(true)
+        callActive = true
+    }
+
+    @objc func start(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                call.reject("Video call audio session is unavailable")
+                return
+            }
+            do {
+                try self.configureForVideoCall()
+                call.resolve([
+                    "sampleRate": self.audioSession.sampleRate,
+                    "outputChannels": self.audioSession.outputNumberOfChannels
+                ])
+            } catch {
+                call.reject("Could not activate video call audio", nil, error)
+            }
+        }
+    }
+
+    @objc func stop(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                call.resolve()
+                return
+            }
+            guard self.callActive else {
+                call.resolve()
+                return
+            }
+            var stopError: Error?
+            do {
+                try self.audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+            } catch {
+                stopError = error
+            }
+            if let category = self.previousCategory,
+               let mode = self.previousMode,
+               let options = self.previousOptions {
+                do {
+                    try self.audioSession.setCategory(category, mode: mode, options: options)
+                } catch {
+                    if stopError == nil { stopError = error }
+                }
+            }
+            self.callActive = false
+            self.previousCategory = nil
+            self.previousMode = nil
+            self.previousOptions = nil
+            if let stopError {
+                call.reject("Could not restore the previous audio session", nil, stopError)
+            } else {
+                call.resolve()
+            }
+        }
+    }
+
+    @objc private func handleInterruption(_ notification: Notification) {
+        guard let rawValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: rawValue) else { return }
+        if type == .began {
+            notifyListeners("stateChange", data: ["status": "interrupted"])
+            return
+        }
+
+        let optionsRaw = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+        let options = AVAudioSession.InterruptionOptions(rawValue: optionsRaw)
+        if callActive && options.contains(.shouldResume) {
+            try? configureForVideoCall()
+        }
+        notifyListeners("stateChange", data: ["status": "resumed"])
+    }
+
+    @objc private func handleRouteChange(_ notification: Notification) {
+        let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0
+        let reason = AVAudioSession.RouteChangeReason(rawValue: rawReason) ?? .unknown
+        notifyListeners("stateChange", data: [
+            "status": "route-changed",
+            "reason": reason.rawValue
+        ])
+    }
+
+    @objc private func handleMediaServicesReset(_ notification: Notification) {
+        if callActive {
+            try? configureForVideoCall()
+        }
+        notifyListeners("stateChange", data: ["status": "media-services-reset"])
+    }
+}
+
+@objc(EthanBridgeViewController)
+class EthanBridgeViewController: CAPBridgeViewController {
+    override func capacitorDidLoad() {
+        super.capacitorDidLoad()
+        bridge?.registerPluginInstance(VideoCallAudioPlugin())
+    }
+}
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {

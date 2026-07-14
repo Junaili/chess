@@ -4738,7 +4738,7 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   position: fixed;
   right: 20px;
   bottom: 20px;
-  width: 280px;
+  width: min(360px, calc(100vw - 40px));
   border-radius: 24px;
   overflow: hidden;
   display: none;
@@ -4747,6 +4747,82 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   background: rgba(8, 8, 10, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: var(--shadow-lg);
+  transition: width 180ms ease, transform 180ms ease;
+}
+
+.video-chat-panel.expanded {
+  right: 50%;
+  bottom: 50%;
+  left: auto;
+  width: min(900px, calc(100vw - 48px));
+  transform: translate(50%, 50%);
+  z-index: 160;
+}
+
+.video-call-header {
+  min-height: 42px;
+  padding: 7px 10px 7px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(18, 17, 21, 0.98);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.video-call-health {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.video-quality-indicator {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(120, 120, 128, 0.72);
+}
+
+.video-quality-indicator.good {
+  background: rgba(39, 148, 82, 0.9);
+}
+
+.video-quality-indicator.fair {
+  background: rgba(179, 122, 29, 0.94);
+}
+
+.video-quality-indicator.poor {
+  background: rgba(194, 59, 48, 0.94);
+}
+
+.video-quality-indicator.connecting {
+  background: rgba(74, 94, 138, 0.9);
+}
+
+.video-network-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.video-profile-detail {
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.video-header-btn {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 9px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
 }
 
 .video-wrapper {
@@ -4756,7 +4832,7 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 
 .remote-video {
   width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 16 / 9;
   object-fit: cover;
   display: block;
   background: #19161c;
@@ -4766,8 +4842,8 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   position: absolute;
   right: 10px;
   bottom: 10px;
-  width: 78px;
-  height: 58px;
+  width: clamp(92px, 24%, 190px);
+  aspect-ratio: 16 / 9;
   object-fit: cover;
   border-radius: 10px;
   border: 2px solid rgba(255, 255, 255, 0.26);
@@ -4783,6 +4859,75 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   background: rgba(0, 0, 0, 0.44);
   color: rgba(255, 255, 255, 0.84);
   font-size: 0.9rem;
+  text-align: center;
+  padding: 20px;
+  pointer-events: none;
+}
+
+.video-playback-recovery {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 3;
+  max-width: calc(100% - 32px);
+  padding: 9px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(15, 14, 18, 0.9);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.video-device-settings {
+  padding: 11px 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  background: rgba(18, 17, 21, 0.98);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.video-device-settings[hidden] {
+  display: none;
+}
+
+.video-device-settings label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.67rem;
+  font-weight: 700;
+}
+
+.video-device-settings select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  color: #fff;
+  background: #28262c;
+  font: inherit;
+  font-size: 0.72rem;
+}
+
+.video-switch-camera {
+  grid-column: 1 / -1;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  color: rgba(255, 255, 255, 0.84);
+  background: rgba(255, 255, 255, 0.08);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .video-controls {
@@ -4819,6 +4964,28 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 
 .video-ctrl-btn.muted {
   background: rgba(194, 59, 48, 0.68);
+}
+
+@media (max-width: 640px) {
+  .video-chat-panel.expanded {
+    right: 8px;
+    bottom: 50%;
+    left: 8px;
+    width: auto;
+    transform: translateY(50%);
+  }
+
+  .video-profile-detail {
+    display: none;
+  }
+
+  .video-device-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .video-switch-camera {
+    grid-column: 1;
+  }
 }
 
 /* ─── Banner & Motion ─────────────────────────────────────────────────────── */

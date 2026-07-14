@@ -81,6 +81,7 @@ chess-ethan/
 │   ├── privacy-preferences.mjs   # Analytics consent storage (pure)
 │   ├── telemetry.js              # Gameplay/funnel events sent to AGS Game Telemetry
 │   ├── anon-id.js                # Device/session id + platform stamping for events
+│   ├── video-call.mjs             # WebRTC capture, TURN, quality stats, and adaptation
 │   ├── legal.js / legal-data.mjs / legal-markdown.mjs   # AGS Legal fetch, accept, render
 │   │
 │   │   # Account lifecycle & backend bridge
@@ -130,6 +131,7 @@ VITE_ACCELBYTE_BASE_URL=https://your-namespace.prod.gamingservices.accelbyte.io
 VITE_ACCELBYTE_CLIENT_ID=your_client_id
 VITE_ACCELBYTE_NAMESPACE=your-namespace
 VITE_ACCELBYTE_REDIRECT_URI=https://192.168.x.x:8808/
+VITE_RTC_ICE_CONFIG_URL=https://your-service.example.com/v1/rtc/ice-servers
 ```
 
 Set `VITE_ACCELBYTE_REDIRECT_URI` to your machine's local IP (not `localhost` unless you're only testing from the same machine):
@@ -138,6 +140,34 @@ Set `VITE_ACCELBYTE_REDIRECT_URI` to your machine's local IP (not `localhost` un
 ipconfig getifaddr en0        # Mac
 ipconfig | findstr "IPv4"     # Windows
 ```
+
+`VITE_RTC_ICE_CONFIG_URL` is optional for local development and required for
+production-grade relayed calls. The endpoint must authenticate the player and
+return short-lived credentials in this shape:
+
+```json
+{
+  "iceServers": [
+    {
+      "urls": [
+        "turn:turn.example.com:3478?transport=udp",
+        "turn:turn.example.com:3478?transport=tcp",
+        "turns:turn.example.com:5349"
+      ],
+      "username": "temporary-user",
+      "credential": "temporary-password"
+    }
+  ],
+  "ttl": 600
+}
+```
+
+The client sends the current AGS bearer token when one is available, rejects
+responses without credentialed TURN, refreshes expiring configuration, and
+falls back to PeerJS's ICE configuration if the endpoint is unavailable. Keep
+the endpoint on the same origin or an origin allowed by `index.html`'s CSP and
+CORS policy. Never put a TURN shared secret or long-lived password in a
+`VITE_` variable because Vite values are public in the browser bundle.
 
 ### 4. Trust the self-signed certificate
 
