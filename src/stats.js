@@ -9,6 +9,10 @@ const STREAK_LONGEST = 'chess-longest-streak'
 const STREAK_LAST_DAY = 'chess-last-play-day'
 const RATING = 'chess-rating'
 const RATING_DEFAULT = 1200
+// Server-incremented only (dev-plan §6.7/§9's High Five reward,
+// custom-extend-app/ethan-chess-service/cmd/monetization.go's
+// incrementKudos) — the client never writes this stat, only reads it.
+const KUDOS_RECEIVED = 'kudos-received'
 const LEADERBOARD_STAT_CODES = {
   wins: 'chess-wins',
   losses: 'chess-losses',
@@ -16,7 +20,7 @@ const LEADERBOARD_STAT_CODES = {
 }
 const STAT_CODES = [
   'chess-wins', 'chess-losses', 'chess-games-played', 'chess-draws', 'chess-online-games',
-  STREAK_CURRENT, STREAK_LONGEST, STREAK_LAST_DAY, RATING,
+  STREAK_CURRENT, STREAK_LONGEST, STREAK_LAST_DAY, RATING, KUDOS_RECEIVED,
 ]
 const MATCH_HISTORY_KEY = 'chess-match-history'
 const MAX_MATCH_HISTORY = 50
@@ -52,6 +56,7 @@ export async function fetchStats(userId) {
       draws:        get('chess-draws'),
       onlineGames:  get('chess-online-games'),
       rating:       get(RATING) || RATING_DEFAULT,
+      kudos:        get(KUDOS_RECEIVED),
     }
   } catch (e) {
     console.warn('[AGS stats] fetchStats:', e?.response?.data || e?.message)

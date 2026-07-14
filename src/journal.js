@@ -23,6 +23,7 @@ import {
   buildJournalEntry, normalizeJournalRecord, buildJournalRecordValue,
   detectProcessBadges, buildCoachReportRequest,
 } from './journal-data.mjs'
+import { journalVisibleEntries, narrativeHint } from './club-contract.mjs'
 
 const JOURNAL_KEY = 'chess-journal'
 const GRADED_PLIES_PER_YIELD = 4
@@ -37,12 +38,18 @@ let state = {
   record: null,
   window: '24h',
   generating: false,
+  clubActive: false,
+  journalOpen: null,
+  narrativesRemainingToday: null,
 }
 let generationToken = 0
 let activePuzzle = null
 
 export function resetJournalState() {
-  state = { userId: null, isChild: false, matchHistory: null, record: null, window: '24h', generating: false }
+  state = {
+    userId: null, isChild: false, matchHistory: null, record: null, window: '24h', generating: false,
+    clubActive: false, journalOpen: null, narrativesRemainingToday: null,
+  }
   generationToken++
   activePuzzle = null
 }
@@ -224,6 +231,18 @@ async function requestGusNote(entryId) {
   try {
     const entry = state.record?.entries.find(e => e.id === entryId)
     if (!entry || entry.coach?.gusNote) return
+    // Client-side pre-check so the UI can be honest before ever calling the
+    // endpoint — the server (coachReportGate) remains authoritative; this
+    // only avoids a silent-looking failed request when we already know the
+    // answer (dev-plan §8.5).
+    if (!state.clubActive && !narrativeHint({
+      hasClub: state.clubActive,
+      journalOpen: state.journalOpen,
+      narrativesRemainingToday: state.narrativesRemainingToday,
+    }).allowed) {
+      sendEvent('club_gate_hit', { feature: 'coach_report' })
+      return
+    }
     const res = await extendFetch('/coach/report', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -474,9 +493,26 @@ function renderEntry(entry, index) {
   </article>`
 }
 
+function renderNarrativeBanner() {
+  const bannerEl = document.getElementById('journal-narrative-banner')
+  if (!bannerEl) return
+  if (state.isChild || state.clubActive) {
+    bannerEl.style.display = 'none'
+    return
+  }
+  const hint = narrativeHint({
+    hasClub: state.clubActive,
+    journalOpen: state.journalOpen,
+    narrativesRemainingToday: state.narrativesRemainingToday,
+  })
+  bannerEl.textContent = hint.label
+  bannerEl.style.display = ''
+}
+
 function renderEntries() {
   const listEl = document.getElementById('journal-entries')
   if (!listEl || !state.record) return
+  renderNarrativeBanner()
   const entries = state.record.entries
   if (!entries.length) {
     listEl.innerHTML = `<div class="profile-history-empty">
@@ -485,7 +521,24 @@ function renderEntries() {
     </div>`
     return
   }
-  listEl.innerHTML = entries.map((entry, i) => renderEntry(entry, i)).join('')
+  // Journal history depth is Club-gated (dev-plan §1.2); writing new entries
+  // is never gated. Open Journal Days (§8.5) and child sessions (which never
+  // see purchase UI, but DO get the free-tier limit like any other
+  // non-Club user) both flow through journalVisibleEntries.
+  const { visible, lockedCount, unlimited } = journalVisibleEntries(entries, {
+    hasClub: state.clubActive,
+    journalOpen: state.journalOpen,
+  })
+  const lockedCard = !unlimited && lockedCount
+    ? `<div class="profile-history-empty profile-history-locked"${state.isChild ? '' : ' data-purchase-ui="1"'}>
+        <strong>${lockedCount} more entr${lockedCount === 1 ? 'y' : 'ies'} in your history</strong>
+        <span>${state.isChild
+          ? 'Ask your parent about Club ♛ to see your full journal history.'
+          : 'Club unlocks your complete journal history — ♛ Learn more'}</span>
+        ${state.isChild ? '' : '<button type="button" class="btn-mini" data-click="window.agsOpenClub && window.agsOpenClub()">Learn more ♛</button>'}
+      </div>`
+    : ''
+  listEl.innerHTML = visible.map((entry, i) => renderEntry(entry, i)).join('') + lockedCard
   bindEntryActions(listEl)
 }
 
@@ -541,9 +594,14 @@ async function saveReflection(entry) {
 
 // ─── Entry point (called by main.js when the own profile opens) ──────────────
 
-export async function renderJournalTab(userId, matchHistory, { isChildSession = false } = {}) {
+export async function renderJournalTab(userId, matchHistory, {
+  isChildSession = false, clubActive = false, journalOpen = null, narrativesRemainingToday = null,
+} = {}) {
   state.userId = userId
   state.isChild = !!isChildSession
+  state.clubActive = !!clubActive
+  state.journalOpen = journalOpen
+  state.narrativesRemainingToday = narrativesRemainingToday
   state.matchHistory = Array.isArray(matchHistory) ? matchHistory : state.matchHistory
 
   // One-time control wiring (direct listeners — no data-click indirection).

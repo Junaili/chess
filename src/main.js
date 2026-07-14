@@ -22,6 +22,11 @@ import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFrie
 import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite, rejectFamilyInvite, removeFamilyMember, leaveFamily, familyTransportAvailable, recordParentalConsent } from './family.js'
 import { initGusPanel, resetGusPanel, openGusProfile, refreshGusProfile, showGusTab, startGusMatchmaking as startGusMatchmakingFlow } from './gus.js'
 import { renderJournalTab, resetJournalState } from './journal.js'
+import { initClubPanel, resetClubStatus, openClubScreen, refreshClubManageAction, consumeClubReturnParams, hasClub, getClubStatus, getCoins, initNativeIAP, triggerRestorePurchases, giveCoins } from './club.js'
+import { formatCoins } from './club-contract.mjs'
+import { initCosmetics, resetCosmetics, loadCoinStore, getEquippedFlairBadge, triggerVictoryEffect } from './coin-store.js'
+import { sendHighFive, hasSentHighFive } from './kudos.js'
+import { deriveHighFiveButton, formatKudosCount } from './kudos-contract.mjs'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, refreshPresenceToken, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
 import {
@@ -156,6 +161,7 @@ const STATIC_ACTIONS = new Set([
   'resignGame',
   'selectColor',
   'sendChatMessage',
+  'sendHighFive',
   'shareInviteLink',
   'showAddContact',
   'showColorSelect',
@@ -177,7 +183,10 @@ const STATIC_ACTIONS = new Set([
   'agsCancelEdit',
   'agsCancelLoginQueue',
   'agsChooseAnalytics',
+  'agsClubManageSubscription',
+  'agsClubRestorePurchases',
   'agsCloseAchievements',
+  'agsCloseCoinStore',
   'agsCloseDeleteAccount',
   'agsCloseOfflineFriends',
   'agsCloseLeaderboardOverlay',
@@ -198,6 +207,8 @@ const STATIC_ACTIONS = new Set([
   'agsOpenDeleteAccount',
   'agsOpenAchievements',
   'agsOpenForgotPassword',
+  'agsOpenClub',
+  'agsOpenCoinStore',
   'agsOpenGuestPlay',
   'agsOpenGusProfile',
   'agsOpenLegalDocument',
@@ -259,6 +270,10 @@ function runStaticCall(source, event, element) {
   if (!action) return
   if (action === "this.closest('#invite-join-toast').classList.remove('show')") {
     element.closest('#invite-join-toast')?.classList.remove('show')
+    return
+  }
+  if (action === "this.closest('#club-toast').classList.remove('show')") {
+    element.closest('#club-toast')?.classList.remove('show')
     return
   }
 
@@ -1002,6 +1017,13 @@ async function hydrateAuthenticatedUser(profile) {
   // Gus's home card + play button (fire-and-forget: a slow/absent Extend
   // service must not delay session hydration — Gus just stays hidden).
   void initGusPanel()
+  // Club home card (fire-and-forget, same reasoning as Gus above).
+  void initClubPanel(isProtectedChildSession())
+  // Loads + applies equipped cosmetics (board theme, piece set, flair) —
+  // fire-and-forget, same reasoning as Gus/Club above.
+  void initCosmetics(currentUserId)
+  // Returning from a Stripe checkout redirect (?club=success|cancel).
+  consumeClubReturnParams()
   window.agsCheckResumableMatch?.()  // any unfinished online match from before a disconnect/reload?
 }
 
@@ -1561,6 +1583,8 @@ async function initAuth() {
     clearUnlockedCache()
     resetGusPanel()
     resetJournalState()
+    resetClubStatus()
+    resetCosmetics()
     chatClient.disconnect()
     await signOutPresence()
     await logout()
@@ -1851,12 +1875,29 @@ async function initAuth() {
     await signOutPresence()
     await logout()
   }
+  window.agsTriggerVictoryEffect = triggerVictoryEffect
+  // Thin wrappers so app.js (a plain script, can't import ES modules) can
+  // reach the pure eligibility logic + network call — same pattern as
+  // window.isGambitGusIdentity. isBot/isBlocked/gameMode/recipientUserId
+  // are read from app.js's own closure state (currentOpponent etc.) and
+  // passed in fresh on every call, never cached here.
+  window.agsHighFiveButtonState = opts => deriveHighFiveButton({
+    ...opts,
+    senderId: currentUserId,
+    coins: getCoins(),
+    alreadySent: hasSentHighFive(opts?.matchId),
+  })
+  window.agsSendHighFive = (matchId, recipientUserId) => sendHighFive(matchId, recipientUserId)
+  window.agsFormatKudosCount = formatKudosCount
   window.agsStartMatchmaking = startMatchmaking
   window.agsCancelMatchmaking = cancelMatchmaking
   window.agsStartGusMatchmaking = startGusMatchmakingFlow
   window.agsOpenGusProfile = openGusProfile
   window.agsRefreshGusProfile = refreshGusProfile
   window.agsShowGusTab = showGusTab
+  window.agsOpenClub = () => openClubScreen(isProtectedChildSession())
+  window.agsClubManageSubscription = refreshClubManageAction
+  window.agsClubRestorePurchases = triggerRestorePurchases
   window.agsRefreshFriends = refreshFriendsUI
   window.agsInviteFriend = friendId => {
     ensureNotificationPermission()  // user gesture — ask now so they can be notified of the reply
@@ -1963,6 +2004,28 @@ async function initAuth() {
     const result = await removeFamilyMember(userId, familyState.group.groupId)
     setFamilyMessage(result.ok ? 'Family member removed.' : result.error, result.ok ? '' : 'error')
     if (result.ok) await refreshFamilyUI(false)
+  }
+  // Family allowance (dev-plan §6.8/§10): guardian → child coin gift. Uses
+  // the same lightweight prompt()/setFamilyMessage() pattern as the other
+  // family actions above rather than a new modal — this is a rare, low-
+  // stakes action that doesn't warrant its own UI surface.
+  window.agsGiveCoins = async userId => {
+    if (!familyState.group) return
+    const member = familyState.members.find(m => m.userId === userId)
+    const name = member?.displayName || 'this child'
+    const input = prompt(`Give how many coins to ${name}?`, '50')
+    if (input === null) return
+    const amount = Math.trunc(Number(input))
+    if (!Number.isFinite(amount) || amount < 1) {
+      setFamilyMessage('Enter a whole number of coins (1 or more).', 'error')
+      return
+    }
+    try {
+      const { guardianBalance } = await giveCoins(userId, amount)
+      setFamilyMessage(`Gave ${amount} coins to ${name}. Your balance: ${formatCoins(guardianBalance)}.`)
+    } catch (err) {
+      setFamilyMessage(err.message || 'Could not give coins. Try again.', 'error')
+    }
   }
   window.agsLeaveFamily = async () => {
     if (!familyState.group) return
@@ -2632,7 +2695,19 @@ function leaderboardPlayerStatsMarkup(stats) {
 
 function leaderboardPlayerDetailsMarkup(name, isYou, stats) {
   const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
-  return `<span class="lb-name">${esc(name)}${isYou ? ' (you)' : ''}</span>${leaderboardPlayerStatsMarkup(stats)}`
+  return `<span class="lb-name">${esc(name)}${isYou ? ' (you)' : ''}${isYou ? ownNameBadgesMarkup() : ''}</span>${leaderboardPlayerStatsMarkup(stats)}`
+}
+
+// Badges shown next to the CALLER's own name only — self-status is already
+// cached client-side (hasClub()/getEquippedFlairBadge()), so this never adds
+// a per-row network lookup for other players (dev-plan §7.5/§8: "do NOT add
+// per-row status lookups", "self-badge only in v1").
+function ownNameBadgesMarkup() {
+  let badges = ''
+  if (hasClub()) badges += ' <span class="own-badge own-badge-club" title="Ethan\'s Chess Club member">♛</span>'
+  const flair = getEquippedFlairBadge()
+  if (flair) badges += ` <span class="own-badge own-badge-flair" title="${flair.label}">${flair.emoji}</span>`
+  return badges
 }
 
 function renderAGSLeaderboard(rankings, nameMap, userRankData, hasMore = false, statsByUserId = {}) {
@@ -2819,6 +2894,7 @@ async function openPublicProfile(userId, displayName = '') {
   const matchHistoryCountEl = document.getElementById('profile-match-history-count')
   const accountSafetyCard = document.getElementById('profile-account-safety')
   const ratingEl = document.getElementById('profile-rating')
+  const kudosEl = document.getElementById('profile-kudos')
   const chessStatsSection = document.getElementById('profile-chess-stats')
 
   const editBtn = document.getElementById('profile-btn-edit-name')
@@ -2844,6 +2920,7 @@ async function openPublicProfile(userId, displayName = '') {
     if (lossesEl) lossesEl.textContent = '—'
     if (rankEl) rankEl.textContent = '—'
     if (ratingEl) ratingEl.textContent = '—'
+    if (kudosEl) kudosEl.textContent = '—'
     if (chessStatsSection) chessStatsSection.style.display = 'none'
     if (statusEl) statusEl.textContent = ''
     if (addBtn) addBtn.style.display = 'none'
@@ -2879,6 +2956,7 @@ async function openPublicProfile(userId, displayName = '') {
   if (lossesEl) lossesEl.textContent = stats?.losses ?? 0
   if (rankEl) rankEl.textContent = rank?.rank ? `#${rank.rank}` : 'Unranked'
   if (ratingEl) ratingEl.textContent = stats?.rating ?? '—'
+  if (kudosEl) kudosEl.textContent = formatKudosCount(stats?.kudos)
   renderProfileMatchHistory(matchHistory)
   // Head-to-head is "my record vs this person" — on my own profile that's
   // just my own computed stats; on a friend's profile it needs my own match
@@ -2887,6 +2965,14 @@ async function openPublicProfile(userId, displayName = '') {
     ? null
     : computeMatchStats(myMatchHistory).headToHead.find(h => h.opponentUserId === userId)
   renderChessStats(computeMatchStats(matchHistory), headToHeadEntry)
+  // Advanced stats are Club-gated (dev-plan §1.2). We only know the VIEWER's
+  // own Club status without an extra per-user lookup ("do NOT add per-row
+  // status lookups") — so the gate applies on your own profile only; a
+  // friend's profile always shows their advanced stats.
+  renderAdvancedStats(computeMatchStats(matchHistory), {
+    hasClub: userId === currentUserId ? hasClub() : true,
+    isChildSession: isProtectedChildSession(),
+  })
 
   // Coaching tab: guardians only, and only on a linked child's profile —
   // the role check is against the shared chess-family group.
@@ -2908,7 +2994,12 @@ async function openPublicProfile(userId, displayName = '') {
     // Journal is owner-only (a deliberately different gate from the
     // guardian-only Coaching tab) — reflections are the player's own space.
     setProfileTabVisible('journal', true)
-    renderJournalTab(userId, matchHistory, { isChildSession: isProtectedChildSession() })
+    renderJournalTab(userId, matchHistory, {
+      isChildSession: isProtectedChildSession(),
+      clubActive: hasClub(),
+      journalOpen: getClubStatus()?.journalOpen || null,
+      narrativesRemainingToday: getClubStatus()?.narrativesRemainingToday ?? null,
+    })
     renderBlockedPlayers()
     return
   }
@@ -3070,6 +3161,8 @@ async function confirmAccountDeletion() {
     stopInviteJoinUpdates()
     stopFriendsChangeUpdates()
     clearUnlockedCache()
+    resetClubStatus()
+    resetCosmetics()
     chatClient.disconnect()
     clearLiveMatch()
     try {
@@ -3219,31 +3312,73 @@ function renderChessStats(derived, headToHeadEntry) {
   set('profile-rate-black', formatRecord(derived.winRateByColor.black))
   set('profile-rate-vs-bot', formatRecord(derived.winRateByOpponentType.vsBot))
   set('profile-rate-vs-human', formatRecord(derived.winRateByOpponentType.vsHuman))
+}
 
-  set('profile-favorite-opening', derived.favoriteOpening
-    ? `${OPENING_NAMES[derived.favoriteOpening.key] || derived.favoriteOpening.key} (${formatPct(derived.favoriteOpening.rate)} win)`
-    : '—')
+// Advanced stats panel (openings report, nemesis, etc.) is Club-gated
+// (dev-plan §1.2) — free tier sees a locked upsell card in its place. Basic
+// win-rate stats above are never gated (dev-plan §1.2: "Do NOT gate...
+// basic stats").
+function renderAdvancedStats(derived, { hasClub = false, isChildSession = false } = {}) {
+  const wrap = document.getElementById('profile-advanced-stats')
+  if (!wrap || !derived) return
 
-  set('profile-time-played', derived.timePlayed.totalMs ? formatDuration(derived.timePlayed.totalMs) : '—')
-  set('profile-game-length', derived.timePlayed.longest && derived.timePlayed.shortest
-    ? `${formatDuration(derived.timePlayed.longest.durationMs)} / ${formatDuration(derived.timePlayed.shortest.durationMs)}`
-    : '—')
-  set('profile-fastest-checkmate', derived.fastestCheckmateMoves != null ? `${derived.fastestCheckmateMoves} moves` : '—')
+  if (!hasClub) {
+    wrap.innerHTML = isChildSession
+      ? `<div class="profile-history-empty">
+          <strong>Advanced stats are a Club perk</strong>
+          <span>Openings report, nemesis history, and more — ask your parent about Club ♛.</span>
+        </div>`
+      : `<div class="profile-history-empty profile-history-locked" data-purchase-ui="1">
+          <strong>Advanced stats are a Club perk</strong>
+          <span>Openings report, castling habits, comeback wins, and your toughest opponent.</span>
+          <button type="button" class="btn-mini" data-click="window.agsOpenClub && window.agsOpenClub()">Learn more ♛</button>
+        </div>`
+    return
+  }
 
   const c = derived.castlingRate
-  set('profile-castling', c.total
-    ? `${formatPct(c.kingsidePct)} kingside · ${formatPct(c.queensidePct)} queenside`
-    : '—')
-
-  set('profile-comeback-wins', derived.comebackWins > 0 ? String(derived.comebackWins) : '—')
-
   const e = derived.endReasonCounts
   const decisive = e.checkmate + e.resignation
-  set('profile-end-reasons', decisive || (e['draw-insufficient'] + e['draw-fifty-move'] + e['draw-repetition'] + e.stalemate)
-    ? `${e.checkmate} checkmate · ${e.resignation} resign · ${e.stalemate + e['draw-insufficient'] + e['draw-fifty-move'] + e['draw-repetition']} draw`
-    : '—')
-
-  set('profile-nemesis', derived.nemesis ? `${derived.nemesis.name} (${formatRecord(derived.nemesis)})` : '—')
+  wrap.innerHTML = `
+    <div class="profile-stat">
+      <span>Favorite opening</span>
+      <strong>${derived.favoriteOpening
+        ? `${escAch(OPENING_NAMES[derived.favoriteOpening.key] || derived.favoriteOpening.key)} (${formatPct(derived.favoriteOpening.rate)} win)`
+        : '—'}</strong>
+    </div>
+    <div class="profile-stat">
+      <span>Time played</span>
+      <strong>${derived.timePlayed.totalMs ? formatDuration(derived.timePlayed.totalMs) : '—'}</strong>
+    </div>
+    <div class="profile-stat">
+      <span>Castling</span>
+      <strong>${c.total ? `${formatPct(c.kingsidePct)} kingside · ${formatPct(c.queensidePct)} queenside` : '—'}</strong>
+    </div>
+    <div class="profile-stat">
+      <span>Longest / shortest</span>
+      <strong>${derived.timePlayed.longest && derived.timePlayed.shortest
+        ? `${formatDuration(derived.timePlayed.longest.durationMs)} / ${formatDuration(derived.timePlayed.shortest.durationMs)}`
+        : '—'}</strong>
+    </div>
+    <div class="profile-stat">
+      <span>Fastest checkmate</span>
+      <strong>${derived.fastestCheckmateMoves != null ? `${derived.fastestCheckmateMoves} moves` : '—'}</strong>
+    </div>
+    <div class="profile-stat">
+      <span>Comeback wins</span>
+      <strong>${derived.comebackWins > 0 ? String(derived.comebackWins) : '—'}</strong>
+    </div>
+    <div class="profile-stat">
+      <span>Game endings</span>
+      <strong>${decisive || (e['draw-insufficient'] + e['draw-fifty-move'] + e['draw-repetition'] + e.stalemate)
+        ? `${e.checkmate} checkmate · ${e.resignation} resign · ${e.stalemate + e['draw-insufficient'] + e['draw-fifty-move'] + e['draw-repetition']} draw`
+        : '—'}</strong>
+    </div>
+    <div class="profile-stat">
+      <span>Toughest opponent</span>
+      <strong>${derived.nemesis ? `${escAch(derived.nemesis.name)} (${formatRecord(derived.nemesis)})` : '—'}</strong>
+    </div>
+  `
 }
 
 function updateAuthUI(loggedIn, name, userId) {
@@ -3310,6 +3445,8 @@ function updateAuthUI(loggedIn, name, userId) {
     if (randomBtn) randomBtn.style.display = 'none'
     friendsState = { friends: [], incoming: [], outgoing: [] }
     renderFriendsPanel(false)
+    resetClubStatus()
+    resetCosmetics()
   }
 }
 
@@ -3869,6 +4006,13 @@ function closeOfflineFriends() { offlineFriendsOverlay.close() }
 window.agsOpenOfflineFriends = openOfflineFriends
 window.agsCloseOfflineFriends = closeOfflineFriends
 
+const coinStoreOverlay = createOverlayController('coin-store-overlay', 'coin-store-close')
+window.agsOpenCoinStore = trigger => {
+  coinStoreOverlay.open(trigger)
+  void loadCoinStore()
+}
+window.agsCloseCoinStore = () => coinStoreOverlay.close()
+
 function renderFriendsListOnlineFirst(friends) {
   const el = document.getElementById('ags-friends-list')
   const countEl = document.getElementById('ags-count-friends')
@@ -3931,6 +4075,22 @@ function renderFriendsListOnlineFirst(friends) {
 
 if (import.meta.env.DEV) {
   window.agsRenderFriendsListForTesting = renderFriendsListOnlineFirst
+  // currentUserId is a private module binding (real ES module — unlike
+  // app.js's plain-script globals, nothing here is reachable as window.x by
+  // default). Offline e2e specs that need main.js's OWN notion of "signed
+  // in" (e.g. window.agsHighFiveButtonState's senderId, window.agsOpenMyProfile's
+  // gate) must go through this setter, not window.agsCurrentUserId (that's
+  // a one-way mirror app.js reads, not the other direction).
+  window.agsSetCurrentUserIdForTesting = id => { currentUserId = id }
+  // familyState is likewise a private module binding — offline e2e specs
+  // that need to exercise the real renderFamilyPanel()/agsGiveCoins() code
+  // paths (not just assert on hand-injected DOM, as people-panel.spec.js
+  // does elsewhere) go through this setter rather than trying to drive a
+  // full Group-service invite/accept flow.
+  window.agsSetFamilyStateForTesting = state => {
+    familyState = { group: null, members: [], incomingInvites: [], ...state }
+    renderFamilyPanel(true)
+  }
 }
 
 // onAction(action, userId) is called when any data-action button is clicked.
@@ -4042,6 +4202,9 @@ async function refreshFamilyUI(showLoading = true) {
   // The 'child' family role is a protection signal — re-check every time the
   // family state (and with it, this player's role) refreshes.
   applyChildSessionRestrictions()
+  // Re-render with the now-accurate child flag (cached status, no extra
+  // network call — same reasoning as applyChildSessionRestrictions above).
+  void initClubPanel(isProtectedChildSession())
 }
 
 function renderFamilyPanel(loggedIn) {
@@ -4089,6 +4252,7 @@ function renderFamilyPanel(loggedIn) {
       const online = ['online', 'in-match'].includes(member.presence?.status)
       const actions = [
         !isSelf && online ? `<button class="btn-mini success" data-action="play" data-user-id="${esc(member.userId)}">Play</button>` : '',
+        !isSelf && isGuardian ? `<button class="btn-mini" data-action="give-coins" data-user-id="${esc(member.userId)}">Give coins</button>` : '',
         !isSelf && isGuardian ? `<button class="btn-mini" data-action="remove" data-user-id="${esc(member.userId)}">Remove</button>` : '',
       ].filter(Boolean).join('')
       return friendRow(member, actions, {
@@ -4100,6 +4264,7 @@ function renderFamilyPanel(loggedIn) {
       btn.addEventListener('click', () => {
         const { action, userId, displayName } = btn.dataset
         if (action === 'play') window.agsInviteFamilyMember?.(userId)
+        else if (action === 'give-coins') window.agsGiveCoins?.(userId)
         else if (action === 'remove') window.agsRemoveFamilyMember?.(userId)
         else if (action === 'profile') openPublicProfile(userId, displayName || '')
       })
@@ -4752,7 +4917,13 @@ document.addEventListener('visibilitychange', () => {
 initializeLegalReader()
 offlineFriendsOverlay.bindDismissal()
 leaderboardOverlay.bindDismissal()
+coinStoreOverlay.bindDismissal()
 // Bound directly (not data-click) so the overlay controller reliably gets the
 // clicked element as its focus-return trigger across engines.
 document.getElementById('lb-view-more')?.addEventListener('click', event => openLeaderboardOverlay(event.currentTarget))
 initAuth()
+// Registers the StoreKit approved/verified/finished pipeline at genuine app
+// startup, independent of sign-in — a previously-unfinished transaction must
+// be re-delivered and re-synced with AGS even before hydration completes
+// (dev-plan §7.3 "Finish ordering"). No-ops immediately on web.
+void initNativeIAP()

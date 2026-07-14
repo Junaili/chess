@@ -34,6 +34,10 @@ export default defineConfig(({ mode, command }) => {
       '/session':          { target: agsTarget, changeOrigin: true },
       '/game-telemetry':   { target: agsTarget, changeOrigin: true },
       '/achievement':      { target: agsTarget, changeOrigin: true },
+      // coin-store.js posts orders straight to agsBaseURL (= window.location.origin
+      // in DEV) rather than through the SDK, same as the other raw-fetch calls
+      // above — needs its own proxy entry or cosmetic purchases 404 in local dev.
+      '/platform':     { target: agsTarget, changeOrigin: true },
       '/extend':       { target: env.EXTEND_EMAIL_URL || 'http://localhost:8080', changeOrigin: true, rewrite: path => path.replace(/^\/extend/, '') },
     },
   }
