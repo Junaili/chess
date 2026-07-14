@@ -41,9 +41,13 @@ func newItemCatalogCache(h *monetizationHandler) *itemCatalogCache {
 	return &itemCatalogCache{h: h, byNamespace: map[string]string{}}
 }
 
+// Note the field name: the platform items APIs return `itemId`, NOT `id`
+// (live-verified 2026-07-14 — parsing `id` silently yields empty itemIds,
+// which then made every SKU lookup "succeed" with an empty string and every
+// downstream grant/entitlement query fail).
 type agsItemsResponse struct {
 	Data []struct {
-		ID  string `json:"id"`
+		ID  string `json:"itemId"`
 		SKU string `json:"sku"`
 	} `json:"data"`
 }
@@ -67,7 +71,10 @@ func (c *itemCatalogCache) itemID(sku string) (string, error) {
 			return "", fmt.Errorf("load item catalog %s: %w", category, err)
 		}
 		for _, item := range items.Data {
-			if item.SKU != "" {
+			// Both guards matter: an empty itemId in the map would make the
+			// lookup below "succeed" with "" and break every downstream call
+			// that embeds the id in a URL or grant body.
+			if item.SKU != "" && item.ID != "" {
 				fresh[item.SKU] = item.ID
 			}
 		}

@@ -251,10 +251,10 @@ func (f *gateRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	case strings.Contains(req.URL.Path, "/items/byCriteria"):
 		if strings.Contains(req.URL.RawQuery, "%2Fclub") || strings.Contains(req.URL.RawQuery, "/club") {
 			return jsonResponse(200, `{"data":[
-				{"id":"item-individual-monthly","sku":"club-individual-monthly"},
-				{"id":"item-individual-lifetime","sku":"club-individual-lifetime"},
-				{"id":"item-family-monthly","sku":"club-family-monthly"},
-				{"id":"item-family-lifetime","sku":"club-family-lifetime"}
+				{"itemId":"item-individual-monthly","sku":"club-individual-monthly"},
+				{"itemId":"item-individual-lifetime","sku":"club-individual-lifetime"},
+				{"itemId":"item-family-monthly","sku":"club-family-monthly"},
+				{"itemId":"item-family-lifetime","sku":"club-family-lifetime"}
 			]}`), nil
 		}
 		return jsonResponse(200, `{"data":[]}`), nil
