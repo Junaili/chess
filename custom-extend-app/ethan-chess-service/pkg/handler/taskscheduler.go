@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	ts "github.com/junaili/ethan-chess-service/pkg/pb/generic/task_scheduler/v1"
@@ -23,20 +25,37 @@ func NewScheduledTaskHandler(job *TrainJob) *ScheduledTaskHandler {
 }
 
 func (h *ScheduledTaskHandler) RunScheduledTask(ctx context.Context, req *ts.ScheduledTaskRequest) (*ts.ScheduledTaskResponse, error) {
+	if req == nil || strings.TrimSpace(req.GetRunId()) == "" {
+		return &ts.ScheduledTaskResponse{Success: false, Message: "missing scheduler run id", HttpStatusCode: 400}, nil
+	}
+	if expected := strings.TrimSpace(os.Getenv("BOT_TRAIN_TASK_NAME")); expected != "" && req.GetTaskName() != expected {
+		return &ts.ScheduledTaskResponse{Success: false, Message: "unexpected task name", HttpStatusCode: 400}, nil
+	}
+	if expectedNS := strings.TrimSpace(os.Getenv("AB_NAMESPACE")); req.GetNamespace() != "" && expectedNS != "" && req.GetNamespace() != expectedNS {
+		return &ts.ScheduledTaskResponse{Success: false, Message: "unexpected namespace", HttpStatusCode: 400}, nil
+	}
+	scheduled := "(unspecified)"
+	if req.GetScheduledTime() != nil {
+		scheduled = req.GetScheduledTime().AsTime().Format(time.RFC3339)
+	}
 	log.Printf("task-scheduler: run=%s task=%q attempt=%d scheduled=%s",
-		req.GetRunId(), req.GetTaskName(), req.GetAttemptNumber(), req.GetScheduledTime().AsTime().Format(time.RFC3339))
+		req.GetRunId(), req.GetTaskName(), req.GetAttemptNumber(), scheduled)
 
-	// Run detached from the sidecar's context so a caller-side timeout can't
-	// abort a training pass (incl. the LLM reflection) mid-flight.
-	runCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// Respect sidecar cancellation so a timed-out attempt cannot continue in the
+	// background and race its retry on another replica.
+	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	st, conflict, err := h.job.TryRun(runCtx)
+	st, conflict, err := h.job.TryRun(runCtx, req.GetRunId())
 	switch {
 	case conflict:
+		// Never acknowledge an in-flight retry as successful: the original
+		// attempt may still fail. Asking the scheduler to retry means it will
+		// eventually observe the durable run ID or perform the work itself.
+		active, _ := st["activeRunID"].(string)
 		return &ts.ScheduledTaskResponse{
 			Success:        false,
-			Message:        "training already running",
+			Message:        "training run " + active + " is in progress; retry this scheduled run",
 			HttpStatusCode: 409,
 		}, nil
 	case err != nil:

@@ -72,14 +72,15 @@ func main() {
 		return
 	}
 
-	// Merge newest-first with existing history and cap.
+	// History is oldest-first so trailing-window calibration and byte compaction
+	// retain the genuinely newest evidence.
 	existing, err := handler.FetchAllBotGames(key)
 	if err != nil {
 		fatal("fetch existing games: %v", err)
 	}
-	merged := append(newGames, existing...)
+	merged := append(existing, newGames...)
 	if len(merged) > maxHistory {
-		merged = merged[:maxHistory]
+		merged = merged[len(merged)-maxHistory:]
 	}
 	if err := handler.SaveBotGameHistory(key, merged); err != nil {
 		fatal("save games to AGS: %v", err)

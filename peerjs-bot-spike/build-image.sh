@@ -24,7 +24,8 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
 # Bot runtime files + manifests + Dockerfile.
-cp "$ROOT"/ds.mjs "$ROOT"/watchdog.mjs "$ROOT"/play.mjs "$ROOT"/ags.mjs \
+cp "$ROOT"/ds.mjs "$ROOT"/watchdog.mjs "$ROOT"/play.mjs "$ROOT"/ai-pool.mjs \
+   "$ROOT"/ai-worker.mjs "$ROOT"/ags.mjs \
    "$ROOT"/engine.mjs "$ROOT"/env.mjs "$ROOT"/package.json \
    "$ROOT"/package-lock.json "$ROOT"/Dockerfile "$ROOT"/.dockerignore "$STAGE"/
 # Game engine files (repo root) staged beside engine.mjs so its sibling-first

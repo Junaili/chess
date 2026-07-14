@@ -73,7 +73,11 @@ test('trainingStatusLine describes each trainer state', async () => {
     trainingStatusLine({ running: false, lastRun: { error: 'boom' } }, null),
     /hit a snag/,
   )
-  assert.match(trainingStatusLine({ running: false, lastRun: {} }, null), /first training session/)
+  assert.match(
+    trainingStatusLine({ running: false, lastRun: {}, lastChecked: '2026-07-14T10:00:00Z', healthy: true }, null),
+    /scheduled review last checked/,
+  )
+  assert.match(trainingStatusLine({ running: false, lastRun: {} }, null), /first training session with verified evidence/)
 })
 
 test('formatDay renders today/yesterday/date and tolerates junk', async () => {
@@ -119,13 +123,27 @@ test('parseJournalText handles the trainer journal format', async () => {
   assert.deepEqual(blocks.find(b => b.type === 'quote'), { type: 'quote', text: 'The Qh5 attack crushed an unprepared opponent.' })
   assert.deepEqual(blocks.find(b => b.type === 'item'), { type: 'item', text: 'Stop sacking on f7 against solid defenders' })
   assert.ok(!blocks.some(b => b.text.includes('abc123')), 'game ids folded away')
-  assert.ok(blocks.some(b => b.type === 'text' && /Reviewed 2 games/.test(b.text)))
+  assert.ok(blocks.some(b => b.type === 'text' && /Reviewed 2 recorded games/.test(b.text)))
 })
 
 test('parseJournalText tolerates empty input', async () => {
   const { parseJournalText } = await gusPromise
   assert.deepEqual(parseJournalText(''), [])
   assert.deepEqual(parseJournalText(null), [])
+})
+
+test('parseJournalText preserves evidence-source labels', async () => {
+  const { parseJournalText } = await gusPromise
+  const blocks = parseJournalText([
+    'Analyzer-verified lessons:',
+    '- Compare g4 with Nf3',
+    'Model-assisted suggestions (check against the position):',
+    '- Consider the e4 square before attacking',
+  ].join('\n'))
+  assert.deepEqual(
+    blocks.filter(block => block.type === 'label').map(block => block.text),
+    ['Analyzer-verified lessons', 'Model-assisted suggestions (check against the position)'],
+  )
 })
 
 test('openingRecord formats W-D-L', async () => {

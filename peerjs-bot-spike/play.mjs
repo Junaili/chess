@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import wrtc from '@roamhq/wrtc'
 import { WebSocket } from 'ws'
 import { ChessGame, ChessAI } from './engine.mjs'
+import { aiSearchPool } from './ai-pool.mjs'
 
 let globalsReady = false
 export function ensureGlobals() {
@@ -24,8 +25,8 @@ export async function loadPeer() {
   return peerjs.Peer || peerjs.default?.Peer || peerjs.default
 }
 
-const ai = new ChessAI()
 const ts = () => new Date().toISOString().slice(11, 19)
+const inlineAI = new ChessAI()
 export const log = (...a) => console.log(ts(), ...a)
 
 // Play one game over a PeerJS DataConnection. role: 'host' | 'joiner'.
@@ -34,7 +35,8 @@ export function playGame(conn, role, opts = {}) {
   const botName = opts.botName || 'Gambit Gus'
   const botId = opts.botId || 'bot'
   const thinkMs = opts.thinkMs ?? 1200
-  const difficulty = opts.difficulty || 'medium'
+  const difficulty = ['easy', 'medium', 'hard'].includes(opts.difficulty) ? opts.difficulty : 'medium'
+  const searchBudgetMs = Math.max(50, Math.min(500, Number(opts.searchBudgetMs) || 220))
   const tag = opts.tag ? `[${opts.tag}]` : ''
   const glog = (...a) => log(tag, ...a)
 
@@ -52,6 +54,7 @@ export function playGame(conn, role, opts = {}) {
   let game = null
   let botColor = null
   let done = false
+  let movePending = false
 
   // Game record for the self-learning pipeline — same MatchEntry shape the web
   // client stores (src/stats.js), so the trainer consumes it unchanged. Handed
@@ -77,6 +80,10 @@ export function playGame(conn, role, opts = {}) {
     const s = String(game.status || '')
     if (s === 'checkmate') rec.result = game.winner === botColor ? 'win' : 'loss'
     else if (s === 'stalemate' || s.startsWith('draw')) rec.result = 'draw'
+    if (!['win', 'loss', 'draw'].includes(rec.result)) {
+      glog('not reporting non-terminal game record (' + rec.result + ', ' + rec.moves.length + ' plies)')
+      return
+    }
     rec.whiteName = botColor === 'white' ? botName : rec.opponentName || 'Opponent'
     rec.blackName = botColor === 'black' ? botName : rec.opponentName || 'Opponent'
     try { opts.onRecord({ ...rec, botColor }) } catch (e) { glog('onRecord error:', e?.message || e) }
@@ -104,12 +111,14 @@ export function playGame(conn, role, opts = {}) {
     const cleanup = () => { clearTimeout(startTimer); clearInterval(idleTimer) }
     // Opening book (learned from the bot's own wins): while the game still
     // matches a book line's move prefix, play the line's next move.
+    const sortedBook = Array.isArray(opts.book)
+      ? [...opts.book].filter(line => Array.isArray(line?.moves)).sort((a, b) => (b.weight || 0) - (a.weight || 0))
+      : []
     const bookMove = () => {
-      const book = opts.book
+      const book = sortedBook
       if (!Array.isArray(book) || book.length === 0 || rec.moves.length >= 12) return null
       const played = rec.moves
-      const sorted = [...book].sort((a, b) => (b.weight || 0) - (a.weight || 0))
-      for (const line of sorted) {
+      for (const line of book) {
         const mv = line.moves
         if (!Array.isArray(mv) || mv.length <= played.length) continue
         let match = true
@@ -135,18 +144,43 @@ export function playGame(conn, role, opts = {}) {
     }
 
     const maybeBotMove = () => {
-      if (!game || game.currentTurn !== botColor) return
+      if (!game || game.currentTurn !== botColor || movePending) return
       if (isOver()) { glog('game over:', game.status, game.winner || ''); return finish('over') }
-      setTimeout(() => {
-        if (done || !game || game.currentTurn !== botColor || isOver()) return
-        const bm = bookMove()
-        let moved = bm ? playMove(bm, bm.promType, ' (book)') : false
-        if (!moved) {
-          const m = ai.getBestMove(game, difficulty)
-          if (!m) return
-          moved = playMove(m, 'queen', '')
+      // Reserve the turn before the human-like delay. Duplicate/replayed peer
+      // frames can otherwise schedule two searches and make two bot moves.
+      movePending = true
+      setTimeout(async () => {
+        try {
+          if (done || !game || game.currentTurn !== botColor || isOver()) return
+          const bm = bookMove()
+          let moved = bm ? playMove(bm, bm.promType, ' (book)') : false
+          if (!moved) {
+            let move = null
+            const searchOptions = { timeBudgetMs: searchBudgetMs, maxNodes: 250000, style: opts.style || {} }
+            try {
+              if (opts.workerSearch || opts.forceWorkerSearch) {
+                const result = await aiSearchPool.search(game, difficulty, searchOptions)
+                move = result.move
+                if (result.search?.timedOut) glog('AI used bounded fallback after', result.search.nodes, 'nodes')
+              } else {
+                // Bounded inline search is the density default: one V8 isolate
+                // per AMS process. Operators can opt into a worker when event-loop
+                // isolation matters more than per-bot memory.
+                move = inlineAI.getBestMove(game, difficulty, searchOptions)
+              }
+            } catch (error) {
+              glog('AI search unavailable:', error?.message || error)
+              // Preserve liveness with a legal move; never run an unbounded
+              // synchronous retry on the PeerJS heartbeat thread.
+              move = game.getAllLegalMoves(botColor)[0] || null
+            }
+            if (done || !game || game.currentTurn !== botColor || isOver() || !move) return
+            moved = playMove(move, move.promType || 'queen', '')
+          }
+          if (moved && isOver()) finish('over')
+        } finally {
+          movePending = false
         }
-        if (moved && isOver()) finish('over')
       }, sampleThink())
     }
 

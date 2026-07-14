@@ -16,10 +16,9 @@ import http from 'node:http'
 import { login, createMatchTicket, getMatchTicket, deleteMatchTicket, getGameSession } from './ags.mjs'
 import { Watchdog } from './watchdog.mjs'
 
-// play.mjs pulls in the native @roamhq/wrtc addon. We DEFER importing it (dynamic
-// import inside the game path) so that if the addon fails to load on the host
-// (e.g. a glibc mismatch), the DS still connects the watchdog, registers, and
-// LOGS the error — instead of crashing at startup before AMS ever sees it.
+// play.mjs pulls in the native @roamhq/wrtc addon. Keep the import behind one
+// memoized function so startup can report a useful diagnostic; main() probes it
+// before watchdog readiness, so AMS never allocates a process that cannot play.
 let _play = null
 async function play() {
   if (!_play) _play = await import('./play.mjs')
@@ -28,12 +27,10 @@ async function play() {
 const ts = () => new Date().toISOString().slice(11, 19)
 const log = (...a) => console.log(ts(), ...a)
 
-// A failed native WebRTC load (e.g. glibc too old for @roamhq/wrtc) throws from
-// deep in a CJS require and can escape our try/catch. Keep the DS ALIVE and
-// registered so AMS sees a ready server (and its logs surface the real cause)
-// rather than crash-looping into StartError.
-process.on('uncaughtException', (e) => log('uncaughtException (continuing):', e?.message || e))
-process.on('unhandledRejection', (e) => log('unhandledRejection (continuing):', e?.message || e))
+// An uncaught failure means this one-game process can no longer prove it is
+// healthy. Exit so AMS replaces it; a poisoned process must never stay ready.
+process.on('uncaughtException', (e) => { log('uncaughtException (fatal):', e?.message || e); process.exit(1) })
+process.on('unhandledRejection', (e) => { log('unhandledRejection (fatal):', e?.message || e); process.exit(1) })
 
 const POOL = process.env.MATCH_POOL || 'chess-quickmatch'
 // Fast ticket poll: when the bot ends up HOST it must learn of the match and
@@ -73,9 +70,11 @@ const IDLE_MAX_MS = (Number(process.env.BOT_IDLE_MAX_MINUTES) || 60) * 60000
 // Optional shared secret: when set, /trigger requires header x-trigger-secret to
 // match (the DS port is publicly reachable on AMS). Unset = open (local dev).
 const TRIGGER_SECRET = process.env.BOT_TRIGGER_SECRET || ''
-// Extend service public URL (incl. base path) — where game records are reported
-// for the daily self-learning trainer. Empty = reporting disabled.
+// Extend service public URL (incl. base path) — where completed game records are
+// durably reported for training. Required in production; an empty value makes a
+// completed game fail visibly instead of pretending it was learned from.
 const EXTEND_BASE_URL = (process.env.EXTEND_BASE_URL || '').replace(/\/$/, '')
+const BOT_AI_WORKER = /^(1|true|yes)$/i.test(process.env.BOT_AI_WORKER || '')
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const shortTag = (id) => (id ? id.slice(0, 6) : '?')
@@ -85,14 +84,27 @@ let peer = null
 let busy = false // one game per instance
 let draining = false
 let pendingReport = null // in-flight game-record POST; awaited before drain
-const onRecord = (r) => { pendingReport = reportGame(r) }
+let pendingReportError = null
+const onRecord = (r) => {
+  pendingReportError = null
+  // Attach rejection handling immediately so a fast configuration/network
+  // failure cannot trip the process-wide unhandled-rejection guard before the
+  // game drain awaits the report.
+  pendingReport = reportGame(r).catch((error) => { pendingReportError = error; return false })
+}
 let tuning = null // learned play tuning from /bot/brain (null = defaults)
-const tuningOpts = () => (tuning ? {
-  difficulty: tuning.difficulty || undefined,
-  thinkMsMean: tuning.thinkMsMean || undefined,
-  thinkMsJitter: tuning.thinkMsJitter ?? undefined,
-  book: Array.isArray(tuning.book) ? tuning.book : undefined,
-} : {})
+const tuningOpts = () => ({
+  ...(tuning ? {
+    difficulty: tuning.difficulty || undefined,
+    thinkMsMean: tuning.thinkMsMean || undefined,
+    thinkMsJitter: tuning.thinkMsJitter ?? undefined,
+    searchBudgetMs: tuning.searchBudgetMs || undefined,
+    maxShufflePlies: tuning.maxShufflePlies || undefined,
+    book: Array.isArray(tuning.book) ? tuning.book : undefined,
+    style: tuning.style && typeof tuning.style === 'object' ? tuning.style : undefined,
+  } : {}),
+  workerSearch: BOT_AI_WORKER,
+})
 
 async function ensureLogin() {
   if (auth) return auth
@@ -123,11 +135,13 @@ async function fetchBrain() {
 }
 
 // Report a finished game to the Extend service (feeds the daily trainer).
-// Fire-and-forget with one retry; never blocks or fails the drain.
+// The backend only replies success after its optimistic CloudSave commit. Retry
+// long enough to bridge a rolling deployment; a final failure is fatal and
+// visible to AMS instead of being silently discarded.
 async function reportGame(record) {
-  if (!EXTEND_BASE_URL) return
+  if (!EXTEND_BASE_URL) throw new Error('game reporting disabled: EXTEND_BASE_URL is empty')
   const body = JSON.stringify(record)
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 1; attempt <= 6; attempt++) {
     try {
       const r = await fetch(`${EXTEND_BASE_URL}/bot/games`, {
         method: 'POST',
@@ -135,13 +149,14 @@ async function reportGame(record) {
         body,
         signal: AbortSignal.timeout(6000),
       })
-      if (r.ok) { log('game record reported (', record.result, record.moves.length, 'moves )'); return }
+      if (r.ok) { log('game record reported (', record.result, record.moves.length, 'moves )'); return true }
       log('game report attempt', attempt, 'failed: HTTP', r.status)
     } catch (e) {
       log('game report attempt', attempt, 'failed:', e?.message || e)
     }
-    await sleep(1500)
+    if (attempt < 6) await sleep(Math.min(8000, 500 * 2 ** (attempt - 1)))
   }
+  throw new Error(`game record ${record.id} was not durably accepted after 6 attempts`)
 }
 
 // Register a PeerJS peer AFTER the match, choosing the id by role:
@@ -166,6 +181,9 @@ async function registerPeer(id) {
 }
 
 async function main() {
+  if (TRIGGER_SECRET && !EXTEND_BASE_URL) {
+    throw new Error('EXTEND_BASE_URL is required when the production trigger secret is configured')
+  }
   log('starting — trigger port', TRIGGER_PORT, '| watchdog', WATCHDOG_URL, '| dsid', DSID || '(none)')
   log('argv:', JSON.stringify(argv)) // diagnostic: confirms AMS substituted ${trigger_port}
   // diagnostic: in case AMS exposes ports via env instead of args (non-secret only)
@@ -186,8 +204,13 @@ async function main() {
       if (TRIGGER_SECRET && req.headers['x-trigger-secret'] !== TRIGGER_SECRET) {
         res.writeHead(403); res.end('forbidden'); return
       }
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end('{"ok":true}')
+      if (busy || draining) {
+        res.writeHead(409, { 'Content-Type': 'application/json' })
+        res.end('{"ok":false,"reason":"not available"}')
+        return
+      }
+      res.writeHead(202, { 'Content-Type': 'application/json' })
+      res.end('{"ok":true,"accepted":true}')
       onTrigger(wd)
       return
     }
@@ -197,7 +220,20 @@ async function main() {
   server.on('error', (e) => { console.error('trigger server error:', e?.message || e); process.exit(1) })
   await new Promise((resolve) => server.listen(TRIGGER_PORT, () => { log('trigger server listening on :' + TRIGGER_PORT); resolve() }))
 
-  // 2. Watchdog: announce ready + heartbeat only AFTER the trigger port is up.
+  // 2. Load the native gameplay stack before announcing readiness. A bad wrtc
+  // build must fail startup, not accept claims it cannot play.
+  log('node', process.version, 'platform', process.platform, process.arch)
+  try {
+    await play()
+    log('webrtc: @roamhq/wrtc loaded OK')
+  } catch (e) {
+    log('webrtc: LOAD FAILED —', e?.message || e)
+    server.close()
+    process.exit(1)
+  }
+
+  // 3. Watchdog: announce ready + heartbeat only AFTER the trigger port and
+  // gameplay stack are both healthy.
   //    On drain, finish any active game then exit (we exit after one game
   //    regardless, so drain just hurries an idle instance out).
   try {
@@ -208,16 +244,6 @@ async function main() {
   } catch (e) {
     const why = e?.code || e?.errors?.[0]?.code || e?.message || 'unreachable'
     log('no watchdog (' + why + ') — standalone/dev mode')
-  }
-
-  // 3. Probe the native WebRTC addon now (non-fatal) so a host-side load failure
-  //    (e.g. glibc mismatch) is visible in the logs while the DS stays registered.
-  log('node', process.version, 'platform', process.platform, process.arch)
-  try {
-    await play()
-    log('webrtc: @roamhq/wrtc loaded OK')
-  } catch (e) {
-    log('webrtc: LOAD FAILED —', e?.message || e)
   }
 
   // 4. Idle self-recycle (see IDLE_MAX_MS).
@@ -233,8 +259,8 @@ async function onTrigger(wd) {
   busy = true
   let code = 0
   try {
-    fetchBrain().then((b) => { tuning = b }).catch(() => {}) // parallel with login/queue
-    await ensureLogin()
+    const [brain] = await Promise.all([fetchBrain(), ensureLogin()])
+    tuning = brain
     // Peer registration happens INSIDE runOneGame, after the match reveals the
     // bot's role (host → fixed id, joiner → random id).
     await runOneGame()
@@ -242,7 +268,10 @@ async function onTrigger(wd) {
     log('game error:', e?.message || e)
     code = 1
   } finally {
-    if (pendingReport) { try { await pendingReport } catch {} }
+    if (pendingReport) {
+      await pendingReport
+      if (pendingReportError) { log('durable game report failed:', pendingReportError?.message || pendingReportError); code = 1 }
+    }
     log('game finished — draining this instance')
     shutdown(wd, code)
   }

@@ -254,12 +254,16 @@ func computeGusAboutYou(matches []botbrain.MatchEntry, brain *botbrain.Brain, us
 type gusBrainSummary struct {
 	Version          int              `json:"version"`
 	LastTrained      string           `json:"lastTrained,omitempty"`
+	LastChecked      string           `json:"lastChecked,omitempty"`
 	GamesLearnedFrom int              `json:"gamesLearnedFrom"`
 	Difficulty       string           `json:"difficulty,omitempty"`
 	ThinkMsMean      int              `json:"thinkMsMean,omitempty"`
 	ThinkMsJitter    int              `json:"thinkMsJitter,omitempty"`
+	SearchBudgetMs   int              `json:"searchBudgetMs,omitempty"`
 	TrailingWinRate  float64          `json:"trailingWinRate,omitempty"`
 	BookLines        int              `json:"bookLines"`
+	BookRevision     int              `json:"bookRevision"`
+	BookScore        float64          `json:"bookScore,omitempty"`
 	OpponentsKnown   int              `json:"opponentsKnown"`
 	Lessons          []gusLessonView  `json:"lessons"`
 	Openings         []gusOpeningView `json:"openings"`
@@ -293,12 +297,18 @@ func summarizeGusBrain(brain *botbrain.Brain) *gusBrainSummary {
 	if brain.LastTrained != nil {
 		s.LastTrained = *brain.LastTrained
 	}
+	if brain.LastChecked != nil {
+		s.LastChecked = *brain.LastChecked
+	}
 	if t := brain.PlayTuning; t != nil {
 		s.Difficulty = t.Difficulty
 		s.ThinkMsMean = t.ThinkMsMean
 		s.ThinkMsJitter = t.ThinkMsJitter
+		s.SearchBudgetMs = t.SearchBudgetMs
 		s.TrailingWinRate = t.WinRate
 		s.BookLines = len(t.Book)
+		s.BookRevision = t.Revision
+		s.BookScore = t.BookScore
 	}
 	lessons := append([]botbrain.Lesson(nil), brain.Lessons...)
 	sort.SliceStable(lessons, func(i, j int) bool { return lessons[i].Weight > lessons[j].Weight })
@@ -377,9 +387,13 @@ func (g *gusHandlers) snapshot() (games []botbrain.MatchEntry, brain *botbrain.B
 	if !found && g.bot != nil {
 		brain = g.bot.Brain
 	}
-	journal, err = handler.FetchBotJournal(g.botID)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("fetch journal: %w", err)
+	if brain != nil && len(brain.TrainingJournal) > 0 {
+		journal = brain.TrainingJournal
+	} else {
+		journal, err = handler.FetchBotJournal(g.botID)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("fetch journal: %w", err)
+		}
 	}
 	g.games, g.brain, g.journal, g.fetchedAt = games, brain, journal, time.Now()
 	return games, brain, journal, nil
@@ -429,6 +443,14 @@ func (g *gusHandlers) profile(w http.ResponseWriter, r *http.Request) {
 	if g.trainJob != nil {
 		running, lastRun = g.trainJob.Status()
 	}
+	lastChecked := ""
+	trainingHealthy := false
+	if brain != nil && brain.LastChecked != nil {
+		lastChecked = *brain.LastChecked
+		if checked, parseErr := time.Parse(time.RFC3339, lastChecked); parseErr == nil {
+			trainingHealthy = time.Since(checked) <= 36*time.Hour
+		}
+	}
 	out := map[string]any{
 		"bot":           g.identity(),
 		"playable":      g.watcher != nil,
@@ -438,9 +460,11 @@ func (g *gusHandlers) profile(w http.ResponseWriter, r *http.Request) {
 		"aboutYou":      computeGusAboutYou(games, brain, subFromContext(r.Context())),
 		"journal":       journalNewestFirst(journal, gusJournalLimit),
 		"training": map[string]any{
-			"running": running,
-			"lastRun": lastRun,
-			"cadence": "daily",
+			"running":     running,
+			"lastRun":     lastRun,
+			"cadence":     "scheduled_daily",
+			"lastChecked": lastChecked,
+			"healthy":     trainingHealthy,
 		},
 	}
 	_ = json.NewEncoder(w).Encode(out)

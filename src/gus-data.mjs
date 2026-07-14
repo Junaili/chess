@@ -22,7 +22,7 @@ export function normalizeGusProfile(raw) {
     brain: p.brain && typeof p.brain === 'object' ? p.brain : null,
     aboutYou: p.aboutYou && typeof p.aboutYou === 'object' ? p.aboutYou : null,
     journal: Array.isArray(p.journal) ? p.journal : [],
-    training: p.training && typeof p.training === 'object' ? p.training : { running: false, lastRun: {}, cadence: 'daily' },
+    training: p.training && typeof p.training === 'object' ? p.training : { running: false, lastRun: {}, cadence: 'scheduled_daily', healthy: false },
   }
 }
 
@@ -45,7 +45,8 @@ export function streakLabel(stats) {
   return ''
 }
 
-// The trainer calibrates difficulty toward a ~50% win rate, one step per day.
+// The trainer calibrates difficulty toward a ~50% win rate, at most one step
+// per completed training batch.
 export function difficultyLabel(difficulty) {
   switch (difficulty) {
     case 'easy': return 'Taking it easy'
@@ -66,17 +67,22 @@ export function trainingStatusLine(training, brain) {
   if (training?.running) return 'Training right now — new lessons landing shortly.'
   const last = training?.lastRun || {}
   const when = brain?.lastTrained ? formatDay(brain.lastTrained) : null
+  const checked = training?.lastChecked || brain?.lastChecked
+  if (training && training.healthy === false && checked) {
+    return `The scheduled review last checked in ${formatDay(checked) || 'earlier'} and is delayed. Gus’s existing verified brain is still active.`
+  }
   if (last.result === 'trained') {
     const games = last.gamesLearned ?? last.newGames
     const suffix = games ? ` — studied ${games} ${games === 1 ? 'game' : 'games'}` : ''
     return `Last trained ${when || 'recently'}${suffix}.`
   }
   if (last.result === 'no_new_games') {
-    return `Checked for new games ${formatDay(last.finishedAt) || 'recently'} — nothing new to study yet.`
+    return `Checked for completed games ${formatDay(last.finishedAt || checked) || 'recently'} — nothing new to study yet.`
   }
   if (last.error) return 'Last training run hit a snag — Gus will try again on his next cycle.'
+  if (checked) return `The scheduled review last checked for completed games ${formatDay(checked) || 'recently'}.`
   if (when) return `Last trained ${when}.`
-  return 'Gus has not had his first training session yet. He trains once a day on his own games.'
+  return 'Gus has not completed his first training session with verified evidence yet.'
 }
 
 // formatDay renders an ISO date(-time) as a friendly day ("today", "yesterday",
@@ -127,14 +133,14 @@ export function parseJournalText(text) {
       blocks.push({ type: 'quote', text: line.replace(/^>\s*/, '') })
       continue
     }
-    if (/^new lessons:$/i.test(line)) {
-      blocks.push({ type: 'label', text: 'New lessons' })
+    if (/^(new lessons|grounded lessons|verified position|opening candidate|analyzer-verified lessons|model-assisted reflection \(not a position evaluation\)|model-assisted suggestions \(check against the position\)):\s*$/i.test(line)) {
+      blocks.push({ type: 'label', text: line.slice(0, -1) })
       continue
     }
     blocks.push({ type: 'text', text: line })
   }
   if (gameCount > 0) {
-    blocks.push({ type: 'text', text: `Reviewed ${gameCount} ${gameCount === 1 ? 'game' : 'games'} move by move.` })
+    blocks.push({ type: 'text', text: `Reviewed ${gameCount} recorded ${gameCount === 1 ? 'game' : 'games'}.` })
   }
   return blocks
 }

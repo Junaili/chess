@@ -47,6 +47,20 @@ func TestReconstructScholarsMate(t *testing.T) {
 	}
 }
 
+func TestReconstructPrefersExplicitBotColor(t *testing.T) {
+	m := botbrain.MatchEntry{
+		ID: "explicit-color", BotColor: "BLACK", WhiteName: "renamed player", BlackName: "renamed bot",
+		Result: "draw", Moves: []botbrain.Move{},
+	}
+	g, err := Reconstruct(m, "Gambit Gus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.BotColor != "black" {
+		t.Fatalf("explicit bot color ignored: %q", g.BotColor)
+	}
+}
+
 // A capture, en passant, castling, and promotion should all round-trip.
 func TestReconstructSpecialMoves(t *testing.T) {
 	// 1. e4 d5  2. exd5 (capture). Just verify the capture SAN encodes.

@@ -35,6 +35,7 @@ type MatchEntry struct {
 	DurationMs     int64  `json:"durationMs"`
 	WhiteName      string `json:"whiteName"`
 	BlackName      string `json:"blackName"`
+	BotColor       string `json:"botColor,omitempty"`
 	Moves          []Move `json:"moves"`
 }
 
@@ -92,16 +93,54 @@ type BookLine struct {
 	Weight float64 `json:"weight"`
 }
 
+// SearchStyle is the small, bounded part of Gus's authored personality that
+// affects move ordering. It is intentionally separate from prose lessons: the
+// daily trainer may tune these values only within safe limits, while the Node
+// engine still performs a normal search before applying the bias.
+type SearchStyle struct {
+	Aggression      float64 `json:"aggression"`
+	KingAttackFocus float64 `json:"king_attack_focus"`
+	MaterialGreed   float64 `json:"material_greed"`
+	RiskTolerance   float64 `json:"risk_tolerance"`
+}
+
+// MatchQuality is the compact, durable output of Gus's bounded analyzer. The
+// trainer caches it by immutable match ID so normal daily work scales with new
+// games instead of replaying and re-searching the entire retained history.
+type MatchQuality struct {
+	AnalyzerVersion int     `json:"analyzer_version"`
+	BookRegretCP    int     `json:"book_regret_cp"`
+	AverageRegret   float64 `json:"average_regret"`
+	BotMoveCount    int     `json:"bot_move_count"`
+}
+
 // PlayTuning is the machine-tuned, play-affecting part of the brain: the daily
 // trainer computes it deterministically from the bot's own recent games and the
 // playing bot (peerjs-bot-spike) fetches it via GET /bot/brain.
 type PlayTuning struct {
-	Difficulty      string     `json:"difficulty"`        // ai-engine level: easy|medium|hard
-	ThinkMsMean     int        `json:"think_ms_mean"`     // human-ness: per-move delay mean
-	ThinkMsJitter   int        `json:"think_ms_jitter"`   // ± jitter around the mean
-	MaxShufflePlies int        `json:"max_shuffle_plies"` // soft cap before preferring decisive play
-	WinRate         float64    `json:"win_rate"`          // trailing win rate the calibration saw
-	Book            []BookLine `json:"book"`              // opening lines that scored well
+	Difficulty      string      `json:"difficulty"`        // ai-engine level: easy|medium|hard
+	ThinkMsMean     int         `json:"think_ms_mean"`     // human-ness: per-move delay mean
+	ThinkMsJitter   int         `json:"think_ms_jitter"`   // ± jitter around the mean
+	SearchBudgetMs  int         `json:"search_budget_ms"`  // hard CPU deadline for one move
+	MaxShufflePlies int         `json:"max_shuffle_plies"` // soft cap before preferring decisive play
+	WinRate         float64     `json:"win_rate"`          // trailing win rate the calibration saw
+	Book            []BookLine  `json:"book"`              // opening lines that scored well
+	BookScore       float64     `json:"book_score"`        // evidence score of the promoted book
+	BookSampleSize  int         `json:"book_sample_size"`  // completed games behind BookScore
+	Revision        int         `json:"revision"`          // increments only on candidate promotion
+	PromotedAt      string      `json:"promoted_at,omitempty"`
+	Style           SearchStyle `json:"style"`
+}
+
+// JournalEntry is a player-facing, deterministic training report. Keeping the
+// capped journal inside Brain makes a training commit atomic: a brain version
+// can no longer be saved without its matching journal entry (or vice versa).
+type JournalEntry struct {
+	ID         string `json:"id"`
+	Date       string `json:"date"`
+	CreatedAt  string `json:"createdAt"`
+	MatchCount int    `json:"matchCount"`
+	Text       string `json:"text"`
 }
 
 // Brain is the machine-grown memory. The trainer owns this file.
@@ -111,21 +150,33 @@ type Brain struct {
 	BotID             string                      `json:"bot_id"`
 	Version           int                         `json:"version"`
 	LastTrained       *string                     `json:"last_trained"`
+	LastChecked       *string                     `json:"last_checked,omitempty"`
+	LastTrainingRunID string                      `json:"last_training_run_id,omitempty"`
 	GamesLearnedFrom  int                         `json:"games_learned_from"`
 	ProcessedMatchIDs []string                    `json:"processed_match_ids"`
 	OpeningBook       map[string]*OpeningStat     `json:"opening_book"`
 	Lessons           []Lesson                    `json:"lessons"`
 	OpponentDossiers  map[string]*OpponentDossier `json:"opponent_dossiers"`
 	PlayTuning        *PlayTuning                 `json:"play_tuning,omitempty"`
+	TrainingJournal   []JournalEntry              `json:"training_journal,omitempty"`
+	MatchQuality      map[string]MatchQuality     `json:"match_quality,omitempty"`
+
+	processedCache map[string]struct{} `json:"-"`
 }
 
-// processedSet returns the processed match IDs as a lookup set.
+const processedMatchIDCap = 2000
+
+// processedSet returns a cached lookup. The history record is capped at 500,
+// so retaining 2,000 IDs prevents an old history entry from becoming "new"
+// again while keeping the brain bounded.
 func (b *Brain) processedSet() map[string]struct{} {
-	s := make(map[string]struct{}, len(b.ProcessedMatchIDs))
-	for _, id := range b.ProcessedMatchIDs {
-		s[id] = struct{}{}
+	if b.processedCache == nil {
+		b.processedCache = make(map[string]struct{}, len(b.ProcessedMatchIDs))
+		for _, id := range b.ProcessedMatchIDs {
+			b.processedCache[id] = struct{}{}
+		}
 	}
-	return s
+	return b.processedCache
 }
 
 // AlreadyProcessed reports whether a match id has been learned from already.
@@ -134,12 +185,35 @@ func (b *Brain) AlreadyProcessed(id string) bool {
 	return ok
 }
 
+// MarkProcessed records ids idempotently and prunes bookkeeping to a bounded
+// tail. Callers use this for both learned games and permanently ignored corrupt
+// or abandoned records, so a bad historical record cannot poison every run.
+func (b *Brain) MarkProcessed(ids ...string) {
+	set := b.processedSet()
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, exists := set[id]; exists {
+			continue
+		}
+		set[id] = struct{}{}
+		b.ProcessedMatchIDs = append(b.ProcessedMatchIDs, id)
+	}
+	if len(b.ProcessedMatchIDs) <= processedMatchIDCap {
+		return
+	}
+	b.ProcessedMatchIDs = append([]string(nil), b.ProcessedMatchIDs[len(b.ProcessedMatchIDs)-processedMatchIDCap:]...)
+	b.processedCache = nil
+}
+
 // ── Bot config + file layout ─────────────────────────────────────────────────
 
 // Bot bundles the on-disk artifacts for one bot under bots/<id>/.
 type Bot struct {
 	Dir     string
 	ID      string
+	Name    string
 	Persona string          // raw persona.md
 	Style   json.RawMessage // raw style.json
 	Brain   *Brain
@@ -176,7 +250,14 @@ func LoadBot(dir string) (*Bot, error) {
 	if id == "" {
 		id = filepath.Base(dir)
 	}
-	return &Bot{Dir: dir, ID: id, Persona: string(persona), Style: style, Brain: &brain}, nil
+	name := id
+	var styleIdentity struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(style, &styleIdentity) == nil && styleIdentity.Name != "" {
+		name = styleIdentity.Name
+	}
+	return &Bot{Dir: dir, ID: id, Name: name, Persona: string(persona), Style: style, Brain: &brain}, nil
 }
 
 // SaveBrain writes brain.json back atomically (temp file + rename).

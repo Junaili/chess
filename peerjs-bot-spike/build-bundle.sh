@@ -37,7 +37,8 @@ docker cp "$CID:/app/." "$OUT/app/"
 # Node binary: use the unofficial glibc-217 build (runs on glibc >=2.17) instead
 # of the container's node (needs glibc 2.28) — so the DS starts on old-glibc AMS
 # hosts (e.g. Amazon Linux 2 = 2.26). Same v20 ABI, so the wrtc prebuilt matches.
-# (wrtc is lazy-loaded; if the host glibc < 2.34 it just disables play, not startup.)
+# The DS probes wrtc before watchdog readiness; an incompatible host fails fast
+# so AMS replaces it instead of advertising an instance that cannot play.
 NODE_VER="v20.20.2"
 NODE_PKG="node-${NODE_VER}-linux-x64-glibc-217"
 CACHE="$ROOT/vendor/${NODE_PKG}.node-bin"

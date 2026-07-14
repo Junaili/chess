@@ -95,3 +95,47 @@ test('harder difficulty searches deeper without throwing', () => {
     assert.ok(m && Number.isInteger(m.fr), `${difficulty} returns a structured move`);
   }
 });
+
+test('hard search obeys a bounded budget and always keeps a legal fallback', () => {
+  const ai = new ChessAI();
+  const game = new ChessGame();
+  const started = Date.now();
+  const best = ai.getBestMove(game, 'hard', { timeBudgetMs: 40, maxNodes: 5000 });
+  const elapsed = Date.now() - started;
+
+  assert.ok(best, 'bounded search returns a move');
+  assert.ok(
+    game.getLegalMoves(best.fr, best.fc).some(m => m.toR === best.toR && m.toC === best.toC),
+    'bounded fallback remains legal'
+  );
+  assert.ok(elapsed < 750, `search should not block the event loop indefinitely (took ${elapsed}ms)`);
+  assert.ok(ai.lastSearch.nodes <= 5001, `node budget exceeded: ${ai.lastSearch.nodes}`);
+});
+
+test('transposition key distinguishes kings and knights', () => {
+  const ai = new ChessAI();
+  const knight = emptyGame();
+  knight.board[7][4] = { type: 'king', color: 'white', hasMoved: true };
+  knight.board[0][4] = { type: 'king', color: 'black', hasMoved: true };
+  knight.board[4][4] = { type: 'knight', color: 'white', hasMoved: true };
+  const king = emptyGame();
+  king.board[7][4] = { type: 'king', color: 'white', hasMoved: true };
+  king.board[0][4] = { type: 'king', color: 'black', hasMoved: true };
+  king.board[4][4] = { type: 'king', color: 'white', hasMoved: true };
+  assert.notEqual(ai._positionKey(knight, 2, true), ai._positionKey(king, 2, true));
+});
+
+test('learned style values are clamped before they bias search', () => {
+  const ai = new ChessAI();
+  const game = new ChessGame();
+  const move = { fr: 6, fc: 4, toR: 4, toC: 4 };
+  const after = ai._cloneGame(game);
+  after.makeMove(move.fr, move.fc, move.toR, move.toC);
+  const bias = ai._styleBias(game, after, move, 'white', {
+    aggression: 1e9,
+    kingAttackFocus: 1e9,
+    materialGreed: 1e9,
+    riskTolerance: 1e9,
+  });
+  assert.ok(bias >= 0 && bias <= 4, `untrusted style escaped its unit bounds: ${bias}`);
+});

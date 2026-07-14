@@ -84,8 +84,8 @@ function renderHomePanel(profile) {
   const teaser = journal[0]
   const teaserQuote = teaser && parseJournalText(teaser.text).find(b => b.type === 'quote')
   setText('gus-home-blurb', teaserQuote
-    ? `From his journal: “${teaserQuote.text}”`
-    : 'He learns from every game and keeps a daily training journal.')
+    ? `Gus’s model-assisted reflection: “${teaserQuote.text}”`
+    : 'He reviews completed games and publishes evidence-checked training notes.')
 
   const playBtnHome = document.getElementById('btn-play-gus-home')
   if (playBtnHome) playBtnHome.style.display = playable ? '' : 'none'

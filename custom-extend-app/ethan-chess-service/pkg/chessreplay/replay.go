@@ -98,13 +98,19 @@ func finalize(out *Game, g *chess.Game, ply int) *Game {
 }
 
 func inferColor(m botbrain.MatchEntry, botName string) string {
+	switch strings.ToLower(strings.TrimSpace(m.BotColor)) {
+	case "white":
+		return "white"
+	case "black":
+		return "black"
+	}
 	if botName == "" {
 		return ""
 	}
-	switch botName {
-	case m.WhiteName:
+	switch {
+	case strings.EqualFold(strings.TrimSpace(botName), strings.TrimSpace(m.WhiteName)):
 		return "white"
-	case m.BlackName:
+	case strings.EqualFold(strings.TrimSpace(botName), strings.TrimSpace(m.BlackName)):
 		return "black"
 	default:
 		return ""

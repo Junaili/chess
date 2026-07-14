@@ -7,9 +7,9 @@
 //     — Ollama, LM Studio, llama.cpp, vLLM all speak the
 //     OpenAI-compatible chat-completions API)
 //
-// The interface is deliberately text-in/text-out; structured-output (JSON)
-// handling lives in the trainer so it stays portable across models that don't
-// support provider-specific JSON modes.
+// The interface remains text-in/text-out, with an optional JSON Schema hint.
+// OpenAI enforces it through Responses Structured Outputs; providers without a
+// native schema mode still receive the explicit JSON contract in the prompt.
 package llm
 
 import (
@@ -26,6 +26,8 @@ type Request struct {
 	User        string
 	Temperature float64
 	MaxTokens   int
+	SchemaName  string
+	JSONSchema  map[string]any
 }
 
 // Provider is any model backend that can complete a prompt.
@@ -44,6 +46,8 @@ type Config struct {
 	APIKey      string
 	MaxTokens   int
 	Temperature float64
+	APIMode     string // "auto" | "responses" | "chat"
+	Reasoning   string // OpenAI reasoning effort for Responses
 }
 
 // FromEnv builds a Config from environment variables, auto-detecting the
@@ -56,6 +60,14 @@ func FromEnv() Config {
 		APIKey:      strings.TrimSpace(os.Getenv("LLM_API_KEY")),
 		MaxTokens:   envInt("LLM_MAX_TOKENS", 2048),
 		Temperature: envFloat("LLM_TEMPERATURE", 0.4),
+		APIMode:     strings.ToLower(strings.TrimSpace(os.Getenv("LLM_API_MODE"))),
+		Reasoning:   strings.ToLower(strings.TrimSpace(os.Getenv("LLM_REASONING_EFFORT"))),
+	}
+	if cfg.APIMode == "" {
+		cfg.APIMode = "auto"
+	}
+	if cfg.Reasoning == "" {
+		cfg.Reasoning = "low"
 	}
 	if cfg.Provider == "" {
 		switch {
