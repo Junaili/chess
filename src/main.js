@@ -1,46 +1,22 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
-import { ConfigApi as ChatConfigApi, TopicApi as ChatTopicApi } from '@accelbyte/sdk-chat'
-import { loginWithGoogle, loginWithApple, loginWithPassword, requestPasswordReset, resetPassword, registerWithPassword, registerChildAccount, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession, clearLocalAccountData } from './auth.js'
 import { validateBirthYear, isBirthYearUnder13, isChildSession, buildConsentRecord } from './family-safety.mjs'
 import { setQueueUIHandler, cancelLoginQueue } from './login-queue.js'
-import { sdk } from './ags-client.js'
 import { extendFetch } from './extend-client.js'
-import { installSessionKeepAlive, refreshIfStale, scheduleProactiveRefresh, subscribeAccessTokenRefresh } from './session.js'
-import { fetchPendingLegalDocuments, fetchAcceptedLegalDocuments, fetchLegalAttachment, acceptLegalDocuments } from './legal.js'
 import { parseLegalMarkdown } from './legal-markdown.mjs'
-import { initStats, fetchStats, fetchLeaderboardPlayerStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave, recordEloResult } from './stats.js'
 import { sendEvent, flushPendingEvents, captureUtm, clearPendingEvents } from './telemetry.js'
 import { readPrivacyPreferences, writePrivacyPreferences } from './privacy-preferences.mjs'
-import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName, LEADERBOARD_VIEWS } from './leaderboard.js'
 import { computeMatchStats, summarizeCoachingGrades, combineCoachingSummaries } from './match-stats.mjs'
 import { deriveMatchRoles, computeDeadline, isPastDeadline, isResumable, pickAuthoritativeMoves } from './match-resume.mjs'
-import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
 import { formatCoins, accountDeletionNotices } from './club-contract.mjs'
 import { deriveHighFiveButton, formatKudosCount } from './kudos-contract.mjs'
-import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, refreshPresenceToken, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
 import {
   moderateIncomingChat,
   moderateIncomingDisplayName,
   moderateOutgoingChat,
 } from './content-moderation.mjs'
-import { createAgsChatClient } from './chat.mjs'
-import {
-  blockPlayer,
-  fetchPlayerSafetyReasons,
-  getReportTicketId,
-  getSafetyError,
-  listBlockedPlayers,
-  reportChatMessage,
-  reportPlayer,
-  unblockPlayer,
-} from './safety.js'
-import {
-  authorizeAppleDeletionIfRequired,
-  fetchDeletionRequirements,
-  submitAccountDeletion,
-  validateDeletionConfirmation,
-} from './account-deletion.js'
+import { getReportTicketId, getSafetyError } from './safety-payloads.mjs'
+import { validateDeletionConfirmation } from './account-deletion-contract.mjs'
 
 function createFeatureLoader(label, importer) {
   let loadedModule = null
@@ -73,6 +49,235 @@ const clubFeature = createFeatureLoader('Chess Club', () => import('./club.js'))
 const coinStoreFeature = createFeatureLoader('Coin Store', () => import('./coin-store.js'))
 const kudosFeature = createFeatureLoader('High Five', () => import('./kudos.js'))
 const familyFeature = createFeatureLoader('Family', () => import('./family.js'))
+const authFeature = createFeatureLoader('Authentication', async () => {
+  const [auth, ags] = await Promise.all([import('./auth.js'), import('./ags-client.js')])
+  return { ...auth, ...ags }
+})
+const sessionFeature = createFeatureLoader('Session Keepalive', () => import('./session.js'))
+const legalFeature = createFeatureLoader('Legal', () => import('./legal.js'))
+const statsFeature = createFeatureLoader('Player Stats', () => import('./stats.js'))
+const leaderboardFeature = createFeatureLoader('Leaderboard', () => import('./leaderboard.js'))
+const friendsFeature = createFeatureLoader('Friends', () => import('./friends.js'))
+const presenceFeature = createFeatureLoader('Presence', () => import('./presence.js'))
+const safetyFeature = createFeatureLoader('Player Safety', () => import('./safety.js'))
+const accountDeletionFeature = createFeatureLoader('Account Deletion', () => import('./account-deletion.js'))
+const chatFeature = createFeatureLoader('Chat', async () => {
+  const [chatSdk, chatRuntime] = await Promise.all([
+    import('@accelbyte/sdk-chat'),
+    import('./chat.mjs'),
+  ])
+  return { ...chatSdk, ...chatRuntime }
+})
+
+const loginWithGoogle = async (...args) => (await authFeature.load()).loginWithGoogle(...args)
+const loginWithApple = async (...args) => (await authFeature.load()).loginWithApple(...args)
+const loginWithPassword = async (...args) => (await authFeature.load()).loginWithPassword(...args)
+const requestPasswordReset = async (...args) => (await authFeature.load()).requestPasswordReset(...args)
+const resetPassword = async (...args) => (await authFeature.load()).resetPassword(...args)
+const registerWithPassword = async (...args) => (await authFeature.load()).registerWithPassword(...args)
+const registerChildAccount = async (...args) => (await authFeature.load()).registerChildAccount(...args)
+const handleCallback = async (...args) => (await authFeature.load()).handleCallback(...args)
+const getProfile = async (...args) => (await authFeature.load()).getProfile(...args)
+const updateDisplayName = async (...args) => (await authFeature.load()).updateDisplayName(...args)
+const syncBasicProfile = async (...args) => (await authFeature.load()).syncBasicProfile(...args)
+const logout = async (...args) => (await authFeature.load()).logout(...args)
+const refreshSession = async (...args) => (await authFeature.load()).refreshSession(...args)
+function getDisplayName(profile) {
+  return moderateIncomingDisplayName(
+    profile?.displayName || profile?.userName || profile?.emailAddress,
+    'Player',
+  )
+}
+function hasStoredSession() {
+  try {
+    localStorage.removeItem('ags_session')
+    localStorage.removeItem('ags_refresh_token')
+    return !!sessionStorage.getItem('ags_session')
+  } catch {
+    return false
+  }
+}
+function clearStoredSession() {
+  for (const storage of [localStorage, sessionStorage]) {
+    try {
+      storage.removeItem('ags_session')
+      storage.removeItem('ags_refresh_token')
+    } catch {}
+  }
+}
+function clearLocalAccountData() {
+  for (const storage of [localStorage, sessionStorage]) {
+    try {
+      const keys = []
+      for (let index = 0; index < storage.length; index++) {
+        const key = storage.key(index)
+        if (key && (key.startsWith('ags_') || key.startsWith('chess_') || key === 'authorized')) keys.push(key)
+      }
+      for (const key of keys) storage.removeItem(key)
+    } catch {}
+  }
+  authFeature.peek()?.sdk?.setToken({ accessToken: '', refreshToken: '' })
+}
+function currentAccessToken() {
+  return authFeature.peek()?.sdk?.getToken()?.accessToken || ''
+}
+
+const accessTokenRefreshListeners = new Set()
+const installedSessionListeners = new Map()
+async function loadSessionRuntime() {
+  const runtime = await sessionFeature.load()
+  for (const listener of accessTokenRefreshListeners) {
+    if (!installedSessionListeners.has(listener)) {
+      installedSessionListeners.set(listener, runtime.subscribeAccessTokenRefresh(listener))
+    }
+  }
+  return runtime
+}
+function subscribeAccessTokenRefresh(listener) {
+  accessTokenRefreshListeners.add(listener)
+  if (sessionFeature.peek() && !installedSessionListeners.has(listener)) {
+    installedSessionListeners.set(listener, sessionFeature.peek().subscribeAccessTokenRefresh(listener))
+  }
+  return () => {
+    accessTokenRefreshListeners.delete(listener)
+    installedSessionListeners.get(listener)?.()
+    installedSessionListeners.delete(listener)
+  }
+}
+const installSessionKeepAlive = async () => (await loadSessionRuntime()).installSessionKeepAlive()
+async function refreshIfStale(...args) {
+  if (!currentUserId && !hasStoredSession()) return
+  return (await loadSessionRuntime()).refreshIfStale(...args)
+}
+function scheduleProactiveRefresh(...args) {
+  sessionFeature.peek()?.scheduleProactiveRefresh(...args)
+}
+
+const fetchPendingLegalDocuments = async (...args) => (await legalFeature.load()).fetchPendingLegalDocuments(...args)
+const fetchAcceptedLegalDocuments = async (...args) => (await legalFeature.load()).fetchAcceptedLegalDocuments(...args)
+const fetchLegalAttachment = async (...args) => (await legalFeature.load()).fetchLegalAttachment(...args)
+const acceptLegalDocuments = async (...args) => (await legalFeature.load()).acceptLegalDocuments(...args)
+
+for (const method of [
+  'initStats',
+  'fetchStats',
+  'fetchLeaderboardPlayerStats',
+  'incrementStat',
+  'fetchMatchHistory',
+  'recordMatchHistory',
+  'fetchStreak',
+  'updateStreak',
+  'migrateStreakFromCloudSave',
+  'recordEloResult',
+]) {
+  // Bind named wrappers below without evaluating the Statistics SDK at launch.
+  statsFeature[method] = async (...args) => (await statsFeature.load())[method](...args)
+}
+const initStats = (...args) => statsFeature.initStats(...args)
+const fetchStats = (...args) => statsFeature.fetchStats(...args)
+const fetchLeaderboardPlayerStats = (...args) => statsFeature.fetchLeaderboardPlayerStats(...args)
+const incrementStat = (...args) => statsFeature.incrementStat(...args)
+const fetchMatchHistory = (...args) => statsFeature.fetchMatchHistory(...args)
+const recordMatchHistory = (...args) => statsFeature.recordMatchHistory(...args)
+const fetchStreak = (...args) => statsFeature.fetchStreak(...args)
+const updateStreak = (...args) => statsFeature.updateStreak(...args)
+const migrateStreakFromCloudSave = (...args) => statsFeature.migrateStreakFromCloudSave(...args)
+const recordEloResult = (...args) => statsFeature.recordEloResult(...args)
+
+const LEADERBOARD_VIEWS = Object.freeze({
+  rating: { code: 'chess-rating-lb', kind: 'alltime' },
+  weekly: { code: 'chess-wins-lb', kind: 'cycle', cycleId: 'chessweekly' },
+})
+const NAME_CACHE_KEY = 'ags-name-cache'
+const fetchTopRankings = async (...args) => (await leaderboardFeature.load()).fetchTopRankings(...args)
+const fetchUserRank = async (...args) => (await leaderboardFeature.load()).fetchUserRank(...args)
+const enrichDisplayNames = async (...args) => (await leaderboardFeature.load()).enrichDisplayNames(...args)
+function cacheDisplayName(userId, displayName) {
+  if (!userId) return
+  try {
+    const cache = JSON.parse(localStorage.getItem(NAME_CACHE_KEY) || '{}')
+    cache[userId] = {
+      name: displayName ? moderateIncomingDisplayName(displayName, 'Player') : null,
+      ts: Date.now(),
+    }
+    localStorage.setItem(NAME_CACHE_KEY, JSON.stringify(cache))
+  } catch {}
+}
+function resolveDisplayNames(rankings = []) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(NAME_CACHE_KEY) || '{}')
+    return Object.fromEntries(rankings.flatMap(entry => {
+      const cached = cache[entry.userId]
+      const rawName = (typeof cached === 'string' ? cached : cached?.name) || entry.additionalData?.displayName
+      return rawName ? [[entry.userId, moderateIncomingDisplayName(rawName, 'Player')]] : []
+    }))
+  } catch {
+    return {}
+  }
+}
+async function fetchInviterName(userId) {
+  return resolveDisplayNames([{ userId }])[userId] || null
+}
+
+const fetchFriendState = async (...args) => (await friendsFeature.load()).fetchFriendState(...args)
+const requestFriend = async (...args) => (await friendsFeature.load()).requestFriend(...args)
+const acceptFriend = async (...args) => (await friendsFeature.load()).acceptFriend(...args)
+const rejectFriend = async (...args) => (await friendsFeature.load()).rejectFriend(...args)
+const cancelFriendRequest = async (...args) => (await friendsFeature.load()).cancelFriendRequest(...args)
+const getFriendshipStatus = async (...args) => (await friendsFeature.load()).getFriendshipStatus(...args)
+const addFriendByEmail = async (...args) => (await friendsFeature.load()).addFriendByEmail(...args)
+const processIncomingInviteAcceptances = async (...args) => (await friendsFeature.load()).processIncomingInviteAcceptances(...args)
+function storePendingInvite(email, myUserId) {
+  try {
+    const key = 'ags-pending-invites'
+    const invites = JSON.parse(localStorage.getItem(key) || '{}')
+    invites[email.toLowerCase()] = { inviterUserId: myUserId, timestamp: Date.now() }
+    localStorage.setItem(key, JSON.stringify(invites))
+  } catch {}
+}
+
+function loadPresenceCall(method, args, fallback = null) {
+  return presenceFeature.load().then(module => module[method](...args)).catch(error => {
+    console.warn(`[presence] ${method} unavailable:`, error?.message || error)
+    return fallback
+  })
+}
+function setPresenceStatus(...args) { void loadPresenceCall('setPresenceStatus', args) }
+function disconnectPresence() { presenceFeature.peek()?.disconnectPresence() }
+function pausePresence() { presenceFeature.peek()?.pausePresence() }
+function resumePresence(...args) { void loadPresenceCall('resumePresence', args) }
+const refreshPresenceConnection = (...args) => loadPresenceCall('refreshPresenceConnection', args, false)
+const refreshPresenceToken = (...args) => loadPresenceCall('refreshPresenceToken', args, false)
+const signOutPresence = (...args) => loadPresenceCall('signOutPresence', args)
+const sendGameInvite = (...args) => loadPresenceCall('sendGameInvite', args, { ok: false, error: 'Invites are unavailable.' })
+const sendInviteJoinNotification = (...args) => loadPresenceCall('sendInviteJoinNotification', args, { ok: false, error: 'Invite notification unavailable.' })
+function subscribePresence(method, listener) {
+  let active = true
+  let unsubscribe = null
+  void presenceFeature.load().then(module => {
+    if (active) unsubscribe = module[method](listener)
+  }).catch(error => console.warn(`[presence] ${method} unavailable:`, error?.message || error))
+  return () => {
+    active = false
+    unsubscribe?.()
+  }
+}
+const subscribePresenceUpdates = listener => subscribePresence('subscribePresenceUpdates', listener)
+const subscribeGameInvites = listener => subscribePresence('subscribeGameInvites', listener)
+const subscribeLobbyOpen = listener => subscribePresence('subscribeLobbyOpen', listener)
+const subscribeInviteJoins = listener => subscribePresence('subscribeInviteJoins', listener)
+const subscribeFriendsChanges = listener => subscribePresence('subscribeFriendsChanges', listener)
+
+const fetchPlayerSafetyReasons = async (...args) => (await safetyFeature.load()).fetchPlayerSafetyReasons(...args)
+const reportChatMessage = async (...args) => (await safetyFeature.load()).reportChatMessage(...args)
+const reportPlayer = async (...args) => (await safetyFeature.load()).reportPlayer(...args)
+const listBlockedPlayers = async (...args) => (await safetyFeature.load()).listBlockedPlayers(...args)
+const blockPlayer = async (...args) => (await safetyFeature.load()).blockPlayer(...args)
+const unblockPlayer = async (...args) => (await safetyFeature.load()).unblockPlayer(...args)
+
+const fetchDeletionRequirements = async (...args) => (await accountDeletionFeature.load()).fetchDeletionRequirements(...args)
+const submitAccountDeletion = async (...args) => (await accountDeletionFeature.load()).submitAccountDeletion(...args)
+const authorizeAppleDeletionIfRequired = async (...args) => (await accountDeletionFeature.load()).authorizeAppleDeletionIfRequired(...args)
 
 const primeUnlockedCache = async (...args) => (await achievementsFeature.load()).primeUnlockedCache(...args)
 const diffNewlyUnlocked = async (...args) => (await achievementsFeature.load()).diffNewlyUnlocked(...args)
@@ -304,7 +509,7 @@ async function prepareRealtimeRuntime() {
       const runtime = videoModule.createVideoCallRuntime({
         Peer,
         iceConfigUrl: import.meta.env.VITE_RTC_ICE_CONFIG_URL || '',
-        getAccessToken: () => sdk.getToken()?.accessToken || '',
+        getAccessToken: currentAccessToken,
         nativeAudio: nativeVideoCallAudio,
         isNativeIOS: () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios',
       })
@@ -332,25 +537,78 @@ window.chessContentModeration = Object.freeze({
 })
 window.agsPublicAppURL = import.meta.env.VITE_PUBLIC_APP_URL || 'https://junaili.github.io/chess/'
 
-const chatClient = createAgsChatClient({
-  baseURL: import.meta.env.VITE_ACCELBYTE_BASE_URL ||
-    'https://seal-chessags.prod.gamingservices.accelbyte.io',
-  namespace: import.meta.env.VITE_ACCELBYTE_NAMESPACE || 'seal-chessags',
-  getAccessToken: () => sdk.getToken()?.accessToken || '',
-  getUserId: () => currentUserId || '',
-  loadHistory: async topicId => {
-    const response = await ChatTopicApi(sdk).getChats_ByTopic(topicId, {
-      limit: 100,
-      order: 'DESC',
-    })
-    return response.data
-  },
+const EMPTY_CHAT_STATE = Object.freeze({
+  state: 'disconnected',
+  detail: '',
+  topicId: null,
+  connected: false,
+  ready: false,
 })
+let chatClientInstance = null
+let chatClientPromise = null
+let suppressChatStateNotifications = 0
+async function getChatClient() {
+  if (chatClientInstance) return chatClientInstance
+  if (!chatClientPromise) {
+    chatClientPromise = chatFeature.load().then(runtime => {
+      const agsSdk = authFeature.peek()?.sdk
+      if (!agsSdk) throw new Error('Chat requires an authenticated SDK session.')
+      const client = runtime.createAgsChatClient({
+        baseURL: import.meta.env.VITE_ACCELBYTE_BASE_URL ||
+          'https://seal-chessags.prod.gamingservices.accelbyte.io',
+        namespace: import.meta.env.VITE_ACCELBYTE_NAMESPACE || 'seal-chessags',
+        getAccessToken: currentAccessToken,
+        getUserId: () => currentUserId || '',
+        loadHistory: async topicId => {
+          const response = await runtime.TopicApi(agsSdk).getChats_ByTopic(topicId, {
+            limit: 100,
+            order: 'DESC',
+          })
+          return response.data
+        },
+      })
+      // subscribeState synchronously emits the client's initial disconnected
+      // snapshot. Before this boundary existed that happened during boot; if
+      // replayed later it can overwrite match UI state that was established
+      // while the chunk loaded. Ignore only that bootstrap emission — connect
+      // and every subsequent transport transition still flow to the UI.
+      let subscribing = true
+      client.subscribeState(state => {
+        if (!subscribing && suppressChatStateNotifications === 0) window.handleAGSChatState?.(state)
+      })
+      subscribing = false
+      client.subscribeMessages(message => window.handleAGSChatMessage?.(message))
+      chatClientInstance = client
+      return client
+    }).catch(error => {
+      chatClientPromise = null
+      throw error
+    })
+  }
+  return chatClientPromise
+}
+const chatClient = {
+  snapshot: () => chatClientInstance?.snapshot() || EMPTY_CHAT_STATE,
+  disconnect: () => chatClientInstance?.disconnect(),
+  refreshToken: async (...args) => (await getChatClient()).refreshToken(...args),
+  connect: async (...args) => (await getChatClient()).connect(...args),
+  prepareSessionChat: async (...args) => {
+    const client = await getChatClient()
+    // Preparation only clears stale topic state. It must not publish a late
+    // idle transition after the match UI has already advanced while this
+    // chunk was downloading.
+    suppressChatStateNotifications++
+    try { return client.prepareSessionChat(...args) }
+    finally { suppressChatStateNotifications-- }
+  },
+  activateSessionChat: async (...args) => (await getChatClient()).activateSessionChat(...args),
+  activatePersonalChat: async (...args) => (await getChatClient()).activatePersonalChat(...args),
+  send: async (...args) => (await getChatClient()).send(...args),
+  deactivateTopic: () => chatClientInstance?.deactivateTopic(),
+}
 
-chatClient.subscribeState(state => window.handleAGSChatState?.(state))
-chatClient.subscribeMessages(message => window.handleAGSChatMessage?.(message))
 subscribeAccessTokenRefresh(accessToken => {
-  if (chatClient.snapshot().connected) {
+  if (chatClientInstance?.snapshot().connected) {
     void chatClient.refreshToken(accessToken).then(refreshed => {
       if (!refreshed) console.warn('[Chat] token handoff missed; reconnecting with the new token')
     }).catch(error => {
@@ -364,7 +622,9 @@ subscribeAccessTokenRefresh(accessToken => {
   })
 })
 
-window.agsPrepareSessionChat = () => chatClient.prepareSessionChat()
+window.agsPrepareSessionChat = () => currentAccessToken()
+  ? chatClient.prepareSessionChat()
+  : Promise.resolve()
 // Chat is limited to friends and family — it's a private channel, and casual
 // opponents (random matchmaking, the cold-start bot) are strangers by
 // default. Peers whose identity can't be established count as strangers.
@@ -592,8 +852,11 @@ function bindStaticActions(root = document) {
 bindStaticActions()
 
 async function connectAuthenticatedChat() {
+  const runtime = await chatFeature.load()
+  const agsSdk = authFeature.peek()?.sdk
+  if (!agsSdk) throw new Error('Chat requires an authenticated SDK session.')
   try {
-    const response = await ChatConfigApi(sdk).getConfig_ByNamespace()
+    const response = await runtime.ConfigApi(agsSdk).getConfig_ByNamespace()
     window.agsChatConfig = response.data
   } catch (error) {
     console.warn('[Chat] could not read public configuration:', error?.response?.data || error?.message)
@@ -902,7 +1165,7 @@ function setupPasswordVisibilityToggles() {
 // inviter's chess-recruiter achievement unlocks server-side. Best-effort.
 async function reportReferral() {
   const inviter = sessionStorage.getItem('chess_invite_by')
-  if (!inviter || inviter === currentUserId || !sdk.getToken()?.accessToken) return
+  if (!inviter || inviter === currentUserId || !currentAccessToken()) return
   try {
     const response = await extendFetch('/referral', {
       method: 'POST',
@@ -954,7 +1217,7 @@ window.agsSendInviteEmail = sendInviteEmail
 // Send the new player a welcome email via the Extend service. Best-effort:
 // runs after a successful email/password registration and never blocks signup.
 async function sendWelcomeEmail(emailAddress, displayName) {
-  if (!emailAddress || !sdk.getToken()?.accessToken) return
+  if (!emailAddress || !currentAccessToken()) return
   try {
     const response = await extendFetch('/welcome/email', {
       method: 'POST',
@@ -1648,6 +1911,7 @@ async function maybeRequireLegalAcceptance(profile = null, tokenData = null) {
 }
 
 async function completeAuthenticatedSession({ profile = null, tokenData = null } = {}) {
+  await installSessionKeepAlive()
   const resolvedProfile = profile || await getProfile()
   const canProceed = await maybeRequireLegalAcceptance(resolvedProfile, tokenData)
   if (!canProceed) return false
@@ -1697,9 +1961,6 @@ function renderLoginQueue(state) {
 }
 
 async function initAuth() {
-  // Install the reactive 401->refresh->retry interceptor + resume hooks before
-  // any AGS SDK call, so an expired token is renewed transparently.
-  installSessionKeepAlive()
   // Expose the send function to non-module scripts (app.js) up front, not just
   // after login — sendEvent() already gates on consent and queues pre-auth
   // events, so guest play (which never authenticates) still needs this to
@@ -1761,6 +2022,7 @@ async function initAuth() {
   let profile = null
   let tokenData = null
   if (hasCallback) {
+    await installSessionKeepAlive()
     const result = await handleCallback()
     if (result?.response) {
       tokenData = result.response.data || null
@@ -1768,6 +2030,7 @@ async function initAuth() {
       if (profile) sendEvent('user_logged_in', { method: 'google' })
     }
   } else if (hasStoredSession()) {
+    await installSessionKeepAlive()
     const refreshed = await refreshSession()
     if (refreshed.ok) {
       profile = await getProfile()
@@ -1789,7 +2052,6 @@ async function initAuth() {
       chatClient.disconnect()
       updateAuthUI(false, null, null)
       updateStatsUI(null)
-      refreshLeaderboard()
     }
   } else {
     stopFriendsRefresh()
@@ -1803,7 +2065,6 @@ async function initAuth() {
     chatClient.disconnect()
     updateAuthUI(false, null, null)
     updateStatsUI(null)
-    refreshLeaderboard()
     if (inviteByParam || pendingPeerId) {
       const live = !!pendingPeerId
       showInviteScreen(null, { live })
@@ -2653,7 +2914,7 @@ async function initAuth() {
     setAccountDeletionMessage('')
   }
   window.agsGetStats = (userId) => fetchStats(userId)
-  window.agsGetToken = () => sdk.getToken()?.accessToken ?? null
+  window.agsGetToken = () => currentAccessToken() || null
   // Elo-style rating exchange: app.js reads this to embed in the game_start /
   // player_info peer messages, and calls agsSetOpponentRating with whatever
   // the other side sent back — that's the only way each client learns the
@@ -5281,7 +5542,7 @@ async function restoreRealtimeAfterResume() {
   } finally {
     // A transient refresh failure must not leave realtime permanently paused;
     // Presence will reconnect persistently and the session timer will retry.
-    if (sdk.getToken()?.accessToken) resumePresence()
+    if (currentAccessToken()) resumePresence()
     // Club status refresh-on-resume (dev-plan §11.7): non-forced — the 1h
     // cache TTL inside fetchClubStatus is exactly the "when cache older
     // than 1h" rule, so a recent cache stays untouched.

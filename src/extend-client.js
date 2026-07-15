@@ -1,5 +1,3 @@
-import { sdk } from './ags-client.js'
-import { refreshSession } from './auth.js'
 import { withRefreshRetry } from './http-retry.mjs'
 import { fetchWithTimeout } from './network.mjs'
 
@@ -13,7 +11,8 @@ export { withRefreshRetry }
 // friend lookup / invite / welcome / referral fail until a full reload.
 export function extendFetch(path, options = {}) {
   const { timeoutMs = 50_000, ...fetchOptions } = options
-  const doRequest = () => {
+  const doRequest = async () => {
+    const { sdk } = await import('./ags-client.js')
     const token = sdk.getToken()?.accessToken
     const headers = { ...(fetchOptions.headers || {}) }
     if (token) headers.Authorization = 'Bearer ' + token
@@ -26,7 +25,8 @@ export function extendFetch(path, options = {}) {
       headers,
     }, timeoutMs)
   }
-  return withRefreshRetry(doRequest, refreshSession)
+  const refresh = async () => (await import('./auth.js')).refreshSession()
+  return withRefreshRetry(doRequest, refresh)
 }
 
 // Test seam: in dev / Playwright the dev server sets import.meta.env.DEV, so the

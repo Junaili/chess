@@ -1,5 +1,3 @@
-import { GametelemetryOperationsApi } from '@accelbyte/sdk-gametelemetry'
-import { sdk } from './ags-client.js'
 import { getDeviceId, getSessionId, getPlatform } from './anon-id.js'
 import { hasAnalyticsConsent } from './privacy-preferences.mjs'
 
@@ -9,6 +7,21 @@ const EVENT_SCHEMA_VERSION = 1
 
 // Events queued before the user is authenticated; flushed after login.
 let preAuthQueue = []
+let telemetryRuntimePromise = null
+
+function loadTelemetryRuntime() {
+  if (!telemetryRuntimePromise) {
+    telemetryRuntimePromise = Promise.all([
+      import('@accelbyte/sdk-gametelemetry'),
+      import('./ags-client.js'),
+    ]).then(([telemetry, ags]) => ({ ...telemetry, ...ags }))
+      .catch(error => {
+        telemetryRuntimePromise = null
+        throw error
+      })
+  }
+  return telemetryRuntimePromise
+}
 
 // Capture UTM params and referrer on first load and persist for the session
 // so they survive the Google OAuth redirect (which clears the URL).
@@ -30,7 +43,8 @@ function getUtm() {
   try { return JSON.parse(sessionStorage.getItem('chess_utm') || '{}') } catch { return {} }
 }
 
-function api() {
+function api(runtime) {
+  const { sdk, GametelemetryOperationsApi } = runtime
   const { coreConfig } = sdk.assembly()
   return GametelemetryOperationsApi(sdk, { coreConfig: { ...coreConfig, useSchemaValidation: false } })
 }
@@ -38,7 +52,8 @@ function api() {
 async function dispatch(events) {
   if (!hasAnalyticsConsent()) return
   try {
-    await api().createProtectedEvent(events)
+    const runtime = await loadTelemetryRuntime()
+    await api(runtime).createProtectedEvent(events)
   } catch (e) {
     console.warn('[telemetry]', e?.response?.data || e?.message)
   }
@@ -48,9 +63,8 @@ async function dispatch(events) {
 // authenticated the event is queued; call flushPendingEvents() after login.
 export async function sendEvent(eventName, payload = {}) {
   if (!hasAnalyticsConsent()) return
-  const { coreConfig } = sdk.assembly()
   const event = {
-    EventNamespace:  coreConfig.namespace,
+    EventNamespace:  import.meta.env.VITE_ACCELBYTE_NAMESPACE || '',
     EventName:       eventName,
     ClientTimestamp: new Date().toISOString(),
     // Stamp identity + context on every event so funnels can join across the
@@ -64,7 +78,8 @@ export async function sendEvent(eventName, payload = {}) {
       ...payload,
     },
   }
-  if (!sdk.getToken()?.accessToken) {
+  const runtime = telemetryRuntimePromise ? await telemetryRuntimePromise.catch(() => null) : null
+  if (!runtime?.sdk.getToken()?.accessToken) {
     preAuthQueue.push(event)
     return
   }
@@ -78,7 +93,8 @@ export async function flushPendingEvents() {
     preAuthQueue = []
     return
   }
-  if (!preAuthQueue.length || !sdk.getToken()?.accessToken) return
+  const runtime = await loadTelemetryRuntime()
+  if (!preAuthQueue.length || !runtime.sdk.getToken()?.accessToken) return
   const toSend = preAuthQueue.slice()
   preAuthQueue = []
   await dispatch(toSend)
