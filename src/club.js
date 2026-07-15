@@ -4,20 +4,14 @@
 // club-contract.mjs; this module owns extendFetch, the AGS SDK, the
 // localStorage/memory cache, and DOM.
 //
-// ⚠️ NATIVE IAP LIVE-VERIFICATION GAP: this environment has no iOS simulator
-// or physical device (see repo notes on the iPad build), so the
-// register -> order -> approved -> verify -> AGS sync -> finish pipeline
-// below has NOT been exercised against real StoreKit or a real AGS account.
-// It's built from cordova-plugin-purchase v13's documented API
-// (https://github.com/j3k0/cordova-plugin-purchase/tree/v13/api) and the
-// AGS V2 Apple IAP sync endpoint's live-verified schema (dev-plan §16:
+// AGS V2 Apple IAP sync uses the native Capacitor StoreKit plugin rather than
+// the Cordova compatibility plugin, so Capacitor sync includes its StoreKit 2
+// implementation in the TestFlight binary. The pipeline is
+// register -> initialize -> approved -> verify -> AGS sync -> finish.
+// AGS accepts the numeric StoreKit transaction identifier at (dev-plan §16):
 // PUT /platform/v2/public/namespaces/{ns}/users/{userId}/iap/apple/receipt,
-// body {transactionId}, 204 on success). Before shipping: run this on a real
-// device with a sandbox tester and confirm (a) store.order() opens the
-// StoreKit sheet, (b) the validator's AGS call succeeds and receipt.finish()
-// only fires after that, (c) restorePurchases() re-delivers and re-syncs,
-// (d) the cross-account conflict path — currently guessed as AGS error code
-// 38121 "Duplicate permanent item exists" — actually fires that way.
+// body {transactionId}, 204 on success. StoreKit 2 passes that identifier in
+// the signed JWS transaction payload, while StoreKit 1 passes it directly.
 //
 // Coin store (Milestone 6), High Five (7), and family allowance UI (8) are
 // still not implemented here.
@@ -25,6 +19,7 @@ import { extendFetch } from './extend-client.js'
 import { sdk, agsBaseURL, agsNamespace } from './ags-client.js'
 import { fetchWithTimeout } from './network.mjs'
 import { deriveClubUI, formatCoins, CLUB_SKUS, CLUB_SKU_ORDER } from './club-contract.mjs'
+import { store, ProductType, Platform } from 'capacitor-plugin-cdv-purchase'
 
 const CACHE_KEY = 'chess-club-status-v1'
 const TTL_MS = 60 * 60 * 1000 // 1h
@@ -166,6 +161,9 @@ export async function giveCoins(recipientUserId, amount) {
 
 let nativeIAPReady = false
 let nativeIAPInitStarted = false
+let nativeStore = store
+let nativeProductType = ProductType
+let nativePlatform = Platform
 
 export function isNativeIAPReady() {
   return nativeIAPReady
@@ -220,10 +218,26 @@ async function syncAppleTransaction(transactionId) {
   }
 }
 
-function nativeTransactionId(receipt) {
-  const transactions = Array.isArray(receipt?.transactions) ? receipt.transactions : []
-  const last = transactions[transactions.length - 1]
-  return last?.transactionId || ''
+function nativeTransactionId(validationRequest) {
+  const transaction = validationRequest?.transaction
+  if (typeof transaction?.id === 'string' && transaction.id) return transaction.id
+
+  // capacitor-plugin-cdv-purchase uses StoreKit 2 on iOS. Its validator
+  // receives a JWS rather than the receipt object, so extract the standard
+  // transactionId claim from the JWS payload before handing it to AGS.
+  if (typeof transaction?.jwsRepresentation !== 'string') return ''
+  try {
+    const payload = transaction.jwsRepresentation.split('.')[1]
+    if (!payload) return ''
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64 + '='.repeat((4 - base64.length % 4) % 4)
+    const data = JSON.parse(atob(padded))
+    return typeof data?.transactionId === 'string' || typeof data?.transactionId === 'number'
+      ? String(data.transactionId)
+      : ''
+  } catch {
+    return ''
+  }
 }
 
 // initNativeIAP: registers the 4 Apple products and wires the
@@ -235,33 +249,17 @@ export async function initNativeIAP() {
   if (!isNative() || nativeIAPInitStarted) return
   nativeIAPInitStarted = true
 
-  // The native bridge injects window.CdvPurchase asynchronously relative to
-  // this module's own script evaluation — poll briefly rather than assume
-  // it's present on the first tick.
-  let CdvPurchase = window.CdvPurchase
-  const deadline = Date.now() + 5000
-  while (!CdvPurchase && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 200))
-    CdvPurchase = window.CdvPurchase
-  }
-  if (!CdvPurchase) {
-    console.warn('[club] native IAP plugin not available — purchase buttons stay disabled')
-    return
-  }
-
-  const { store, ProductType, Platform } = CdvPurchase
-
-  store.register(CLUB_SKU_ORDER.map(sku => ({
+  nativeStore.register(CLUB_SKU_ORDER.map(sku => ({
     id: CLUB_SKUS[sku].appleId,
-    type: CLUB_SKUS[sku].monthly ? ProductType.PAID_SUBSCRIPTION : ProductType.NON_CONSUMABLE,
-    platform: Platform.APPLE_APPSTORE,
+    type: CLUB_SKUS[sku].monthly ? nativeProductType.PAID_SUBSCRIPTION : nativeProductType.NON_CONSUMABLE,
+    platform: nativePlatform.APPLE_APPSTORE,
   })))
 
   // Custom validator: instead of the plugin's own (or a 3rd-party) receipt
   // validation service, we hand the transaction id to AGS, which validates
   // against Apple's App Store Server API itself (dev-plan §3.3 config).
-  store.validator = async (receipt, callback) => {
-    const transactionId = nativeTransactionId(receipt)
+  nativeStore.validator = async (validationRequest, callback) => {
+    const transactionId = nativeTransactionId(validationRequest)
     if (!transactionId) {
       callback({ ok: false, message: 'No transaction id on this receipt.' })
       return
@@ -277,7 +275,7 @@ export async function initNativeIAP() {
 
   let lastSyncResult = null
 
-  store.when()
+  nativeStore.when()
     .approved(transaction => transaction.verify())
     .verified(receipt => {
       // Only finish AFTER the AGS sync (inside the validator, already run
@@ -295,18 +293,15 @@ export async function initNativeIAP() {
       onNativeTransactionSettled({ ok: true })
     })
 
-  store.error(err => {
+  nativeStore.error(err => {
     console.warn('[club] native IAP store error:', err?.message || err)
   })
 
-  store.initialize([Platform.APPLE_APPSTORE])
-  // "Ready" here means registration + handler wiring is complete and
-  // store.order() can be called (the library queues orders internally if
-  // the underlying store connection is still finishing initialize()) — not
-  // a guarantee that initialize() has fully resolved. No store.ready()
-  // callback was confirmed in the docs available; revisit if orders placed
-  // immediately after a cold launch turn out to be dropped in device
-  // testing (see file header).
+  const errors = await nativeStore.initialize([nativePlatform.APPLE_APPSTORE])
+  if (Array.isArray(errors) && errors.length) {
+    console.warn('[club] native IAP initialization failed:', errors)
+    return
+  }
   nativeIAPReady = true
   renderCurrentScreen()
 }
@@ -318,10 +313,13 @@ export async function initNativeIAP() {
 export async function purchaseNative(sku) {
   const def = CLUB_SKUS[sku]
   if (!def) throw new Error('Unknown Club plan.')
-  if (!isNative() || !nativeIAPReady || !window.CdvPurchase) {
+  if (!isNative() || !nativeIAPReady) {
     throw new Error('The App Store connection isn\'t ready yet — try again in a moment.')
   }
-  await window.CdvPurchase.store.order(def.appleId)
+  const offer = nativeStore.get(def.appleId, nativePlatform.APPLE_APPSTORE)?.getOffer()
+  if (!offer) throw new Error('This Club plan is not available from the App Store yet.')
+  const result = await offer.order()
+  if (result?.isError) throw new Error(result.message || 'Could not start the App Store purchase.')
 }
 
 // restorePurchases: re-delivers past transactions through the same
@@ -329,8 +327,9 @@ export async function purchaseNative(sku) {
 // force-refreshes status regardless as a safety net. Required by Apple
 // 3.1.1 as a visible button on the purchase screen.
 export async function restorePurchases() {
-  if (!isNative() || !window.CdvPurchase) throw new Error('Restore is only available in the app.')
-  await window.CdvPurchase.store.restorePurchases()
+  if (!isNative() || !nativeIAPReady) throw new Error('Restore is only available when the App Store connection is ready.')
+  const result = await nativeStore.restorePurchases()
+  if (result?.isError) throw new Error(result.message || 'Could not restore App Store purchases.')
   await fetchClubStatus({ force: true }).catch(() => {})
   renderCurrentScreen()
 }
@@ -595,6 +594,12 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
     nativeIAPReady = !!ready
     renderCurrentScreen()
   }
+  window.agsSetClubNativePurchaseStoreForTesting = ({ store: testStore, ProductType: testProductType, Platform: testPlatform } = {}) => {
+    nativeStore = testStore || store
+    nativeProductType = testProductType || ProductType
+    nativePlatform = testPlatform || Platform
+  }
+  window.agsAppleTransactionIdForTesting = nativeTransactionId
   // Offline e2e seam: simulate a settled native transaction (success or
   // failure) without a real StoreKit round trip.
   window.agsSimulateNativeTransactionForTesting = (ok, extra = {}) => {
