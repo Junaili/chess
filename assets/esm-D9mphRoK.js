@@ -1,2 +1,0 @@
-const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/web-CssioTRG.js","assets/index-BjuXOO3m.js","assets/chunk-CMxvf4Kt.js","assets/ags-client-D4V7Rhdt.js","assets/index-B0ILIRGv.css"])))=>i.map(i=>d[i]);
-import{D as e,b as t}from"./index-BjuXOO3m.js";var n=e(`Browser`,{web:()=>t(()=>import(`./web-CssioTRG.js`).then(e=>new e.BrowserWeb),__vite__mapDeps([0,1,2,3,4]))});export{n as Browser};
