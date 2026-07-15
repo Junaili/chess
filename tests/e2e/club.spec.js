@@ -221,7 +221,7 @@ test.describe('Ethan\'s Chess Club', () => {
     await expect(page.locator('#btn-club-restore')).toBeVisible();
   });
 
-  test('native purchaseNative() calls store.order() with the correct Apple product id, never a web checkout', async ({ page }) => {
+  test('native purchaseNative() orders the loaded Apple product offer, never a web checkout', async ({ page }) => {
     await gotoApp(page);
     await page.evaluate(() => {
       window.Capacitor = { ...(window.Capacitor || {}), isNativePlatform: () => true };
@@ -233,17 +233,33 @@ test.describe('Ethan\'s Chess Club', () => {
     });
     await page.evaluate(() => {
       window.orderedProductIds = [];
-      window.CdvPurchase = {
-        store: { order: id => { window.orderedProductIds.push(id); return Promise.resolve(); } },
-      };
+      window.agsSetClubNativePurchaseStoreForTesting({
+        store: {
+          get: (id, platform) => ({
+            getOffer: () => ({ order: () => { window.orderedProductIds.push({ id, platform }); return Promise.resolve(); } }),
+          }),
+        },
+        Platform: { APPLE_APPSTORE: 'ios-appstore' },
+      });
       window.agsSetClubNativeIAPReadyForTesting(true);
     });
     await stubClubStatus(page, FREE_STATUS);
     await openClub(page);
 
     await page.locator('[data-club-buy="club-individual-monthly"]').click();
-    await expect.poll(() => page.evaluate(() => window.orderedProductIds)).toEqual(['io.github.junaili.chess.club.individual.monthly']);
+    await expect.poll(() => page.evaluate(() => window.orderedProductIds)).toEqual([{
+      id: 'io.github.junaili.chess.club.individual.monthly',
+      platform: 'ios-appstore',
+    }]);
     expect(webCheckoutCalled).toBe(false);
+  });
+
+  test('native validator extracts the StoreKit 2 transaction id from its signed payload', async ({ page }) => {
+    await gotoApp(page);
+    const jws = `header.${Buffer.from(JSON.stringify({ transactionId: '1234567890' })).toString('base64url')}.signature`;
+    await expect.poll(() => page.evaluate(value => window.agsAppleTransactionIdForTesting({
+      transaction: { type: 'apple-sk2', jwsRepresentation: value },
+    }), jws)).toBe('1234567890');
   });
 
   test('a successful native transaction refreshes status and shows the welcome toast', async ({ page }) => {
@@ -294,7 +310,9 @@ test.describe('Ethan\'s Chess Club', () => {
     });
     await page.evaluate(() => {
       window.restoreCalled = false;
-      window.CdvPurchase = { store: { restorePurchases: () => { window.restoreCalled = true; return Promise.resolve(); } } };
+      window.agsSetClubNativePurchaseStoreForTesting({
+        store: { restorePurchases: () => { window.restoreCalled = true; return Promise.resolve(); } },
+      });
       window.agsSetClubNativeIAPReadyForTesting(true);
     });
     await openClub(page);
