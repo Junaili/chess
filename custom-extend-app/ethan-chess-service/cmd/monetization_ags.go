@@ -367,16 +367,17 @@ func (h *monetizationHandler) getWalletBalance(userID string) (int64, error) {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 		return 0, fmt.Errorf("wallet summary for %s returned %d", userID, resp.StatusCode)
 	}
-	var summary struct {
-		Data []struct {
-			CurrencyCode string `json:"currencyCode"`
-			Balance      int64  `json:"balance"`
-		} `json:"data"`
+	// The summary response is a BARE ARRAY of per-currency wallet objects,
+	// not a {data:[…]} page (live-verified 2026-07-14 — the paged shape
+	// failed to decode, so every balance silently read as an error → 0).
+	var summary []struct {
+		CurrencyCode string `json:"currencyCode"`
+		Balance      int64  `json:"balance"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&summary); err != nil {
 		return 0, fmt.Errorf("decode wallet summary for %s: %w", userID, err)
 	}
-	for _, w := range summary.Data {
+	for _, w := range summary {
 		if strings.EqualFold(w.CurrencyCode, ethanCoinCurrency) {
 			return w.Balance, nil
 		}

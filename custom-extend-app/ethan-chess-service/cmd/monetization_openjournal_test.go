@@ -233,7 +233,7 @@ func (f *gateRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 			if f.ledgerValue == nil {
 				return &http.Response{StatusCode: 404, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: req}, nil
 			}
-			body, _ := json.Marshal(map[string]any{"value": f.ledgerValue, "updatedAt": f.ledgerAt})
+			body, _ := json.Marshal(map[string]any{"value": f.ledgerValue, "updated_at": f.ledgerAt})
 			return jsonResponse(200, string(body)), nil
 		}
 		// PUT: accept unconditionally and remember the new value so a

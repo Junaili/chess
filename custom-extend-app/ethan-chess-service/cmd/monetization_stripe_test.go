@@ -135,7 +135,7 @@ func (f *stripeWebhookRoundTripper) RoundTrip(req *http.Request) (*http.Response
 		f.debits++
 		return jsonResponse(200, `{}`), nil
 	case strings.HasSuffix(req.URL.Path, "/wallets/currencies/summary"):
-		return jsonResponse(200, `{"data":[{"currencyCode":"ETHC","balance":5000}]}`), nil
+		return jsonResponse(200, `[{"currencyCode":"ETHC","balance":5000}]`), nil
 	case strings.Contains(req.URL.Path, "adminrecords/"):
 		// Matches both the plain GET path (getAdminPlayerRecord) and the
 		// concurrent PUT path (putAdminPlayerRecordConcurrent) — see the
@@ -149,7 +149,7 @@ func (f *stripeWebhookRoundTripper) RoundTrip(req *http.Request) (*http.Response
 			if !ok {
 				return &http.Response{StatusCode: 404, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: req}, nil
 			}
-			body, _ := json.Marshal(map[string]any{"value": raw, "updatedAt": f.ledgerUpdated[key]})
+			body, _ := json.Marshal(map[string]any{"value": raw, "updated_at": f.ledgerUpdated[key]})
 			return jsonResponse(200, string(body)), nil
 		}
 		raw, _ := io.ReadAll(req.Body)

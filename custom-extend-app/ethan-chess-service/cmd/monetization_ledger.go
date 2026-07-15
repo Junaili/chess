@@ -195,16 +195,15 @@ func (h *monetizationHandler) mutateLedger(userID string, fn func(*monetizationL
 // CloudSave admin player record transport (justice-cloudsave-service 3.32.0)
 // ---------------------------------------------------------------------------
 
-// cloudSaveRecordEnvelope mirrors the concurrent-record PUT request body
-// shape (value/updatedAt/tags) — the GET response was not directly inspected
-// during implementation (the AGS API MCP did not return response schemas for
-// CloudSave GETs). This is AGS CloudSave's documented convention and should
-// be re-confirmed against a real GET response during M4's live acceptance
-// check; if the field names differ, fix them here only — every other
-// ledger/config call in this file goes through these two functions.
+// cloudSaveRecordEnvelope parses the admin-record GET response. Mind the
+// casing asymmetry (live-verified 2026-07-14): the GET response is
+// snake_case (`updated_at`) while the concurrent PUT *request* takes
+// camelCase (`updatedAt`). Parsing the GET as camelCase silently yields an
+// empty updatedAt, which the PUT then rejects with 400 "validation error" —
+// that mistake meant no ledger write ever succeeded until this was fixed.
 type cloudSaveRecordEnvelope struct {
 	Value     json.RawMessage `json:"value"`
-	UpdatedAt string          `json:"updatedAt"`
+	UpdatedAt string          `json:"updated_at"`
 }
 
 // getAdminPlayerRecord returns (nil, "", nil) when the record does not exist
@@ -249,6 +248,14 @@ func (h *monetizationHandler) putAdminPlayerRecordConcurrent(userID, key string,
 	token, err := h.clientCredentialsToken()
 	if err != nil {
 		return err
+	}
+	// updatedAt is required RFC3339 — an empty string ("record doesn't exist
+	// yet") is a 400, not a valid create marker (live-verified 2026-07-14).
+	// A current timestamp creates the record fine. Two racing first-writes
+	// could in principle both pass (nothing exists to precondition against),
+	// but the loser's data is a freshly-initialized ledger either way.
+	if updatedAt == "" {
+		updatedAt = h.now().UTC().Format(time.RFC3339)
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {

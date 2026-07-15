@@ -85,7 +85,7 @@ func (f *ledgerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 		if f.storedValue == nil {
 			return &http.Response{StatusCode: 404, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: req}, nil
 		}
-		body, _ := json.Marshal(map[string]any{"value": f.storedValue, "updatedAt": f.updatedAt})
+		body, _ := json.Marshal(map[string]any{"value": f.storedValue, "updated_at": f.updatedAt})
 		return jsonResponse(200, string(body)), nil
 	case http.MethodPut:
 		f.putCalls++
@@ -98,6 +98,13 @@ func (f *ledgerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 			UpdatedAt string          `json:"updatedAt"`
 		}
 		_ = json.Unmarshal(raw, &body)
+		// The real endpoint 400s on a missing/blank updatedAt (it's a
+		// required RFC3339 field even when creating a brand-new record) —
+		// enforcing it here keeps the fake honest about the exact validation
+		// that silently broke every prod ledger write until 2026-07-14.
+		if _, err := time.Parse(time.RFC3339, body.UpdatedAt); err != nil {
+			return jsonResponse(400, `{"errorCode":18181,"errorMessage":"unable to update_admin_player_record_concurrent: validation error"}`), nil
+		}
 		f.storedValue = body.Value
 		f.updatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: req}, nil
