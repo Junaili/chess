@@ -1,5 +1,7 @@
 'use strict';
 
+import { ChessGame } from './chess-engine.js';
+
 class ChessAI {
   constructor() {
     this.pieceVal = { pawn:100, knight:320, bishop:330, rook:500, queen:900, king:20000 };
@@ -267,3 +269,5 @@ class ChessAI {
     return best;
   }
 }
+
+export { ChessAI };

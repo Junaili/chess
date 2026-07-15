@@ -440,3 +440,5 @@ class ChessGame {
     return letters[p.type] + cap + dest;
   }
 }
+
+export { ChessGame };

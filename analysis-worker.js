@@ -1,9 +1,9 @@
 'use strict';
 
-// Runs every CPU-heavy chess search away from WKWebView's main thread. This
-// file stays a classic worker so it can reuse the existing classic engine
-// scripts without pulling either engine into the already-large Vite bundle.
-importScripts('chess-engine.js', 'ai-engine.js');
+// Runs every CPU-heavy chess search away from WKWebView's main thread. The
+// worker and both engines are modules, so none of them enter the launch graph.
+import { ChessGame } from './chess-engine.js';
+import { ChessAI } from './ai-engine.js';
 
 const ai = new ChessAI();
 
