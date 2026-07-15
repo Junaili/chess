@@ -17,7 +17,7 @@ import { sdk, agsBaseURL, agsNamespace } from './ags-client.js'
 import { fetchWithTimeout } from './network.mjs'
 import {
   deriveEquipSlot, slotValueFromSku, normalizeCosmeticsRecord, DEFAULT_COSMETICS_RECORD,
-  deriveCosmeticCard, sortCosmetics, insufficientBalanceMessage,
+  deriveCosmeticCard, sortCosmetics, insufficientBalanceMessage, itemRegionData,
 } from './coin-store-contract.mjs'
 import { fetchClubStatus, getCoins } from './club.js'
 
@@ -102,7 +102,7 @@ async function fetchOwnedCosmeticSkus(userId) {
 export async function purchaseCosmetic(item) {
   const userId = window.agsCurrentUserId
   if (!userId) return { ok: false, message: 'Sign in to buy cosmetics.' }
-  const region = item?.regionData?.US?.[0]
+  const region = itemRegionData(item)
   if (!region) return { ok: false, message: 'This item is not available right now.' }
 
   const url = `${agsBaseURL}/platform/public/namespaces/${encodeURIComponent(agsNamespace)}/users/${encodeURIComponent(userId)}/orders`

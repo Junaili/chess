@@ -7,10 +7,10 @@ const contractPromise = import(pathToFileURL(
   path.join(__dirname, '..', '..', 'src', 'coin-store-contract.mjs')
 ))
 
-const WALNUT = { itemId: 'i-walnut', sku: 'cos-board-walnut', localizations: { en: { title: 'Walnut Board', description: 'A warm walnut wood board theme.' } }, regionData: { US: [{ price: 300 }] } }
-const DINO = { itemId: 'i-dino', sku: 'cos-pieces-dino', localizations: { en: { title: 'Dinosaur Pieces', description: 'Chess pieces reimagined as dinosaurs.' } }, regionData: { US: [{ price: 500 }] } }
-const CONFETTI = { itemId: 'i-confetti', sku: 'cos-victory-confetti', localizations: { en: { title: 'Confetti Victory', description: 'A confetti burst when you win.' } }, regionData: { US: [{ price: 150 }] } }
-const FOUNDER = { itemId: 'i-founder', sku: 'cos-flair-founder', localizations: { en: { title: 'Club Founder Flair', description: 'A badge marking you as an early Club member.' } }, regionData: { US: [{ price: 150 }] } }
+const WALNUT = { itemId: 'i-walnut', sku: 'cos-board-walnut', localizations: { en: { title: 'Walnut Board', description: 'A warm walnut wood board theme.' } }, regionData: [{ price: 300 }] }
+const DINO = { itemId: 'i-dino', sku: 'cos-pieces-dino', localizations: { en: { title: 'Dinosaur Pieces', description: 'Chess pieces reimagined as dinosaurs.' } }, regionData: [{ price: 500 }] }
+const CONFETTI = { itemId: 'i-confetti', sku: 'cos-victory-confetti', localizations: { en: { title: 'Confetti Victory', description: 'A confetti burst when you win.' } }, regionData: [{ price: 150 }] }
+const FOUNDER = { itemId: 'i-founder', sku: 'cos-flair-founder', localizations: { en: { title: 'Club Founder Flair', description: 'A badge marking you as an early Club member.' } }, regionData: [{ price: 150 }] }
 
 test('deriveEquipSlot maps each SKU prefix to its slot', async () => {
   const { deriveEquipSlot } = await contractPromise
@@ -109,4 +109,24 @@ test('insufficientBalanceMessage reports exactly how many more coins are needed'
   assert.equal(insufficientBalanceMessage(card, 460), 'You need 40 more coins for Dinosaur Pieces.')
   const almost = deriveCosmeticCard(CONFETTI, { ownedSkus: [], coins: 149 })
   assert.equal(insufficientBalanceMessage(almost, 149), 'You need 1 more coin for Confetti Victory.')
+})
+
+test('itemRegionData handles both API shapes: public bare array and admin US-keyed map', async () => {
+  const { itemRegionData } = await contractPromise
+  // Public items/byCriteria (what the store actually fetches) — bare array.
+  assert.equal(itemRegionData({ regionData: [{ price: 150, currencyCode: 'ETHC' }] }).price, 150)
+  // Admin variant — region-keyed map.
+  assert.equal(itemRegionData({ regionData: { US: [{ price: 300 }] } }).price, 300)
+  assert.equal(itemRegionData({}), undefined)
+  assert.equal(itemRegionData(null), undefined)
+})
+
+test('deriveCosmeticCard prices from the public bare-array regionData (regression: price read as 0)', async () => {
+  const { deriveCosmeticCard } = await contractPromise
+  const item = { sku: 'cos-flair-founder', regionData: [{ price: 150, currencyCode: 'ETHC' }] }
+  const broke = deriveCosmeticCard(item, { ownedSkus: [], coins: 50 })
+  assert.equal(broke.price, 150)
+  assert.equal(broke.ctaDisabled, true)
+  const funded = deriveCosmeticCard(item, { ownedSkus: [], coins: 150 })
+  assert.equal(funded.ctaDisabled, false)
 })

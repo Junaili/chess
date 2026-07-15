@@ -6,9 +6,9 @@ const { gotoApp } = require('./helpers.cjs');
 // **/items/byCriteria**, **/entitlements**, and **/orders** rather than the
 // **/extend/** patterns used by club.spec.js.
 
-const WALNUT = { itemId: 'i-walnut', sku: 'cos-board-walnut', localizations: { en: { title: 'Walnut Board', description: 'A warm walnut wood board theme.' } }, regionData: { US: [{ price: 300, currencyCode: 'ETHC' }] } };
-const DINO = { itemId: 'i-dino', sku: 'cos-pieces-dino', localizations: { en: { title: 'Dinosaur Pieces', description: 'Chess pieces reimagined as dinosaurs.' } }, regionData: { US: [{ price: 500, currencyCode: 'ETHC' }] } };
-const FOUNDER = { itemId: 'i-founder', sku: 'cos-flair-founder', localizations: { en: { title: 'Club Founder Flair', description: 'A badge marking you as an early Club member.' } }, regionData: { US: [{ price: 150, currencyCode: 'ETHC' }] } };
+const WALNUT = { itemId: 'i-walnut', sku: 'cos-board-walnut', localizations: { en: { title: 'Walnut Board', description: 'A warm walnut wood board theme.' } }, regionData: [{ price: 300, currencyCode: 'ETHC' }] };
+const DINO = { itemId: 'i-dino', sku: 'cos-pieces-dino', localizations: { en: { title: 'Dinosaur Pieces', description: 'Chess pieces reimagined as dinosaurs.' } }, regionData: [{ price: 500, currencyCode: 'ETHC' }] };
+const FOUNDER = { itemId: 'i-founder', sku: 'cos-flair-founder', localizations: { en: { title: 'Club Founder Flair', description: 'A badge marking you as an early Club member.' } }, regionData: [{ price: 150, currencyCode: 'ETHC' }] };
 const CATALOG = [WALNUT, DINO, FOUNDER];
 
 async function stubCatalog(page, catalog = CATALOG) {

@@ -36,6 +36,17 @@ export function normalizeCosmeticsRecord(value) {
   }
 }
 
+// itemRegionData: the PUBLIC items/byCriteria API returns `regionData` as a
+// bare array of the requested region's entries (live-verified 2026-07-14),
+// while the ADMIN variant keys it by region ({US: […]}). Parsing only the
+// map shape made every public-catalog price read as 0 — free-looking Buy
+// buttons that then failed at order time. Accept both shapes here.
+export function itemRegionData(item) {
+  const rd = item?.regionData
+  if (Array.isArray(rd)) return rd[0]
+  return rd?.US?.[0]
+}
+
 // deriveCosmeticCard: everything one store grid card needs to render, given
 // the raw AGS item, the caller's owned-sku set, their equipped-cosmetics
 // record, and current coin balance.
@@ -46,7 +57,7 @@ export function deriveCosmeticCard(item, { ownedSkus = [], equipped = DEFAULT_CO
   const owned = ownedSkus.includes(sku)
   const equippedValue = slot ? equipped[slot] : ''
   const isEquipped = owned && slot && equippedValue === slotValue
-  const price = Number(item?.regionData?.US?.[0]?.price ?? item?.price ?? 0)
+  const price = Number(itemRegionData(item)?.price ?? item?.price ?? 0)
   const affordable = coins >= price
 
   let ctaLabel = ''
