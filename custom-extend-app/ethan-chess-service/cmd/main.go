@@ -34,6 +34,7 @@ import (
 	"github.com/junaili/ethan-chess-service/pkg/handler"
 	pb "github.com/junaili/ethan-chess-service/pkg/pb"
 	taskscheduler "github.com/junaili/ethan-chess-service/pkg/pb/generic/task_scheduler/v1"
+	"github.com/junaili/ethan-chess-service/pkg/perftelemetry"
 	"github.com/junaili/ethan-chess-service/pkg/service"
 )
 
@@ -86,6 +87,13 @@ func main() {
 		botDir = "bots/" + botID
 	}
 	trainJob := handler.NewTrainJob(botID, botDir)
+	performanceReporter, performanceEnabled, err := perftelemetry.NewFromEnv()
+	if err != nil {
+		log.Fatalf("configure performance telemetry: %v", err)
+	}
+	if performanceEnabled {
+		trainJob.SetPerformanceCapture(performanceReporter.Capture)
+	}
 
 	grpcServer := grpc.NewServer(
 		grpc.UnaryInterceptor(internalGatewayAuthInterceptor(internalToken)),
@@ -237,6 +245,10 @@ func main() {
 	mux.HandleFunc(basePath+"/bot/train", trainJob.TrainHandler(os.Getenv("BOT_TRIGGER_SECRET")))
 	mux.HandleFunc(basePath+"/bot/brain", trainJob.BotBrainHandler(os.Getenv("BOT_TRIGGER_SECRET")))
 	mux.HandleFunc(basePath+"/debug/trainer", trainJob.TrainerDebugHandler(os.Getenv("BOT_TRIGGER_SECRET")))
+	if performanceEnabled {
+		mux.HandleFunc(basePath+"/debug/performance-capture",
+			performanceReporter.Handler(os.Getenv("BOT_TRIGGER_SECRET")))
+	}
 
 	// API routes (auth required)
 	mux.Handle("/", corsMiddleware(allowedOrigins, auth.wrap(gateway)))
@@ -263,6 +275,9 @@ func main() {
 
 	if watcher != nil {
 		go watcher.Start(ctx)
+	}
+	if performanceEnabled {
+		performanceReporter.Start(ctx)
 	}
 
 	<-ctx.Done()

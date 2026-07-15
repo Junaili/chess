@@ -27,8 +27,9 @@ import (
 // filesystem is ephemeral); persona.md/style.json stay baked into the image and
 // are read from BOT_DIR. The disk brain.json only seeds the very first run.
 type TrainJob struct {
-	botID  string
-	botDir string
+	botID              string
+	botDir             string
+	performanceCapture func(string)
 
 	mu          sync.Mutex
 	running     bool
@@ -38,6 +39,18 @@ type TrainJob struct {
 
 func NewTrainJob(botID, botDir string) *TrainJob {
 	return &TrainJob{botID: botID, botDir: botDir, last: map[string]any{}}
+}
+
+// SetPerformanceCapture installs a nonblocking runtime telemetry hook. It must
+// be configured during service startup, before training can be invoked.
+func (j *TrainJob) SetPerformanceCapture(capture func(string)) {
+	j.performanceCapture = capture
+}
+
+func (j *TrainJob) capturePerformance(reason string) {
+	if j.performanceCapture != nil {
+		j.performanceCapture(reason)
+	}
 }
 
 func BotBrainKey(botID string) string   { return "chess-bot-" + botID + "-brain" }
@@ -153,6 +166,8 @@ type reflectionMemo struct {
 // never relies on a 24-hour wall-clock window: every retained, unprocessed
 // completed game is backfilled, even after a missed scheduler day.
 func (j *TrainJob) RunTrainingFor(ctx context.Context, runID string) (map[string]any, error) {
+	j.capturePerformance("training_start")
+	defer j.capturePerformance("training_finish")
 	started := time.Now().UTC()
 	if strings.TrimSpace(runID) == "" {
 		runID = "unspecified-" + started.Format("20060102T150405.000000000Z")
