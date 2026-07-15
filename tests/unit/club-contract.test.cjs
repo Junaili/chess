@@ -216,3 +216,78 @@ test('narrativeHint: Open Journal Day with quota exhausted', async () => {
   assert.equal(hint.allowed, false)
   assert.match(hint.label, /used up/)
 })
+
+// ── M9 lifecycle edges (dev-plan §11) ────────────────────────────────────────
+
+test('deriveClubUI: statusUnreachable disables every purchase button with a try-again-later reason', async () => {
+  const { deriveClubUI } = await contractPromise
+  const ui = deriveClubUI(
+    { active: false, coins: 40, activeSkus: [], canPurchase: true },
+    { statusUnreachable: true },
+  )
+  assert.equal(ui.statusUnreachable, true)
+  assert.match(ui.statusUnreachableReason, /try again later/)
+  for (const button of ui.buttons) assert.equal(button.disabled, true)
+
+  // Reads stay honored: the same stale status still renders normally.
+  assert.equal(ui.showPurchaseUI, true)
+  assert.equal(ui.coinsLabel, '40 🪙')
+})
+
+test('deriveClubUI: reachable status leaves buttons enabled and no unreachable reason', async () => {
+  const { deriveClubUI } = await contractPromise
+  const ui = deriveClubUI({ active: false, coins: 0, activeSkus: [], canPurchase: true }, {})
+  assert.equal(ui.statusUnreachable, false)
+  assert.equal(ui.statusUnreachableReason, '')
+  assert.ok(ui.buttons.some(b => !b.disabled))
+})
+
+test('deriveClubUI: active monthly shows the access-until-period-end cancel note', async () => {
+  const { deriveClubUI } = await contractPromise
+  const ui = deriveClubUI(
+    { active: true, tier: 'individual', lifetime: false, expiresAt: '2026-08-15T00:00:00Z', activeSkus: ['club-individual-monthly'], monthlyOrigin: 'stripe', coins: 0, canPurchase: true },
+    {},
+  )
+  assert.match(ui.cancelNote, /keep Club until/)
+})
+
+test('deriveClubUI: lifetime members get no cancel note', async () => {
+  const { deriveClubUI } = await contractPromise
+  const ui = deriveClubUI(
+    { active: true, tier: 'individual', lifetime: true, activeSkus: ['club-individual-lifetime'], coins: 0, canPurchase: true },
+    {},
+  )
+  assert.equal(ui.cancelNote, '')
+})
+
+test('deriveClubUI: Stripe individual monthly shows the cancel-first upgrade note on web, not on native', async () => {
+  const { deriveClubUI } = await contractPromise
+  const status = { active: true, tier: 'individual', lifetime: false, expiresAt: '2026-08-15T00:00:00Z', activeSkus: ['club-individual-monthly'], monthlyOrigin: 'stripe', coins: 0, canPurchase: true }
+  const web = deriveClubUI(status, {})
+  assert.match(web.upgradeNote, /Cancel your Individual plan first/)
+  // Apple prorates individual→family natively inside the subscription
+  // group, so a native session gets no cancel-first instruction.
+  const native = deriveClubUI(status, { isNative: true, nativeIAPReady: true })
+  assert.equal(native.upgradeNote, '')
+  // Apple-billed monthly on web: cancel-first doesn't apply either (the
+  // upgrade would happen through the App Store, not Stripe).
+  const appleBilled = deriveClubUI({ ...status, monthlyOrigin: 'apple' }, {})
+  assert.equal(appleBilled.upgradeNote, '')
+  // Family members have nothing to upgrade to.
+  const family = deriveClubUI({ ...status, tier: 'family', activeSkus: ['club-family-monthly'] }, {})
+  assert.equal(family.upgradeNote, '')
+})
+
+test('accountDeletionNotices: Apple subscription and coin-balance warnings (dev-plan §11.8)', async () => {
+  const { accountDeletionNotices } = await contractPromise
+  const both = accountDeletionNotices({ appleClubSubscriptionActive: true, coinBalance: 415 })
+  assert.equal(both.length, 2)
+  assert.match(both[0], /NOT cancelled by deleting your account/)
+  assert.match(both[0], /Settings → Apple ID → Subscriptions/)
+  assert.match(both[1], /415 Ethan Coins will be permanently lost/)
+
+  assert.deepEqual(accountDeletionNotices({ appleClubSubscriptionActive: false, coinBalance: 0 }), [])
+  assert.equal(accountDeletionNotices({ coinBalance: 1250 })[0].includes('1,250'), true)
+  assert.deepEqual(accountDeletionNotices({}), [])
+  assert.deepEqual(accountDeletionNotices(), [])
+})

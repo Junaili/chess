@@ -133,6 +133,11 @@ export async function purchaseCosmetic(item) {
 
   const payload = await res.json().catch(() => ({}))
   if (payload?.errorCode === 35124) {
+    // §11.7: an insufficient-balance rejection means the client's cached
+    // balance was stale — force the shared status refresh so every other
+    // coin display corrects too (fire-and-forget; the message below already
+    // uses the number the server just rejected against).
+    void fetchClubStatus({ force: true }).catch(() => {})
     return { ok: false, insufficientBalance: true, message: insufficientBalanceMessage(deriveCosmeticCard(item, { ownedSkus, coins: getCoins() }), getCoins()) }
   }
   if (payload?.errorCode === 31177) {
@@ -140,6 +145,11 @@ export async function purchaseCosmetic(item) {
     // not a failure from the player's point of view; resync and treat as OK.
     ownedSkus = [...new Set([...ownedSkus, item.sku])]
     return { ok: true }
+  }
+  if (payload?.errorCode === 32121) {
+    // Price changed between catalog load and order submit (dev-plan §11.9):
+    // AGS rejects the mismatched price. Caller refetches + re-renders.
+    return { ok: false, priceChanged: true, message: 'Price updated — please try again.' }
   }
   return { ok: false, message: payload?.errorMessage || payload?.message || 'Could not complete the purchase. Try again.' }
 }
@@ -298,6 +308,15 @@ async function handleCardAction(button) {
     const result = await purchaseCosmetic(item)
     if (result.ok) {
       renderStoreGrid()
+    } else if (result.priceChanged) {
+      // §11.9 price race: the catalog this grid rendered from is stale —
+      // refetch it (which re-renders with the new price) and tell the
+      // player to retry rather than leaving a dead button.
+      if (messageEl) {
+        messageEl.textContent = result.message
+        messageEl.style.display = ''
+      }
+      await loadCoinStore({ forceCatalog: true })
     } else {
       button.disabled = false
       button.textContent = originalText
@@ -313,16 +332,18 @@ async function handleCardAction(button) {
 // Show/hide of the overlay itself (focus trap, Escape, backdrop dismiss) is
 // owned by main.js's shared createOverlayController — this only loads data,
 // matching the DOM-vs-data split already established in club.js.
-export async function loadCoinStore() {
+export async function loadCoinStore({ forceCatalog = false } = {}) {
   const grid = document.getElementById('coin-store-grid')
   if (grid) grid.innerHTML = '<div class="profile-history-loading"><span></span><span></span><span></span></div>'
   try {
     const userId = window.agsCurrentUserId
     // Force-refresh the shared coin balance every time the store opens, so
     // it's never stale relative to a purchase/spend made elsewhere (Club
-    // checkout, a High Five, another device).
+    // checkout, a High Five, another device). forceCatalog additionally
+    // bypasses the catalog TTL — required on the §11.9 price-race path,
+    // where the whole point is that the cached catalog's price is wrong.
     const [catalog, owned] = await Promise.all([
-      fetchCosmeticCatalog(),
+      fetchCosmeticCatalog({ force: forceCatalog }),
       userId ? fetchOwnedCosmeticSkus(userId) : Promise.resolve([]),
       fetchClubStatus({ force: true }).catch(() => {}),
     ])

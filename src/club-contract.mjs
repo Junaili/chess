@@ -61,7 +61,7 @@ function journalOpenActive(journalOpen) {
 // render, given the caller's /club/status response and session context.
 // Child sessions NEVER see purchase UI (hard rule, dev-plan §0.2) — coins and
 // membership state remain visible, but there is nothing to tap.
-export function deriveClubUI(status, { isChildSession = false, isNative = false, nativeIAPReady = false } = {}) {
+export function deriveClubUI(status, { isChildSession = false, isNative = false, nativeIAPReady = false, statusUnreachable = false } = {}) {
   const s = status || {}
   const active = !!s.active
   const tierName = s.tier === 'family' ? 'Family' : s.tier === 'individual' ? 'Individual' : ''
@@ -114,7 +114,9 @@ export function deriveClubUI(status, { isChildSession = false, isNative = false,
       // the app) — so a native button is only enabled once the IAP plugin
       // has actually registered products and is ready to take an order.
       // Never silently fall back to a web checkout link on native.
-      disabled: !s.canPurchase || covered || (isNative && !nativeIAPReady),
+      // statusUnreachable (dev-plan §11.6): reads may ride a stale cache,
+      // but purchases must never start against unknown membership state.
+      disabled: !s.canPurchase || covered || (isNative && !nativeIAPReady) || statusUnreachable,
     }
   })
 
@@ -123,6 +125,22 @@ export function deriveClubUI(status, { isChildSession = false, isNative = false,
     monthlyCancelNotice = s.monthlyOrigin === 'apple'
       ? "You have Lifetime — cancel your monthly plan in Settings → Apple ID → Subscriptions so you aren't billed again."
       : 'You have Lifetime — cancel your monthly plan so you aren\'t billed again.'
+  }
+
+  // Cancellation rule copy (dev-plan §11.2): monthly members keep access
+  // until the paid period ends — say so wherever a renewal date is shown.
+  let cancelNote = ''
+  if (active && !s.lifetime && s.expiresAt) {
+    cancelNote = `If you cancel, you keep Club until ${new Date(s.expiresAt).toLocaleDateString()}.`
+  }
+
+  // Upgrade path copy (dev-plan §7.6/§11.4): Stripe can't prorate across
+  // separate Checkout subscriptions, so web individual→family is cancel
+  // first, then buy. Apple handles individual→family natively inside the
+  // subscription group (StoreKit prorates), so no note there.
+  let upgradeNote = ''
+  if (active && !s.lifetime && s.tier === 'individual' && s.monthlyOrigin === 'stripe' && !isNative) {
+    upgradeNote = 'Upgrading to Family? Cancel your Individual plan first (Manage subscription), then buy a Family plan.'
   }
 
   return {
@@ -137,12 +155,31 @@ export function deriveClubUI(status, { isChildSession = false, isNative = false,
     canPurchase: s.canPurchase !== false,
     canPurchaseReason: s.canPurchase === false ? 'Ask your parent to buy Club.' : '',
     monthlyCancelNotice,
+    cancelNote,
+    upgradeNote,
+    statusUnreachable: !!statusUnreachable,
+    statusUnreachableReason: statusUnreachable ? 'Club purchases are unavailable right now — try again later.' : '',
     isNative,
     nativeIAPReady,
     nativePurchasesUnavailable: isNative && !nativeIAPReady,
     showRestorePurchases: isNative,
     buttons,
   }
+}
+
+// accountDeletionNotices (dev-plan §11.8): Club/coins warnings the deletion
+// modal must show BEFORE the final confirm. Input is the /account/deletion
+// requirements response.
+export function accountDeletionNotices({ appleClubSubscriptionActive = false, coinBalance = 0 } = {}) {
+  const notices = []
+  if (appleClubSubscriptionActive) {
+    notices.push('Your App Store subscription is NOT cancelled by deleting your account — cancel it in Settings → Apple ID → Subscriptions.')
+  }
+  const coins = Number(coinBalance) || 0
+  if (coins > 0) {
+    notices.push(`Your ${coins.toLocaleString()} Ethan Coins will be permanently lost.`)
+  }
+  return notices
 }
 
 // journalVisibleEntries: which journal entries render given free/Club/

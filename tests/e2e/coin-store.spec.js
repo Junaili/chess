@@ -186,3 +186,37 @@ test.describe('Ethan Coins Store', () => {
     await expect(page.locator('#coin-store-grid')).toContainText('Could not load the store');
   });
 });
+
+// ── M9 §11.9: cosmetic price change race ─────────────────────────────────────
+
+test.describe('Coin store price race (dev-plan §11.9)', () => {
+  test('a price-mismatch rejection refetches the catalog, shows the new price, and asks to retry', async ({ page }) => {
+    await gotoApp(page);
+    // First catalog load serves the stale 300-coin price; the post-rejection
+    // forced refetch serves the repriced 350-coin catalog.
+    let catalogCalls = 0;
+    await page.route('**/items/byCriteria*', route => {
+      catalogCalls += 1;
+      const price = catalogCalls > 1 ? 350 : 300;
+      const repriced = [{ ...WALNUT, regionData: [{ price, currencyCode: 'ETHC' }] }];
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: repriced }) });
+    });
+    await stubEntitlements(page, []);
+    await stubClubStatusCoins(page, 400);
+    await page.route('**/orders*', route => route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ errorCode: 32121, errorMessage: 'Order price mismatch' }),
+    }));
+    await openStore(page);
+
+    const walnutCard = page.locator('.cosmetic-card', { hasText: 'Walnut Board' });
+    await expect(walnutCard.locator('[data-cosmetic-action="buy"]')).toContainText('300');
+    await walnutCard.locator('[data-cosmetic-action="buy"]').click();
+
+    await expect(page.locator('#coin-store-message')).toContainText('Price updated — please try again.');
+    // The grid re-rendered from the fresh catalog: new price on the button.
+    await expect(page.locator('.cosmetic-card', { hasText: 'Walnut Board' }).locator('[data-cosmetic-action="buy"]')).toContainText('350');
+    expect(catalogCalls).toBeGreaterThan(1);
+  });
+});
