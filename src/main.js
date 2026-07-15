@@ -17,6 +17,7 @@ import {
 } from './content-moderation.mjs'
 import { getReportTicketId, getSafetyError } from './safety-payloads.mjs'
 import { validateDeletionConfirmation } from './account-deletion-contract.mjs'
+import './app-shell.js'
 
 function createFeatureLoader(label, importer) {
   let loadedModule = null
@@ -68,6 +69,77 @@ const chatFeature = createFeatureLoader('Chat', async () => {
   ])
   return { ...chatSdk, ...chatRuntime }
 })
+
+const gameplayFeature = createFeatureLoader('Gameplay', () => import('../app.js'))
+const chessEngineFeature = createFeatureLoader('Chess Engine', () => import('../chess-engine.js'))
+const analysisEngineFeature = createFeatureLoader('Chess Analysis', async () => {
+  const [chess, analysis, workerClient] = await Promise.all([
+    chessEngineFeature.load(),
+    import('../ai-engine.js'),
+    import('./chess-worker-client.js'),
+  ])
+  return { ...chess, ...analysis, ...workerClient }
+})
+let SpectatorChessGame = null
+let spectatorAi = null
+
+async function prepareSpectatorAnalysis() {
+  const { ChessGame, ChessAI, createChessWorkerClient } = await loadMeasuredFeature('spectator-analysis-runtime', analysisEngineFeature)
+  SpectatorChessGame = ChessGame
+  spectatorAi ||= new ChessAI()
+  window.chessBackgroundWorker ||= createChessWorkerClient()
+}
+
+function loadMeasuredFeature(name, feature) {
+  const start = `${name}:start`
+  const end = `${name}:end`
+  performance.mark?.(start)
+  return feature.load().then(module => {
+    performance.mark?.(end)
+    try { performance.measure?.(name, start, end) } catch {}
+    return module
+  })
+}
+
+const prepareGameplayRuntime = () => loadMeasuredFeature('gameplay-runtime', gameplayFeature)
+window.agsPrepareGameplayRuntime = prepareGameplayRuntime
+
+const GAMEPLAY_GLOBALS = [
+  'acceptFriendMatchInvite', 'acceptRematch', 'acceptVideoCall', 'addContact',
+  'backFromContacts', 'blockCurrentOpponent', 'cancelWaiting', 'closeModal',
+  'closeSafetyReport', 'coachPlayOn', 'coachTakeBack', 'confirmGoHome',
+  'confirmNewGame', 'copyInviteLink', 'declineFriendMatchInvite', 'declineRematch',
+  'declineVideoCall', 'endVideoChat', 'flipBoard', 'handleChatInputKeydown',
+  'hideAddContact', 'openJournalFromGameOver', 'playAgainFromGameOver',
+  'reportCurrentOpponent', 'requestRematch', 'resetLeaderboard', 'resignGame',
+  'selectColor', 'sendChatMessage', 'sendHighFive', 'shareInviteLink',
+  'showAddContact', 'showColorSelect', 'showContactsForInvite', 'showHint',
+  'showGameOver', 'showMatchTab', 'showWaitingScreen', 'toggleCoachMode',
+  'startFriendMatchInvite', 'startGusMatchmaking', 'startNewGame',
+  'startRandomMatchmaking', 'startVideoChat', 'startVsComputer',
+  'submitSafetyReport', 'toggleAudio', 'toggleVideoFeed', 'selectPieceColor',
+  'setupPeerConnection', 'renderBoard', 'startGame', 'startRetryFromPosition',
+  'setCurrentMatchIdForTesting', 'setCurrentOpponent', 'setGameModeForTesting',
+  'setPeerConnForTesting', 'forceGameOverStateForTesting', 'openMatchSafety',
+  'handleAGSChatMessage', 'handleAGSPlayerBlocked',
+  'createOnlineRoom', 'executeMove', 'stopGameOverCountdown',
+  'agsAcceptFriendMatchInvite', 'agsCheckResumableMatch', 'agsDeclineFriendMatchInvite',
+  'agsDiscardActiveMatch', 'agsHandleFriendMatchInvite', 'agsJoinPeer',
+  'agsResumeActiveMatch', 'agsStartFriendMatch', 'agsStartMatchedGame',
+]
+
+for (const name of GAMEPLAY_GLOBALS) {
+  if (typeof window[name] === 'function') continue
+  const lazyGameplayCall = (...args) => prepareGameplayRuntime().then(() => {
+    const implementation = window[name]
+    if (implementation === lazyGameplayCall || typeof implementation !== 'function') {
+      throw new Error(`Gameplay action ${name} was not installed`)
+    }
+    return implementation(...args)
+  })
+  window[name] = lazyGameplayCall
+}
+
 
 const loginWithGoogle = async (...args) => (await authFeature.load()).loginWithGoogle(...args)
 const loginWithApple = async (...args) => (await authFeature.load()).loginWithApple(...args)
@@ -461,12 +533,37 @@ function familyTransportAvailable() {
 }
 
 if (import.meta.env.DEV) {
+  // These legacy test seams are synchronous in several Playwright specs.
+  // Await only in development so the test contract does not create a race;
+  // production still keeps the store out of the launch graph.
+  await coinStoreFeature.load()
+  // Coin Store imports Club for balance reads. Register that already-loaded
+  // module with Club's loader too, so synchronous consumers share its cache.
+  await clubFeature.load()
+  // Classic-script test seams historically execute several gameplay calls in
+  // one synchronous page.evaluate block. Preserve that development-only
+  // contract; production remains fully lazy.
+  await gameplayFeature.load()
   // Keep the existing offline test seam available before the Journal chunk is
   // requested; page.evaluate awaits the returned Promise automatically.
   window.agsRenderJournalForTesting = async (userId, matchHistory, options) => {
     const module = await journalFeature.load()
     module.resetJournalState()
     return module.renderJournalTab(userId, matchHistory, options)
+  }
+  for (const name of [
+    'agsInitCosmeticsForTesting',
+    'agsRenderCoinStoreForTesting',
+    'agsCoinStoreStateForTesting',
+  ]) {
+    if (typeof window[name] === 'function') continue
+    const shim = async (...args) => {
+      await coinStoreFeature.load()
+      const implementation = window[name]
+      if (implementation === shim) throw new Error(`${name} was not installed by the Coin Store module`)
+      return implementation(...args)
+    }
+    window[name] = shim
   }
   for (const name of [
     'agsClubStatusForTesting',
@@ -477,6 +574,7 @@ if (import.meta.env.DEV) {
     'agsAppleTransactionIdForTesting',
     'agsSimulateNativeTransactionForTesting',
   ]) {
+    if (typeof window[name] === 'function') continue
     const shim = async (...args) => {
       if (name === 'agsRenderClubForTesting' && args[0]) {
         try {
@@ -1576,7 +1674,9 @@ async function hydrateAuthenticatedUser(profile) {
   void initCosmetics(currentUserId)
   // Returning from a Stripe checkout redirect (?club=success|cancel).
   consumeClubReturnParams()
-  window.agsCheckResumableMatch?.()  // any unfinished online match from before a disconnect/reload?
+  // Do not load gameplay for every signed-in launch. The resume bridge is
+  // needed only when a persisted match actually exists.
+  if (localStorage.getItem('chess-active-match')) window.agsCheckResumableMatch?.()
 }
 
 function renderLegalDocuments(documents) {
@@ -3035,7 +3135,8 @@ async function initAuth() {
       await publishLiveMatch(currentUserId, { active: false, moves: [] })
     }
   }
-  window.agsWatchFriend = (friendUserId, friendName) => {
+  window.agsWatchFriend = async (friendUserId, friendName) => {
+    await prepareSpectatorAnalysis()
     spectatorReplayIndex = -1
     spectatorLastMatchData = null
     // Save the current screen so Stop Watching returns to it, not unconditionally to home.
@@ -5013,8 +5114,6 @@ window.agsIsFamilyMember = userId => !!userId
 // Replay state — index of the move currently shown (-1 = live / not in replay)
 let spectatorReplayIndex = -1
 let spectatorLastMatchData = null
-const spectatorAi = new ChessAI()
-
 function replayAt(index) {
   if (!spectatorLastMatchData) return
   const moves = spectatorLastMatchData.moves || []
@@ -5041,8 +5140,9 @@ function setSpectatorReplayControls(visible) {
 // startIndex jumps straight to a specific ply (journal key moments); default
 // is the final position. returnTab re-selects a profile tab on Back so a
 // drill-down from the Journal tab lands back on the Journal tab.
-function replayMatchData(match, prevScreen = 'profile', { startIndex = -1, returnTab = '' } = {}) {
+async function replayMatchData(match, prevScreen = 'profile', { startIndex = -1, returnTab = '' } = {}) {
   if (!match || !Array.isArray(match.moves) || !match.moves.length) return
+  await prepareSpectatorAnalysis()
 
   sendEvent('replay_viewed', { source: returnTab || prevScreen, at_ply: startIndex >= 0 })
   spectatorPrevScreen = prevScreen
@@ -5065,7 +5165,7 @@ function replayMatchData(match, prevScreen = 'profile', { startIndex = -1, retur
 }
 
 function replayMatchHistoryAt(index) {
-  replayMatchData(profileMatchHistoryRows[index], 'profile')
+  return replayMatchData(profileMatchHistoryRows[index], 'profile')
 }
 
 window.agsReplayMatchHistory = replayMatchHistoryAt
@@ -5109,7 +5209,7 @@ function formatPawnLoss(cp) {
 }
 
 function buildReplayPosition(moves, throughIndex) {
-  const g = new ChessGame()
+  const g = new SpectatorChessGame()
   for (let i = 0; i <= throughIndex; i++) {
     const m = moves[i]
     if (!m || !g.makeMove(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen')) break
@@ -5125,6 +5225,7 @@ function buildReplayPosition(moves, throughIndex) {
 // prefix replays. Returns the human-facing grade fields plus the raw numbers
 // (loss/scores/SANs) that key-moment selection needs.
 async function gradeMoveInPosition(before, played, names = {}) {
+  await prepareSpectatorAnalysis()
   try {
     if (window.chessBackgroundWorker?.gradePosition) {
       return await window.chessBackgroundWorker.gradePosition(before, played, names, {
@@ -5231,6 +5332,7 @@ async function analyzeReplayMove(matchData, moveIndex) {
 const coachingGradesCache = new Map()
 
 async function gradeAllMoves(matchData) {
+  await prepareSpectatorAnalysis()
   const moves = matchData.moves || []
   const last = moves[moves.length - 1]
   const cacheKey = `${matchData.id || ''}:${moves.length}:${last ? `${last.fr}${last.fc}${last.toR}${last.toC}${last.promType || ''}` : ''}`
@@ -5250,7 +5352,7 @@ async function gradeAllMoves(matchData) {
     console.warn('[analysis] batch worker unavailable; grading incrementally:', error?.message || error)
   }
 
-  const running = new ChessGame()
+  const running = new SpectatorChessGame()
   const grades = []
   for (let index = 0; index < moves.length; index++) {
     const move = moves[index]
@@ -5420,7 +5522,7 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
   const highlightIdx = replayIndex >= 0 ? replayIndex : allMoves.length - 1
 
   // Replay moves, capturing algebraic notation before each move
-  const g = new ChessGame()
+  const g = new SpectatorChessGame()
   const notations = []
   for (const m of allMoves) {
     notations.push(g.getMoveNotation(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen'))
@@ -5428,7 +5530,7 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
   }
 
   // Board — replay only up to the chosen position
-  const gView = new ChessGame()
+  const gView = new SpectatorChessGame()
   for (const m of movesToShow) {
     gView.makeMove(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen')
   }

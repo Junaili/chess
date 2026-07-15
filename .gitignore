@@ -24,6 +24,7 @@ node_modules/
 
 # Build output — deployed to gh-pages branch by CI
 dist/
+performance-budget.json
 
 # Documentation folder
 docs/

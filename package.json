@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "npm run legal:generate && vite",
     "build": "npm run legal:generate && vite build",
+    "perf:budget": "node scripts/check-performance-budget.mjs",
     "preview": "vite preview",
     "cap:build": "npm run legal:generate && VITE_BUILD_TARGET=capacitor VITE_EXTEND_EMAIL_URL=https://seal-chessags.prod.gamingservices.accelbyte.io/ext-seal-chessags-ethan-chess-service vite build",
     "ios:build": "npm run legal:generate && VITE_BUILD_TARGET=capacitor VITE_EXTEND_EMAIL_URL=https://seal-chessags.prod.gamingservices.accelbyte.io/ext-seal-chessags-ethan-chess-service vite build && npx cap sync ios",
@@ -16,7 +17,7 @@
     "test:e2e": "playwright test --project=chromium --project=webkit-ipad",
     "test:live": "playwright test --project=live",
     "test:ios": "bash scripts/test-ios.sh",
-    "test:precommit": "npm run test:unit && npm run build && npm run test:e2e && npm run test:live",
+    "test:precommit": "npm run test:unit && npm run build && npm run perf:budget && npm run test:e2e && npm run test:live",
     "test:all": "npm run test:precommit && npm run test:ios"
   },
   "repository": {

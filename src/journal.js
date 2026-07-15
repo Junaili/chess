@@ -24,6 +24,7 @@ import {
   detectProcessBadges, buildCoachReportRequest,
 } from './journal-data.mjs'
 import { journalVisibleEntries, narrativeHint } from './club-contract.mjs'
+import { ChessGame } from '../chess-engine.js'
 
 const JOURNAL_KEY = 'chess-journal'
 const GRADED_PLIES_PER_YIELD = 4
@@ -91,7 +92,7 @@ async function saveJournalRecord(userId, record) {
 // ─── Incremental grading ──────────────────────────────────────────────────────
 
 function engineReady() {
-  return typeof ChessGame !== 'undefined' && typeof window.agsGradeMoveInPosition === 'function'
+  return typeof window.agsGradeMoveInPosition === 'function'
 }
 
 // Grades ONLY the player's plies of one game in a single forward pass over a
@@ -275,7 +276,12 @@ function embeddedGame(entry, matchId) {
 function startPuzzle(entry, puzzle) {
   const game = embeddedGame(entry, puzzle.matchId)
   if (!game || typeof window.startRetryFromPosition !== 'function') return
-  activePuzzle = { entryId: entry.id, puzzleId: puzzle.id }
+  activePuzzle = {
+    entryId: entry.id,
+    puzzleId: puzzle.id,
+    originalMove: game.moves[puzzle.ply] || null,
+    bestNotation: puzzle.bestNotation || '',
+  }
   // app.js calls this after the player's first move in the drill, with a
   // clone of the position before the move — grade it and record the outcome.
   window.agsJournalJudgeMove = (before, move) => judgePuzzleMove(before, move)
@@ -291,7 +297,16 @@ function startPuzzle(entry, puzzle) {
 async function judgePuzzleMove(before, move) {
   const grade = await Promise.resolve(window.agsGradeMoveInPosition?.(before, move))
   if (!grade) return null
-  const solved = grade.matchedBest || (grade.loss || 0) < 35
+  // A retry must never approve the exact move that created this puzzle. A
+  // tightly budgeted search can occasionally pick that capture before it
+  // finishes the opponent's refutation; the stored mistake is authoritative.
+  const original = activePuzzle?.originalMove
+  const repeatedOriginal = !!original
+    && original.fr === move.fr && original.fc === move.fc
+    && original.toR === move.toR && original.toC === move.toC
+    && (original.promType || 'queen') === (move.promType || 'queen')
+  const solved = !repeatedOriginal && (grade.matchedBest || (grade.loss || 0) < 35)
+  const recommendedNotation = activePuzzle?.bestNotation || grade.bestNotation
   if (activePuzzle && state.record) {
     const entry = state.record.entries.find(e => e.id === activePuzzle.entryId)
     const puzzle = entry?.puzzles?.find(p => p.id === activePuzzle.puzzleId)
@@ -309,7 +324,7 @@ async function judgePuzzleMove(before, move) {
     solved,
     text: solved
       ? `⭐ ${grade.playedNotation} — that's the idea! Keep playing and finish the job.`
-      : `Not quite — ${grade.playedNotation} still gives something up. The engine likes ${grade.bestNotation}. Play on, or retry from the journal.`,
+      : `Not quite — ${grade.playedNotation} still gives something up. The engine likes ${recommendedNotation}. Play on, or retry from the journal.`,
   }
 }
 

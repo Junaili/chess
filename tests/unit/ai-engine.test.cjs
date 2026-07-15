@@ -6,8 +6,11 @@ const vm = require('node:vm');
 
 // ai-engine.js references ChessGame (for cloning), so both sources share one VM.
 const root = path.join(__dirname, '..', '..');
-const engineSource = fs.readFileSync(path.join(root, 'chess-engine.js'), 'utf8');
-const aiSource = fs.readFileSync(path.join(root, 'ai-engine.js'), 'utf8');
+const asClassicScript = source => source
+  .replace(/^import\s+[^\n]+$/gm, '')
+  .replace(/^export\s+\{[^\n]+$/gm, '');
+const engineSource = asClassicScript(fs.readFileSync(path.join(root, 'chess-engine.js'), 'utf8'));
+const aiSource = asClassicScript(fs.readFileSync(path.join(root, 'ai-engine.js'), 'utf8'));
 const context = {};
 vm.createContext(context);
 vm.runInContext(

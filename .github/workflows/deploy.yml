@@ -30,6 +30,16 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Enforce launch performance budget
+        run: npm run perf:budget
+
+      - name: Store bundle metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-budget-${{ github.sha }}
+          path: performance-budget.json
+          retention-days: 90
+
       - uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

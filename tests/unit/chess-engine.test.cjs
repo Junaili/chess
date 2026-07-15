@@ -4,7 +4,8 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const engineSource = fs.readFileSync(path.join(__dirname, '..', '..', 'chess-engine.js'), 'utf8');
+const engineSource = fs.readFileSync(path.join(__dirname, '..', '..', 'chess-engine.js'), 'utf8')
+  .replace(/^export\s+\{[^\n]+$/gm, '');
 const context = {};
 vm.createContext(context);
 vm.runInContext(`${engineSource}\nthis.ChessGame = ChessGame;`, context);

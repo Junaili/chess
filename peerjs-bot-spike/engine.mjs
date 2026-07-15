@@ -1,7 +1,6 @@
-// Loads the web game's classic browser scripts (chess-engine.js, ai-engine.js)
-// into Node so the bot uses the EXACT same rules + AI as the client — guaranteeing
-// move-legality agreement over the wire. The scripts declare global classes
-// (ChessGame, ChessAI); we run them in this context and capture the classes.
+// Loads the web game's browser modules into Node's VM so the bot uses the exact
+// same rules and AI as the client. Imports/exports are stripped only for this
+// legacy CommonJS-compatible VM boundary.
 import { readFileSync, existsSync } from 'fs'
 import vm from 'vm'
 import { fileURLToPath } from 'url'
@@ -18,6 +17,8 @@ function resolveEngineFile(file) {
 
 function loadGlobalClass(file, className) {
   const src = readFileSync(resolveEngineFile(file), 'utf8')
+    .replace(/^import\s+[^\n]+$/gm, '')
+    .replace(/^export\s+\{[^\n]+$/gm, '')
   vm.runInThisContext(`${src}\n;globalThis.${className} = ${className};`, { filename: file })
   return globalThis[className]
 }

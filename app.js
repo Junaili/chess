@@ -1,5 +1,8 @@
 'use strict';
 
+import { ChessGame } from './chess-engine.js';
+import { createChessWorkerClient, prefetchAnalysisWorker, serializeGameForWorker } from './src/chess-worker-client.js';
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PIECE_LABELS = {
@@ -111,115 +114,47 @@ const MAX_RECONNECTS = 3;
 // ─── App State ────────────────────────────────────────────────────────────────
 
 let game = null;
-let ai = new ChessAI();
+let ai = null;
+let aiRuntimePromise = null;
 
-function serializeGameForWorker(source) {
-  return {
-    board: source.cloneBoard(),
-    currentTurn: source.currentTurn,
-    enPassantTarget: source.enPassantTarget ? { ...source.enPassantTarget } : null,
-    castlingRights: JSON.parse(JSON.stringify(source.castlingRights)),
-    // Search correctness comes from the position/repetition state below; the
-    // verbose undo records in moveHistory are UI history and need not cross the
-    // worker boundary on every hint or turn.
-    moveHistory: [],
-    capturedByWhite: source.capturedByWhite.map(piece => ({ ...piece })),
-    capturedByBlack: source.capturedByBlack.map(piece => ({ ...piece })),
-    status: source.status,
-    winner: source.winner,
-    halfmoveClock: source.halfmoveClock,
-    positionCounts: [...source.positionCounts.entries()],
-  };
+function prepareAIRuntime() {
+  if (ai) return Promise.resolve(ai);
+  if (!aiRuntimePromise) {
+    performance.mark?.('analysis-runtime:start');
+    aiRuntimePromise = import('./ai-engine.js').then(({ ChessAI }) => {
+      ai = new ChessAI();
+      performance.mark?.('analysis-runtime:end');
+      try { performance.measure?.('analysis-runtime', 'analysis-runtime:start', 'analysis-runtime:end'); } catch {}
+      return ai;
+    }).catch(error => {
+      aiRuntimePromise = null;
+      throw error;
+    });
+  }
+  return aiRuntimePromise;
 }
 
-function createChessWorkerClient() {
-  let worker = null;
-  let nextId = 0;
-  const pending = new Map();
-
-  function ensureWorker() {
-    if (worker || typeof Worker === 'undefined') return worker;
-    worker = new Worker(new URL('analysis-worker.js', document.baseURI).href);
-    worker.addEventListener('message', event => {
-      const request = pending.get(event.data?.id);
-      if (!request) return;
-      pending.delete(event.data.id);
-      if (event.data.error) request.reject(new Error(event.data.error));
-      else request.resolve(event.data.result);
-    });
-    worker.addEventListener('error', error => {
-      for (const request of pending.values()) request.reject(error);
-      pending.clear();
-      worker?.terminate();
-      worker = null;
-    });
-    return worker;
-  }
-
-  function request(type, payload) {
-    const activeWorker = ensureWorker();
-    if (!activeWorker) return Promise.reject(new Error('Web Workers are unavailable'));
-    const id = ++nextId;
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      try {
-        activeWorker.postMessage({ id, type, payload });
-      } catch (error) {
-        pending.delete(id);
-        reject(error);
-      }
-    });
-  }
-
-  return {
-    bestMove(source, difficulty, options = {}) {
-      return request('best-move', { position: serializeGameForWorker(source), difficulty, options });
-    },
-    gradePosition(source, move, names = {}, options = {}) {
-      return request('grade-position', { position: serializeGameForWorker(source), move, names, options });
-    },
-    analyzeMatch(match, options = {}) {
-      return request('analyze-match', {
-        moves: match.moves || [],
-        names: { whiteName: match.whiteName, blackName: match.blackName },
-        playerColor: match.myColor,
-        scope: options.scope || 'all',
-        options,
-      });
-    },
-    terminate() {
-      worker?.terminate();
-      worker = null;
-      for (const request of pending.values()) request.reject(new Error('Chess worker terminated'));
-      pending.clear();
-    },
-  };
+function cloneGameForAnalysis(source) {
+  const clone = new ChessGame();
+  clone.board = source.cloneBoard();
+  clone.currentTurn = source.currentTurn;
+  clone.enPassantTarget = source.enPassantTarget ? { ...source.enPassantTarget } : null;
+  clone.castlingRights = JSON.parse(JSON.stringify(source.castlingRights));
+  clone.moveHistory = source.moveHistory.map(move => ({ ...move }));
+  clone.capturedByWhite = source.capturedByWhite.map(piece => ({ ...piece }));
+  clone.capturedByBlack = source.capturedByBlack.map(piece => ({ ...piece }));
+  clone.status = source.status;
+  clone.winner = source.winner;
+  clone.halfmoveClock = source.halfmoveClock;
+  clone.positionCounts = new Map(source.positionCounts);
+  return clone;
 }
 
 // Gameplay and long-running reports use separate queues. A five-game coaching
 // report can never delay the computer's next move or an explicitly requested hint.
-window.chessGameplayWorker = createChessWorkerClient();
-window.chessBackgroundWorker = createChessWorkerClient();
+window.chessGameplayWorker ||= createChessWorkerClient();
+window.chessBackgroundWorker ||= createChessWorkerClient();
 window.serializeGameForWorker = serializeGameForWorker;
-
-// Warm only the worker file in the HTTP cache during idle time. Keeping this
-// in the copied classic script prevents Vite from rewriting it into a second,
-// hashed asset whose relative importScripts() URLs would not match production.
-function prefetchAnalysisWorker() {
-  if (document.querySelector('link[data-analysis-worker-prefetch]')) return;
-  const link = document.createElement('link');
-  link.rel = 'prefetch';
-  link.as = 'script';
-  link.href = new URL('analysis-worker.js', document.baseURI).href;
-  link.dataset.analysisWorkerPrefetch = '1';
-  document.head.appendChild(link);
-}
-
-if (typeof requestIdleCallback === 'function') {
-  requestIdleCallback(prefetchAnalysisWorker, { timeout: 2000 });
-} else {
-  setTimeout(prefetchAnalysisWorker, 1000);
-}
 
 // ── Journal practice loop state ──────────────────────────────────────────────
 // retryContext: set while playing on from a mid-game position (journal "try
@@ -425,6 +360,7 @@ function showScreen(name) {
 function showColorSelect(mode) {
   savePlayerName();
   gameMode = mode;
+  if (mode === 'computer') prefetchAnalysisWorker();
   if (mode === 'online') {
     // Hide the lazy PeerJS download behind the color/piece-selection steps.
     if (!document.querySelector('link[data-peer-preconnect]')) {
@@ -902,7 +838,7 @@ function executeMove(fr, fc, toR, toC, promType) {
   const wantsCoach = gameMode === 'computer' && movingColor === playerColor
     && coachModeEnabled && !retryContext
     && typeof window.agsGradeMoveInPosition === 'function';
-  const positionBefore = (wantsJudge || wantsCoach) ? ai._cloneGame(game) : null;
+  const positionBefore = (wantsJudge || wantsCoach) ? cloneGameForAnalysis(game) : null;
   if (!game.makeMove(fr, fc, toR, toC, promType)) return;
   if (game.capturedByWhite.length + game.capturedByBlack.length > capturesBefore) {
     movingColor !== playerColor ? playDunDunDun() : playCapture();
@@ -1081,7 +1017,8 @@ async function requestBestMove(source, requestedDifficulty, options) {
     return await window.chessGameplayWorker.bestMove(source, requestedDifficulty, options);
   } catch (error) {
     console.warn('[analysis] worker search unavailable; using bounded fallback:', error?.message || error);
-    return ai.getBestMove(source, requestedDifficulty, options);
+    const fallbackAI = await prepareAIRuntime();
+    return fallbackAI.getBestMove(source, requestedDifficulty, options);
   }
 }
 
@@ -4857,11 +4794,83 @@ window.addEventListener('beforeunload', () => {
   localStorage.setItem('chess_player_name', playerName);
 });
 
-window.addEventListener('DOMContentLoaded', () => {
+function initializeGameplayDOM() {
+  window.cancelShellHomeIdlePrompt?.();
   hydrateStaticPieceIcons();
   renderLeaderboard();
   bindVideoCallControls();
   // ?peer= (a live-match invite link) is no longer auto-joined here — it goes
   // through src/main.js's initAuth() first, which gates it behind the
   // sign-in screen (#screen-invite) before calling window.agsJoinPeer.
+}
+
+Object.assign(window, {
+  acceptFriendMatchInvite,
+  acceptRematch,
+  acceptVideoCall,
+  addContact,
+  backFromContacts,
+  blockCurrentOpponent,
+  cancelWaiting,
+  closeModal,
+  closeSafetyReport,
+  coachPlayOn,
+  coachTakeBack,
+  confirmGoHome,
+  confirmNewGame,
+  copyInviteLink,
+  createOnlineRoom,
+  declineFriendMatchInvite,
+  declineRematch,
+  declineVideoCall,
+  endVideoChat,
+  executeMove,
+  flipBoard,
+  handleChatInputKeydown,
+  hideAddContact,
+  openJournalFromGameOver,
+  playAgainFromGameOver,
+  reportCurrentOpponent,
+  requestRematch,
+  resetLeaderboard,
+  resignGame,
+  selectColor,
+  selectPieceColor,
+  sendChatMessage,
+  sendHighFive,
+  shareInviteLink,
+  showAddContact,
+  showColorSelect,
+  showContactsForInvite,
+  showGameOver,
+  showHint,
+  showMatchTab,
+  showWaitingScreen,
+  startGame,
+  startFriendMatchInvite,
+  startGusMatchmaking,
+  startNewGame,
+  startRandomMatchmaking,
+  startRetryFromPosition,
+  startVideoChat,
+  startVsComputer,
+  stopGameOverCountdown,
+  submitSafetyReport,
+  setupPeerConnection,
+  toggleAudio,
+  toggleCoachMode,
+  toggleVideoFeed,
+  renderBoard,
+  setCurrentMatchIdForTesting,
+  setCurrentOpponent,
+  setGameModeForTesting,
+  setPeerConnForTesting,
+  forceGameOverStateForTesting,
+  prepareAIRuntime,
 });
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', initializeGameplayDOM, { once: true });
+} else {
+  initializeGameplayDOM();
+}
