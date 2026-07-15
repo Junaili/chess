@@ -9,22 +9,13 @@ import { installSessionKeepAlive, refreshIfStale, scheduleProactiveRefresh, subs
 import { fetchPendingLegalDocuments, fetchAcceptedLegalDocuments, fetchLegalAttachment, acceptLegalDocuments } from './legal.js'
 import { parseLegalMarkdown } from './legal-markdown.mjs'
 import { initStats, fetchStats, fetchLeaderboardPlayerStats, incrementStat, fetchMatchHistory, recordMatchHistory, fetchStreak, updateStreak, migrateStreakFromCloudSave, recordEloResult } from './stats.js'
-import { primeUnlockedCache, diffNewlyUnlocked, unlockEventAchievement, clearUnlockedCache, fetchMergedAchievements } from './achievements.js'
 import { sendEvent, flushPendingEvents, captureUtm, clearPendingEvents } from './telemetry.js'
 import { readPrivacyPreferences, writePrivacyPreferences } from './privacy-preferences.mjs'
-import { publishLiveMatch, clearLiveMatch, startWatching, stopWatching, fetchLiveMatch, fetchLiveMatchStrict, resolveMatchForfeit } from './spectator.js'
 import { fetchTopRankings, fetchUserRank, resolveDisplayNames, enrichDisplayNames, cacheDisplayName, fetchInviterName, LEADERBOARD_VIEWS } from './leaderboard.js'
 import { computeMatchStats, summarizeCoachingGrades, combineCoachingSummaries } from './match-stats.mjs'
 import { deriveMatchRoles, computeDeadline, isPastDeadline, isResumable, pickAuthoritativeMoves } from './match-resume.mjs'
-import { startMatchmaking, cancelMatchmaking } from './matchmaking.js'
 import { fetchFriendState, requestFriend, acceptFriend, rejectFriend, cancelFriendRequest, getFriendshipStatus, addFriendByEmail, storePendingInvite, processIncomingInviteAcceptances } from './friends.js'
-import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite, rejectFamilyInvite, removeFamilyMember, leaveFamily, familyTransportAvailable, recordParentalConsent } from './family.js'
-import { initGusPanel, resetGusPanel, openGusProfile, refreshGusProfile, showGusTab, startGusMatchmaking as startGusMatchmakingFlow } from './gus.js'
-import { renderJournalTab, resetJournalState } from './journal.js'
-import { initClubPanel, resetClubStatus, openClubScreen, refreshClubManageAction, consumeClubReturnParams, hasClub, getClubStatus, getCoins, initNativeIAP, triggerRestorePurchases, giveCoins } from './club.js'
 import { formatCoins, accountDeletionNotices } from './club-contract.mjs'
-import { initCosmetics, resetCosmetics, loadCoinStore, getEquippedFlairBadge, triggerVictoryEffect } from './coin-store.js'
-import { sendHighFive, hasSentHighFive } from './kudos.js'
 import { deriveHighFiveButton, formatKudosCount } from './kudos-contract.mjs'
 import { setPresenceStatus, disconnectPresence, pausePresence, resumePresence, refreshPresenceConnection, refreshPresenceToken, signOutPresence, subscribePresenceUpdates, subscribeGameInvites, subscribeLobbyOpen, sendGameInvite, subscribeInviteJoins, sendInviteJoinNotification, subscribeFriendsChanges } from './presence.js'
 import { ensureNotificationPermission, notify } from './notifications.js'
@@ -50,6 +41,251 @@ import {
   submitAccountDeletion,
   validateDeletionConfirmation,
 } from './account-deletion.js'
+
+function createFeatureLoader(label, importer) {
+  let loadedModule = null
+  let pendingImport = null
+  return {
+    peek: () => loadedModule,
+    load() {
+      if (loadedModule) return Promise.resolve(loadedModule)
+      if (!pendingImport) {
+        pendingImport = importer().then(module => {
+          loadedModule = module
+          return module
+        }).catch(error => {
+          pendingImport = null
+          console.warn(`[lazy] ${label} failed to load:`, error?.message || error)
+          throw error
+        })
+      }
+      return pendingImport
+    },
+  }
+}
+
+const achievementsFeature = createFeatureLoader('Achievements', () => import('./achievements.js'))
+const spectatorFeature = createFeatureLoader('Spectator', () => import('./spectator.js'))
+const matchmakingFeature = createFeatureLoader('Matchmaking', () => import('./matchmaking.js'))
+const gusFeature = createFeatureLoader('Gambit Gus', () => import('./gus.js'))
+const journalFeature = createFeatureLoader('Journal', () => import('./journal.js'))
+const clubFeature = createFeatureLoader('Chess Club', () => import('./club.js'))
+const coinStoreFeature = createFeatureLoader('Coin Store', () => import('./coin-store.js'))
+const kudosFeature = createFeatureLoader('High Five', () => import('./kudos.js'))
+const familyFeature = createFeatureLoader('Family', () => import('./family.js'))
+
+const primeUnlockedCache = async (...args) => (await achievementsFeature.load()).primeUnlockedCache(...args)
+const diffNewlyUnlocked = async (...args) => (await achievementsFeature.load()).diffNewlyUnlocked(...args)
+const unlockEventAchievement = async (...args) => (await achievementsFeature.load()).unlockEventAchievement(...args)
+const fetchMergedAchievements = async (...args) => (await achievementsFeature.load()).fetchMergedAchievements(...args)
+function clearUnlockedCache() {
+  try { localStorage.removeItem('ags-achievements-unlocked') } catch {}
+  achievementsFeature.peek()?.clearUnlockedCache()
+}
+
+const publishLiveMatch = async (...args) => (await spectatorFeature.load()).publishLiveMatch(...args)
+const clearLiveMatch = async (...args) => (await spectatorFeature.load()).clearLiveMatch(...args)
+const fetchLiveMatch = async (...args) => (await spectatorFeature.load()).fetchLiveMatch(...args)
+const fetchLiveMatchStrict = async (...args) => (await spectatorFeature.load()).fetchLiveMatchStrict(...args)
+const resolveMatchForfeit = async (...args) => (await spectatorFeature.load()).resolveMatchForfeit(...args)
+let spectatorWatchGeneration = 0
+function startWatching(...args) {
+  const generation = ++spectatorWatchGeneration
+  void spectatorFeature.load().then(module => {
+    if (generation === spectatorWatchGeneration) module.startWatching(...args)
+  }).catch(error => {
+    const status = document.getElementById('spectator-status')
+    if (generation === spectatorWatchGeneration && status) status.textContent = 'Could not load spectator mode.'
+    console.warn('[spectator] startup failed:', error?.message || error)
+  })
+}
+function stopWatching() {
+  spectatorWatchGeneration++
+  spectatorFeature.peek()?.stopWatching()
+}
+
+async function startMatchmaking(...args) {
+  try {
+    return await (await matchmakingFeature.load()).startMatchmaking(...args)
+  } catch (error) {
+    args[2]?.('Matchmaking could not start. Check your connection and try again.')
+    console.warn('[matchmaking] startup failed:', error?.message || error)
+    return null
+  }
+}
+async function cancelMatchmaking(...args) {
+  try {
+    return await (await matchmakingFeature.load()).cancelMatchmaking(...args)
+  } catch (error) {
+    console.warn('[matchmaking] cancellation failed:', error?.message || error)
+    return null
+  }
+}
+
+async function initGusPanel(...args) {
+  try { return await (await gusFeature.load()).initGusPanel(...args) }
+  catch { return null }
+}
+function resetGusPanel() { gusFeature.peek()?.resetGusPanel() }
+async function openGusProfile(...args) {
+  if (typeof window.showScreen === 'function') window.showScreen('gus')
+  const status = document.getElementById('gus-profile-status')
+  if (status) {
+    status.textContent = 'Loading Gus’s latest…'
+    status.style.display = ''
+  }
+  try { return await (await gusFeature.load()).openGusProfile(...args) }
+  catch { if (status) status.textContent = 'Could not load Gus right now. Try again.' }
+}
+const refreshGusProfile = async (...args) => (await gusFeature.load()).refreshGusProfile(...args)
+const showGusTab = async (...args) => (await gusFeature.load()).showGusTab(...args)
+async function startGusMatchmakingFlow(...args) {
+  try {
+    return await (await gusFeature.load()).startGusMatchmaking(...args)
+  } catch (error) {
+    args[2]?.('Gambit Gus could not join right now. Try again in a moment.')
+    console.warn('[gus] matchmaking startup failed:', error?.message || error)
+    return null
+  }
+}
+
+let preparedJournalRender = null
+let journalRenderGeneration = 0
+function prepareJournalTab(userId, matchHistory, options) {
+  preparedJournalRender = { userId, matchHistory, options, generation: ++journalRenderGeneration }
+}
+async function renderPreparedJournalTab() {
+  const request = preparedJournalRender
+  if (!request) return
+  const list = document.getElementById('journal-entries')
+  if (list) list.innerHTML = '<div class="profile-history-loading"><span></span><span></span><span></span></div>'
+  try {
+    const module = await journalFeature.load()
+    if (request !== preparedJournalRender || request.generation !== journalRenderGeneration) return
+    await module.renderJournalTab(request.userId, request.matchHistory, request.options)
+  } catch (error) {
+    if (request === preparedJournalRender && list) {
+      list.innerHTML = '<div class="profile-history-empty"><strong>Journal unavailable</strong><span>Close your profile and try again.</span></div>'
+    }
+  }
+}
+function resetJournalState() {
+  preparedJournalRender = null
+  journalRenderGeneration++
+  journalFeature.peek()?.resetJournalState()
+}
+
+function readStoredClubStatus() {
+  try {
+    const stored = JSON.parse(localStorage.getItem('chess-club-status-v1') || 'null')
+    return stored?.status || null
+  } catch {
+    return null
+  }
+}
+function getClubStatus() { return clubFeature.peek()?.getClubStatus() || readStoredClubStatus() }
+function hasClub() { return !!getClubStatus()?.active }
+function getCoins() { return getClubStatus()?.coins ?? 0 }
+async function initClubPanel(...args) {
+  try { return await (await clubFeature.load()).initClubPanel(...args) }
+  catch { return null }
+}
+async function openClubScreen(...args) {
+  if (typeof window.showScreen === 'function') window.showScreen('club')
+  const status = document.getElementById('club-status-line')
+  if (status) status.textContent = 'Loading…'
+  try { return await (await clubFeature.load()).openClubScreen(...args) }
+  catch { if (status) status.textContent = 'Could not load Club. Try again in a moment.' }
+}
+const refreshClubManageAction = async (...args) => (await clubFeature.load()).refreshClubManageAction(...args)
+const triggerRestorePurchases = async (...args) => (await clubFeature.load()).triggerRestorePurchases(...args)
+const giveCoins = async (...args) => (await clubFeature.load()).giveCoins(...args)
+const initNativeIAP = async (...args) => (await clubFeature.load()).initNativeIAP(...args)
+function consumeClubReturnParams() {
+  if (!new URLSearchParams(window.location.search).has('club')) return
+  void clubFeature.load().then(module => module.consumeClubReturnParams()).catch(() => {})
+}
+function resetClubStatus() {
+  if (clubFeature.peek()) clubFeature.peek().resetClubStatus()
+  else {
+    try { localStorage.removeItem('chess-club-status-v1') } catch {}
+    const panel = document.getElementById('ags-club-panel')
+    if (panel) panel.style.display = 'none'
+  }
+}
+
+async function initCosmetics(...args) {
+  try { return await (await coinStoreFeature.load()).initCosmetics(...args) }
+  catch { return null }
+}
+async function loadCoinStore(...args) {
+  const grid = document.getElementById('coin-store-grid')
+  if (grid) grid.innerHTML = '<div class="profile-history-loading"><span></span><span></span><span></span></div>'
+  try { return await (await coinStoreFeature.load()).loadCoinStore(...args) }
+  catch {
+    if (grid) grid.innerHTML = '<div class="profile-history-empty"><strong>Store unavailable</strong><span>Close and try again.</span></div>'
+    return null
+  }
+}
+function getEquippedFlairBadge() { return coinStoreFeature.peek()?.getEquippedFlairBadge() || null }
+function triggerVictoryEffect() { coinStoreFeature.peek()?.triggerVictoryEffect() }
+function resetCosmetics() {
+  if (coinStoreFeature.peek()) coinStoreFeature.peek().resetCosmetics()
+  else {
+    for (const className of [...document.body.classList]) {
+      if (className.startsWith('board-theme-') || className.startsWith('piece-set-')) {
+        document.body.classList.remove(className)
+      }
+    }
+  }
+}
+
+const sendHighFive = async (...args) => (await kudosFeature.load()).sendHighFive(...args)
+function hasSentHighFive(matchId) { return kudosFeature.peek()?.hasSentHighFive(matchId) || false }
+
+const fetchFamilyState = async (...args) => (await familyFeature.load()).fetchFamilyState(...args)
+const createFamilyGroup = async (...args) => (await familyFeature.load()).createFamilyGroup(...args)
+const inviteToFamily = async (...args) => (await familyFeature.load()).inviteToFamily(...args)
+const acceptFamilyInvite = async (...args) => (await familyFeature.load()).acceptFamilyInvite(...args)
+const rejectFamilyInvite = async (...args) => (await familyFeature.load()).rejectFamilyInvite(...args)
+const removeFamilyMember = async (...args) => (await familyFeature.load()).removeFamilyMember(...args)
+const leaveFamily = async (...args) => (await familyFeature.load()).leaveFamily(...args)
+const recordParentalConsent = async (...args) => (await familyFeature.load()).recordParentalConsent(...args)
+function familyTransportAvailable() {
+  return !!import.meta.env.DEV || !!import.meta.env.VITE_EXTEND_EMAIL_URL
+}
+
+if (import.meta.env.DEV) {
+  // Keep the existing offline test seam available before the Journal chunk is
+  // requested; page.evaluate awaits the returned Promise automatically.
+  window.agsRenderJournalForTesting = async (userId, matchHistory, options) => {
+    const module = await journalFeature.load()
+    module.resetJournalState()
+    return module.renderJournalTab(userId, matchHistory, options)
+  }
+  for (const name of [
+    'agsClubStatusForTesting',
+    'agsClubNativeIAPReadyForTesting',
+    'agsRenderClubForTesting',
+    'agsSetClubNativeIAPReadyForTesting',
+    'agsSetClubNativePurchaseStoreForTesting',
+    'agsAppleTransactionIdForTesting',
+    'agsSimulateNativeTransactionForTesting',
+  ]) {
+    const shim = async (...args) => {
+      if (name === 'agsRenderClubForTesting' && args[0]) {
+        try {
+          localStorage.setItem('chess-club-status-v1', JSON.stringify({ status: args[0], ts: Date.now() }))
+        } catch {}
+      }
+      await clubFeature.load()
+      const implementation = window[name]
+      if (implementation === shim) throw new Error(`${name} was not installed by the Club module`)
+      return implementation(...args)
+    }
+    window[name] = shim
+  }
+}
 const nativeVideoCallAudio = registerPlugin('VideoCallAudio')
 let realtimeRuntimePromise = null
 
@@ -2928,6 +3164,7 @@ function showProfileTab(name = 'overview') {
     panel.classList.toggle('active', panel.dataset.profilePanel === name)
     if (panel.dataset.profilePanel === name) panel.scrollTop = 0
   })
+  if (name === 'journal') void renderPreparedJournalTab()
 }
 
 function setProfileTabVisible(name, visible) {
@@ -2940,6 +3177,8 @@ window.agsShowProfileTab = showProfileTab
 async function openPublicProfile(userId, displayName = '') {
   const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
   activeProfileUser = { userId, displayName }
+  preparedJournalRender = null
+  journalRenderGeneration++
   const nameEl = document.getElementById('profile-display-name')
   const winsEl = document.getElementById('profile-wins')
   const lossesEl = document.getElementById('profile-losses')
@@ -3053,7 +3292,7 @@ async function openPublicProfile(userId, displayName = '') {
     // Journal is owner-only (a deliberately different gate from the
     // guardian-only Coaching tab) — reflections are the player's own space.
     setProfileTabVisible('journal', true)
-    renderJournalTab(userId, matchHistory, {
+    prepareJournalTab(userId, matchHistory, {
       isChildSession: isProtectedChildSession(),
       clubActive: hasClub(),
       journalOpen: getClubStatus()?.journalOpen || null,
@@ -4268,7 +4507,16 @@ async function refreshFamilyUI(showLoading = true) {
   }
   const userId = currentUserId
   if (showLoading) setFamilyMessage('Loading family...')
-  const state = await fetchFamilyState()
+  let state
+  try {
+    state = await fetchFamilyState()
+  } catch (error) {
+    if (currentUserId === userId) {
+      setFamilyMessage('Family features could not load. Try again.', 'error')
+      renderFamilyPanel(true)
+    }
+    return
+  }
   if (currentUserId !== userId) return
   if (!state.ok) {
     setFamilyMessage(state.error, 'error')
@@ -5066,4 +5314,4 @@ initAuth()
 // startup, independent of sign-in — a previously-unfinished transaction must
 // be re-delivered and re-synced with AGS even before hydration completes
 // (dev-plan §7.3 "Finish ordering"). No-ops immediately on web.
-void initNativeIAP()
+if (window.Capacitor?.isNativePlatform?.()) void initNativeIAP()
