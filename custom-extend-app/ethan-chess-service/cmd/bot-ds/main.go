@@ -35,11 +35,20 @@ import (
 
 func main() {
 	botDir := flag.String("bot-dir", "bots/gambit-gus", "bot directory (persona/style/brain)")
-	watchdogURL := flag.String("watchdog-url", envOr("AMS_WATCHDOG_URL", "ws://localhost:5555/watchdog"), "AMS watchdog websocket URL")
-	heartbeat := flag.Duration("heartbeat", 5*time.Second, "watchdog heartbeat interval")
+	watchdogDefault := envOr("AMS_WATCHDOG_URL", "ws://localhost:5555/watchdog")
+	watchdogURL := watchdogDefault
+	flag.StringVar(&watchdogURL, "watchdog-url", watchdogDefault, "AMS watchdog websocket URL")
+	flag.StringVar(&watchdogURL, "watchdog_url", watchdogDefault, "AMS-compatible watchdog websocket URL")
+	flag.StringVar(&watchdogURL, "WatchdogUrl", watchdogDefault, "Unreal-compatible watchdog websocket URL")
+	dsID := envOr("DS_ID", "")
+	flag.StringVar(&dsID, "dsid", dsID, "AMS dedicated-server ID")
+	var gamePort int
+	flag.IntVar(&gamePort, "port", 0, "AMS-injected game port")
+	heartbeat := flag.Duration("heartbeat", 15*time.Second, "watchdog heartbeat interval")
 	serveAddr := flag.String("serve-addr", "", "local game-serving address, e.g. :8090 (dev: lets a browser play the bot over WebRTC via POST /offer)")
 	envFile := flag.String("env", ".env", "AGS credentials env file")
 	flag.Parse()
+	_ = gamePort // accepted for the future game listener/session integration
 
 	_ = godotenv.Load(*envFile)
 
@@ -60,7 +69,7 @@ func main() {
 	}
 
 	// 1. Connect to the AMS watchdog and announce readiness.
-	wd := NewWatchdog(*watchdogURL)
+	wd := NewWatchdog(watchdogURL, dsID)
 	wd.OnDrain(func() {
 		if localServe {
 			log.Printf("bot-ds: drain received (ignored — local serve mode keeps hosting games)")
@@ -70,7 +79,7 @@ func main() {
 		stop()
 	})
 	if err := wd.Connect(ctx); err != nil {
-		log.Printf("bot-ds: no watchdog at %s (%v) — running in standalone/dev mode", *watchdogURL, err)
+		log.Printf("bot-ds: no watchdog at %s (%v) — running in standalone/dev mode", watchdogURL, err)
 	} else {
 		defer wd.Close()
 		if err := wd.SendReady(); err != nil {
@@ -98,8 +107,8 @@ func main() {
 // TODO(ams): publish `answer` to the AGS session data so the client can connect;
 // watch the connection / session outcome; on game end record the result to AGS
 // (stats, leaderboard, match history, and the bot's own history for the trainer).
-func serveSession(_ context.Context, bot *botbrain.Bot, offer webrtc.SessionDescription) (webrtc.SessionDescription, error) {
-	answer, pc, err := botgame.Answer(offer, bot.Style, bot.ID)
+func serveSession(ctx context.Context, bot *botbrain.Bot, offer webrtc.SessionDescription) (webrtc.SessionDescription, error) {
+	answer, pc, err := botgame.AnswerContext(ctx, offer, bot.Style, bot.ID)
 	if err != nil {
 		return webrtc.SessionDescription{}, err
 	}

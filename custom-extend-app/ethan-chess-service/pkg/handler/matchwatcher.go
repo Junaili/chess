@@ -46,6 +46,12 @@ type MatchWatcher struct {
 	triggerSecret   string   // optional shared secret sent as x-trigger-secret
 	loggedClaimRaw  bool
 
+	// triggerMu bounds AMS claim/trigger work to one lifecycle-bound goroutine.
+	// Concurrent poll and player requests are coalesced while that work is live.
+	triggerMu  sync.Mutex
+	runCtx     context.Context
+	triggering bool
+
 	// resolvedFleetID caches the fleet ID matched from amsClaimKeys (fleet IDs
 	// churn on every image rollout, so they're resolved at runtime, not configured).
 	resolvedFleetID string
@@ -104,6 +110,9 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 }
 
 func (w *MatchWatcher) Start(ctx context.Context) {
+	w.triggerMu.Lock()
+	w.runCtx = ctx
+	w.triggerMu.Unlock()
 	dst := w.triggerURL
 	if w.amsClaimEnabled {
 		if len(w.amsClaimKeys) > 0 {
@@ -121,7 +130,7 @@ func (w *MatchWatcher) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := w.poll(); err != nil {
+			if err := w.poll(ctx); err != nil {
 				log.Printf("match-watcher: poll error: %v", err)
 				w.dbgSet(map[string]any{"lastPollAt": time.Now().Format(time.RFC3339), "lastPollError": err.Error()})
 			}
@@ -172,32 +181,6 @@ func (t poolTicket) id() string {
 	}
 }
 
-func (t poolTicket) userIDs() []string {
-	var ids []string
-	if t.UserID != "" {
-		ids = append(ids, t.UserID)
-	}
-	for _, p := range t.Ticket.Players {
-		if p.PlayerID != "" {
-			ids = append(ids, p.PlayerID)
-		}
-	}
-	for _, p := range t.ProposedTickets {
-		if p.UserID != "" {
-			ids = append(ids, p.UserID)
-		}
-	}
-	for _, party := range t.Parties {
-		ids = append(ids, party.UserIDs...)
-		for _, m := range party.PartyMembers {
-			if m.UserID != "" {
-				ids = append(ids, m.UserID)
-			}
-		}
-	}
-	return ids
-}
-
 // createdAt prefers the top-level field, falling back to the nested ticket's.
 func (t poolTicket) createdAt() time.Time {
 	if !t.CreatedAt.IsZero() {
@@ -206,18 +189,18 @@ func (t poolTicket) createdAt() time.Time {
 	return t.Ticket.CreatedAt
 }
 
-func (w *MatchWatcher) poll() error {
+func (w *MatchWatcher) poll(ctx context.Context) error {
 	baseURL, clientID, clientSecret, namespace, err := agsConfig()
 	if err != nil {
 		return err
 	}
-	token, err := getClientCredentialsToken(baseURL, clientID, clientSecret)
+	token, err := getClientCredentialsTokenContext(ctx, baseURL, clientID, clientSecret)
 	if err != nil {
 		return fmt.Errorf("token: %w", err)
 	}
 
 	reqURL := fmt.Sprintf("%s/match2/v1/namespaces/%s/match-pools/%s/tickets", baseURL, namespace, w.pool)
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return err
 	}
@@ -249,7 +232,7 @@ func (w *MatchWatcher) poll() error {
 	}
 
 	now := time.Now()
-	active := map[string]bool{}
+	active := make(map[string]struct{}, len(tickets))
 	humanCount, botCount := 0, 0
 	var maxHumanWait float64
 	for _, t := range tickets {
@@ -257,7 +240,7 @@ func (w *MatchWatcher) poll() error {
 		if id == "" {
 			continue
 		}
-		active[id] = true
+		active[id] = struct{}{}
 		if w.isBotTicket(t) {
 			botCount++
 			continue
@@ -267,26 +250,31 @@ func (w *MatchWatcher) poll() error {
 			continue
 		}
 		humanCount++
-		if wait := now.Sub(created).Seconds(); wait > maxHumanWait {
-			maxHumanWait = wait
+		waited := now.Sub(created)
+		if waitSeconds := waited.Seconds(); waitSeconds > maxHumanWait {
+			maxHumanWait = waitSeconds
 		}
-		if now.Sub(created) >= time.Duration(w.waitSeconds)*time.Second {
+		if waited >= time.Duration(w.waitSeconds)*time.Second {
 			// Re-trigger a still-waiting human after a cooldown, in case the bot's
 			// first ticket lost the race to pair with them (they'd otherwise be
 			// stuck). A spurious re-trigger is harmless: the bot's ticket self-
 			// cancels at 10s when there's no one to match.
 			last, seen := w.triggered[id]
 			if !seen || now.Sub(last) >= time.Duration(w.retriggerSeconds)*time.Second {
+				suffix := ""
+				if seen {
+					suffix = " (retry)"
+				}
 				log.Printf("match-watcher: human ticket %s waited %.0fs → triggering bot%s",
-					id, now.Sub(created).Seconds(), map[bool]string{true: " (retry)"}[seen])
-				w.dbgSet(map[string]any{"lastTriggerAt": now.Format(time.RFC3339), "lastTriggerTicket": id, "lastTriggerWaitS": now.Sub(created).Seconds()})
+					id, waited.Seconds(), suffix)
+				w.dbgSet(map[string]any{"lastTriggerAt": now.Format(time.RFC3339), "lastTriggerTicket": id, "lastTriggerWaitS": waited.Seconds()})
 				w.trigger()
 				w.triggered[id] = now
 			}
 		}
 	}
 	for id := range w.triggered {
-		if !active[id] {
+		if _, ok := active[id]; !ok {
 			delete(w.triggered, id)
 		}
 	}
@@ -299,15 +287,113 @@ func (w *MatchWatcher) poll() error {
 }
 
 func (w *MatchWatcher) isBotTicket(t poolTicket) bool {
-	if w.botUserID == "" {
+	want := w.botUserID
+	if want == "" {
 		return false
 	}
-	for _, id := range t.userIDs() {
-		if id == w.botUserID {
+	if t.UserID == want {
+		return true
+	}
+	for _, player := range t.Ticket.Players {
+		if player.PlayerID == want {
 			return true
 		}
 	}
+	for _, proposed := range t.ProposedTickets {
+		if proposed.UserID == want {
+			return true
+		}
+	}
+	for _, party := range t.Parties {
+		for _, id := range party.UserIDs {
+			if id == want {
+				return true
+			}
+		}
+		for _, member := range party.PartyMembers {
+			if member.UserID == want {
+				return true
+			}
+		}
+	}
 	return false
+}
+
+func (w *MatchWatcher) beginTrigger() (context.Context, bool) {
+	w.triggerMu.Lock()
+	defer w.triggerMu.Unlock()
+	if w.triggering {
+		return nil, false
+	}
+	ctx := w.runCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		return nil, false
+	}
+	w.triggering = true
+	return ctx, true
+}
+
+func (w *MatchWatcher) finishTrigger() {
+	w.triggerMu.Lock()
+	w.triggering = false
+	w.triggerMu.Unlock()
+}
+
+func (w *MatchWatcher) triggerInFlight() bool {
+	w.triggerMu.Lock()
+	defer w.triggerMu.Unlock()
+	return w.triggering
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (w *MatchWatcher) noteCoalescedTrigger() {
+	w.dbgSet(map[string]any{
+		"lastTriggerCoalescedAt": time.Now().Format(time.RFC3339),
+	})
+}
+
+func (w *MatchWatcher) startTrigger() bool {
+	ctx, ok := w.beginTrigger()
+	if !ok {
+		w.noteCoalescedTrigger()
+		return false
+	}
+	go func() {
+		defer w.finishTrigger()
+		url := w.triggerURL
+		if w.amsClaimEnabled {
+			addr, err := w.claimServerContext(ctx)
+			if err != nil {
+				if ctx.Err() == nil {
+					log.Printf("match-watcher: AMS claim failed: %v", err)
+				}
+				w.dbgSet(map[string]any{"lastClaimAt": time.Now().Format(time.RFC3339), "lastClaimError": err.Error()})
+				return
+			}
+			url = "http://" + addr + "/trigger"
+			log.Printf("match-watcher: claimed bot DS at %s", addr)
+			w.dbgSet(map[string]any{"lastClaimAt": time.Now().Format(time.RFC3339), "lastClaimAddr": addr})
+		}
+		w.postTrigger(ctx, url)
+	}()
+	return true
+}
+
+func (w *MatchWatcher) trigger() {
+	w.startTrigger()
 }
 
 // TriggerNow claims + wakes a bot DS immediately, bypassing the 20s wait gate.
@@ -323,31 +409,13 @@ func (w *MatchWatcher) TriggerNow() bool {
 	return true
 }
 
-func (w *MatchWatcher) trigger() {
-	go func() {
-		url := w.triggerURL
-		if w.amsClaimEnabled {
-			addr, err := w.claimServer()
-			if err != nil {
-				log.Printf("match-watcher: AMS claim failed: %v", err)
-				w.dbgSet(map[string]any{"lastClaimAt": time.Now().Format(time.RFC3339), "lastClaimError": err.Error()})
-				return
-			}
-			url = "http://" + addr + "/trigger"
-			log.Printf("match-watcher: claimed bot DS at %s", addr)
-			w.dbgSet(map[string]any{"lastClaimAt": time.Now().Format(time.RFC3339), "lastClaimAddr": addr})
-		}
-		w.postTrigger(url)
-	}()
-}
-
 // postTrigger wakes the claimed DS. A claimed server that never receives its
 // trigger idles forever (nothing else tells it it was claimed), so retry the
 // POST a few times before giving up.
-func (w *MatchWatcher) postTrigger(url string) {
+func (w *MatchWatcher) postTrigger(ctx context.Context, url string) {
 	var lastErr error
 	for attempt := 1; attempt <= 4; attempt++ {
-		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte(`{}`)))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte(`{}`)))
 		if err != nil {
 			return
 		}
@@ -368,7 +436,12 @@ func (w *MatchWatcher) postTrigger(url string) {
 			resp.Body.Close()
 		}
 		log.Printf("match-watcher: trigger POST %s attempt %d failed: %v", url, attempt, lastErr)
-		time.Sleep(2 * time.Second)
+		if attempt < 4 {
+			if err := waitForRetry(ctx, 2*time.Second); err != nil {
+				lastErr = err
+				break
+			}
+		}
 	}
 	w.dbgSet(map[string]any{"lastTriggerPostAt": time.Now().Format(time.RFC3339), "lastTriggerPostError": lastErr.Error(), "lastTriggerPostURL": url})
 }
@@ -424,6 +497,10 @@ func (w *MatchWatcher) DebugHandler(secret string) http.HandlerFunc {
 // (up to ~8s); the endpoint is meant to be retried. So we poll the claim for up
 // to amsClaimRetryS seconds before giving up.
 func (w *MatchWatcher) claimServer() (string, error) {
+	return w.claimServerContext(context.Background())
+}
+
+func (w *MatchWatcher) claimServerContext(ctx context.Context) (string, error) {
 	baseURL, clientID, clientSecret, namespace, err := agsConfig()
 	if err != nil {
 		return "", err
@@ -432,13 +509,16 @@ func (w *MatchWatcher) claimServer() (string, error) {
 	if amsBase == "" {
 		amsBase = baseURL
 	}
-	token, err := getClientCredentialsToken(baseURL, clientID, clientSecret)
+	token, err := getClientCredentialsTokenContext(ctx, baseURL, clientID, clientSecret)
 	if err != nil {
 		return "", fmt.Errorf("token: %w", err)
 	}
 
 	deadline := time.Now().Add(time.Duration(w.amsClaimRetryS) * time.Second)
 	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		// Claim by keys whenever AMS_CLAIM_KEYS is configured — it's the only
 		// claim path capable of triggering an on-demand launch. Claim-by-
 		// fleet-ID (fleetIDForClaim + the fleetID!="" branch of claimOnce)
@@ -450,12 +530,12 @@ func (w *MatchWatcher) claimServer() (string, error) {
 		fleetID := ""
 		var err error
 		if len(w.amsClaimKeys) == 0 {
-			fleetID, err = w.fleetIDForClaim(amsBase, namespace, token)
+			fleetID, err = w.fleetIDForClaimContext(ctx, amsBase, namespace, token)
 			if err != nil {
 				return "", err
 			}
 		}
-		addr, notReady, err := w.claimOnce(amsBase, namespace, token, fleetID)
+		addr, notReady, err := w.claimOnceContext(ctx, amsBase, namespace, token, fleetID)
 		if err != nil {
 			return "", err
 		}
@@ -469,7 +549,9 @@ func (w *MatchWatcher) claimServer() (string, error) {
 			return "", fmt.Errorf("no bot DS available after %ds (404) — fleet did not become ready", w.amsClaimRetryS)
 		}
 		log.Printf("match-watcher: claim attempt %d got 404 (DS launching) — retrying", attempt)
-		time.Sleep(2 * time.Second)
+		if err := waitForRetry(ctx, 2*time.Second); err != nil {
+			return "", err
+		}
 	}
 }
 
@@ -493,6 +575,10 @@ func (w *MatchWatcher) getResolvedFleet() (string, time.Time) {
 // Returns "" to claim by keys directly (e.g. fleet listing forbidden).
 // Requires ADMIN:NAMESPACE:{ns}:ARMADA:FLEET [READ] on the service client.
 func (w *MatchWatcher) fleetIDForClaim(amsBase, namespace, token string) (string, error) {
+	return w.fleetIDForClaimContext(context.Background(), amsBase, namespace, token)
+}
+
+func (w *MatchWatcher) fleetIDForClaimContext(ctx context.Context, amsBase, namespace, token string) (string, error) {
 	if len(w.amsClaimKeys) == 0 {
 		return w.amsFleetID, nil // legacy fixed-ID mode
 	}
@@ -501,7 +587,7 @@ func (w *MatchWatcher) fleetIDForClaim(amsBase, namespace, token string) (string
 	}
 
 	get := func(url string, out any) (int, error) {
-		req, err := http.NewRequest(http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return 0, err
 		}
@@ -565,6 +651,10 @@ func (w *MatchWatcher) fleetIDForClaim(amsBase, namespace, token string) (string
 // fleetID is ""). notReady=true means HTTP 404 (no server available yet) and the
 // caller should retry.
 func (w *MatchWatcher) claimOnce(amsBase, namespace, token, fleetID string) (addr string, notReady bool, err error) {
+	return w.claimOnceContext(context.Background(), amsBase, namespace, token, fleetID)
+}
+
+func (w *MatchWatcher) claimOnceContext(ctx context.Context, amsBase, namespace, token, fleetID string) (addr string, notReady bool, err error) {
 	// A unique association id for the claim; the bot plays over PeerJS, so this
 	// need not map to an AGS session — it just identifies the claim.
 	sessionID := fmt.Sprintf("chessbot-%d", time.Now().UnixNano())
@@ -590,7 +680,7 @@ func (w *MatchWatcher) claimOnce(amsBase, namespace, token, fleetID string) (add
 	}
 	payload, _ := json.Marshal(reqBody)
 
-	req, err := http.NewRequest(http.MethodPut, reqURL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, bytes.NewReader(payload))
 	if err != nil {
 		return "", false, err
 	}

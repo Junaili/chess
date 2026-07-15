@@ -460,6 +460,23 @@ func TestCompactBotHistoryStaysBelowCloudSaveTarget(t *testing.T) {
 	}
 }
 
+func BenchmarkCompactBotHistory(b *testing.B) {
+	large := completedFoolsMate("seed")
+	large.OpponentName = strings.Repeat("x", 4000)
+	matches := make([]botbrain.MatchEntry, 500)
+	for i := range matches {
+		matches[i] = large
+		matches[i].ID = fmt.Sprintf("game-%03d", i)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if got := compactBotHistory(matches, 500); len(got) == 0 {
+			b.Fatal("compaction dropped every match")
+		}
+	}
+}
+
 func TestSelectReflectionPairsBoundsAndPrioritizesEvidence(t *testing.T) {
 	var pairs []trainer.GamePair
 	analyses := map[string]trainer.GameAnalysis{}

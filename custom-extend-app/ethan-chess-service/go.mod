@@ -2,6 +2,10 @@ module github.com/junaili/ethan-chess-service
 
 go 1.20
 
+// The pinned upstream is archived. This compatibility fork keeps the v1 API
+// while removing allocation-heavy FEN construction from repetition checks.
+replace github.com/notnil/chess => ./third_party/notnil-chess
+
 require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.19.0
 	github.com/joho/godotenv v1.5.1

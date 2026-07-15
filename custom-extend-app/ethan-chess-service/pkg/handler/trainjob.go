@@ -56,15 +56,19 @@ const journalCap = 60
 // ── generic admin-record helpers (mirror bottrainer.go's, any value type) ────
 
 func fetchAdminValue(key string, out any) (bool, error) {
+	return fetchAdminValueContext(context.Background(), key, out)
+}
+
+func fetchAdminValueContext(ctx context.Context, key string, out any) (bool, error) {
 	baseURL, clientID, clientSecret, namespace, err := agsConfig()
 	if err != nil {
 		return false, err
 	}
-	token, err := getClientCredentialsToken(baseURL, clientID, clientSecret)
+	token, err := getClientCredentialsTokenContext(ctx, baseURL, clientID, clientSecret)
 	if err != nil {
 		return false, fmt.Errorf("get token: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodGet, adminRecordURL(baseURL, namespace, key), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, adminRecordURL(baseURL, namespace, key), nil)
 	if err != nil {
 		return false, err
 	}
@@ -80,14 +84,10 @@ func fetchAdminValue(key string, out any) (bool, error) {
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("admin record %q returned %d", key, resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-	if err != nil {
-		return false, err
-	}
 	var rec struct {
 		Value json.RawMessage `json:"value"`
 	}
-	if err := json.Unmarshal(body, &rec); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&rec); err != nil {
 		return false, fmt.Errorf("parse admin record %q: %w", key, err)
 	}
 	if err := json.Unmarshal(rec.Value, out); err != nil {
@@ -480,46 +480,103 @@ func (j *TrainJob) TrainHandler(secret string) http.HandlerFunc {
 // hammer CloudSave. Same shared-secret auth as the other bot endpoints.
 func (j *TrainJob) BotBrainHandler(secret string) http.HandlerFunc {
 	type cached struct {
-		at   time.Time
-		body []byte
+		at         time.Time
+		body       []byte
+		refreshing chan struct{}
+		lastErr    error
 	}
 	var mu sync.Mutex
 	var c cached
+	load := func(ctx context.Context) ([]byte, error) {
+		var brain botbrain.Brain
+		found, err := fetchAdminValueContext(ctx, BotBrainKey(j.botID), &brain)
+		if err != nil {
+			return nil, err
+		}
+		out := map[string]any{"version": 0}
+		if found {
+			out["version"] = brain.Version
+			if t := brain.PlayTuning; t != nil {
+				out["difficulty"] = t.Difficulty
+				out["thinkMsMean"] = t.ThinkMsMean
+				out["thinkMsJitter"] = t.ThinkMsJitter
+				out["searchBudgetMs"] = t.SearchBudgetMs
+				out["maxShufflePlies"] = t.MaxShufflePlies
+				out["book"] = t.Book
+				out["bookRevision"] = t.Revision
+				out["bookScore"] = t.BookScore
+				out["style"] = t.Style
+			}
+		}
+		return json.Marshal(out)
+	}
+	write := func(w http.ResponseWriter, body []byte) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if secret == "" || (r.Header.Get("x-trigger-secret") != secret && r.URL.Query().Get("key") != secret) {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 		mu.Lock()
-		defer mu.Unlock()
-		if c.body == nil || time.Since(c.at) > 60*time.Second {
-			var brain botbrain.Brain
-			found, err := fetchAdminValue(BotBrainKey(j.botID), &brain)
-			if err != nil {
-				log.Printf("bot-brain: fetch: %v", err)
+		if c.body != nil && time.Since(c.at) <= 60*time.Second {
+			body := c.body
+			mu.Unlock()
+			write(w, body)
+			return
+		}
+		if c.refreshing != nil {
+			// A stale response is preferable to making every burst request wait
+			// behind the single CloudSave refresh.
+			if c.body != nil {
+				body := c.body
+				mu.Unlock()
+				write(w, body)
+				return
+			}
+			done := c.refreshing
+			mu.Unlock()
+			select {
+			case <-done:
+			case <-r.Context().Done():
+				w.WriteHeader(http.StatusRequestTimeout)
+				return
+			}
+			mu.Lock()
+			body, err := c.body, c.lastErr
+			mu.Unlock()
+			if body == nil {
+				if err != nil {
+					log.Printf("bot-brain: fetch: %v", err)
+				}
 				w.WriteHeader(http.StatusBadGateway)
 				return
 			}
-			out := map[string]any{"version": 0}
-			if found {
-				out["version"] = brain.Version
-				if t := brain.PlayTuning; t != nil {
-					out["difficulty"] = t.Difficulty
-					out["thinkMsMean"] = t.ThinkMsMean
-					out["thinkMsJitter"] = t.ThinkMsJitter
-					out["searchBudgetMs"] = t.SearchBudgetMs
-					out["maxShufflePlies"] = t.MaxShufflePlies
-					out["book"] = t.Book
-					out["bookRevision"] = t.Revision
-					out["bookScore"] = t.BookScore
-					out["style"] = t.Style
-				}
-			}
-			body, _ := json.Marshal(out)
-			c = cached{at: time.Now(), body: body}
+			write(w, body)
+			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(c.body)
+		c.refreshing = make(chan struct{})
+		done := c.refreshing
+		mu.Unlock()
+
+		body, err := load(r.Context())
+		mu.Lock()
+		if err == nil {
+			c.at = time.Now()
+			c.body = body
+		}
+		c.lastErr = err
+		close(done)
+		c.refreshing = nil
+		body = c.body
+		mu.Unlock()
+		if err != nil && body == nil {
+			log.Printf("bot-brain: fetch: %v", err)
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		write(w, body)
 	}
 }
 

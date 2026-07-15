@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,7 +11,66 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+type matchWatcherRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f matchWatcherRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestStartTriggerCoalescesAndCancelsConcurrentWork(t *testing.T) {
+	previousClient := outboundHTTPClient
+	requestStarted := make(chan struct{}, 1)
+	outboundHTTPClient = &http.Client{Transport: matchWatcherRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requestStarted <- struct{}{}
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})}
+	defer func() { outboundHTTPClient = previousClient }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &MatchWatcher{triggerURL: "http://bot.invalid/trigger", runCtx: ctx}
+	if !w.startTrigger() {
+		t.Fatal("first trigger was not started")
+	}
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("trigger request did not start")
+	}
+	for i := 0; i < 20; i++ {
+		if w.startTrigger() {
+			t.Fatalf("trigger %d started while another trigger was in flight", i+2)
+		}
+	}
+
+	cancel()
+	deadline := time.NewTimer(time.Second)
+	ticker := time.NewTicker(time.Millisecond)
+	defer deadline.Stop()
+	defer ticker.Stop()
+	for w.triggerInFlight() {
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatal("trigger goroutine did not exit after cancellation")
+		}
+	}
+}
+
+func TestWaitForRetryReturnsImmediatelyOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	started := time.Now()
+	if err := waitForRetry(ctx, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("canceled retry took %s", elapsed)
+	}
+}
 
 // stubAMS serves the oauth token endpoint plus whatever AMS routes the test
 // registers, and points both AB_BASE_URL (used for the token call) and the

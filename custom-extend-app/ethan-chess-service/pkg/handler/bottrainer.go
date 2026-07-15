@@ -43,8 +43,8 @@ type adminRecordEnvelope struct {
 }
 
 type concurrentAdminRecordRequest struct {
-	Value     json.RawMessage `json:"value"`
-	UpdatedAt string          `json:"updatedAt"`
+	Value     any    `json:"value"`
+	UpdatedAt string `json:"updatedAt"`
 }
 
 func agsConfig() (baseURL, clientID, clientSecret, namespace string, err error) {
@@ -167,12 +167,8 @@ func putAdminGameRecordConcurrent(key string, value any, updatedAt string) error
 	if err != nil {
 		return fmt.Errorf("get token: %w", err)
 	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
 	body, err := json.Marshal(concurrentAdminRecordRequest{
-		Value:     json.RawMessage(raw),
+		Value:     value,
 		UpdatedAt: updatedAt,
 	})
 	if err != nil {
@@ -220,18 +216,27 @@ func FetchAllBotGames(key string) ([]botbrain.MatchEntry, error) {
 }
 
 func uniqueBotMatches(matches []botbrain.MatchEntry) []botbrain.MatchEntry {
-	seen := make(map[string]bool, len(matches))
-	unique := make([]botbrain.MatchEntry, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
+	// All callers own their decoded/merged input slice, so compact in place and
+	// avoid a second MatchEntry backing array before byte-bound compaction.
+	unique := matches[:0]
 	for _, match := range matches {
 		if match.ID != "" {
-			if seen[match.ID] {
+			if _, exists := seen[match.ID]; exists {
 				continue
 			}
-			seen[match.ID] = true
+			seen[match.ID] = struct{}{}
 		}
 		unique = append(unique, match)
 	}
 	return unique
+}
+
+type jsonByteCounter int
+
+func (c *jsonByteCounter) Write(p []byte) (int, error) {
+	*c += jsonByteCounter(len(p))
+	return len(p), nil
 }
 
 func compactBotHistory(matches []botbrain.MatchEntry, capEntries int) []botbrain.MatchEntry {
@@ -242,20 +247,41 @@ func compactBotHistory(matches []botbrain.MatchEntry, capEntries int) []botbrain
 	if len(matches) > capEntries {
 		matches = matches[len(matches)-capEntries:]
 	}
-	for len(matches) > 1 {
-		raw, err := json.Marshal(botHistoryValue{Matches: matches})
-		if err != nil || len(raw) <= botHistoryTargetBytes {
+	if len(matches) == 0 {
+		return nil
+	}
+
+	// Measure each retained entry once, newest-first. JSON array size is exactly
+	// the sum of entry encodings plus separators and the fixed object envelope;
+	// this avoids repeatedly allocating and GC'ing a near-1 MiB full record.
+	// Saves use UTC RFC3339Nano, whose longest representation is 30 bytes.
+	const maxUpdatedAtBytes = len("2006-01-02T15:04:05.999999999Z")
+	encodedBytes := len(`{"matches":[],"updatedAt":""}`) + maxUpdatedAtBytes
+	var counted jsonByteCounter
+	encoder := json.NewEncoder(&counted)
+	start := len(matches)
+	retained := 0
+	for i := len(matches) - 1; i >= 0; i-- {
+		before := counted
+		err := encoder.Encode(matches[i])
+		if err != nil {
+			break // MatchEntry has no unsupported JSON fields; retain what was measured.
+		}
+		additional := int(counted-before) - 1 // Encoder terminates each value with '\n'.
+		if retained > 0 {
+			additional++ // comma between array entries
+		}
+		if retained > 0 && encodedBytes+additional > botHistoryTargetBytes {
 			break
 		}
-		// Drop a proportional oldest slice, avoiding hundreds of near-identical
-		// re-marshals when a record is far over the target.
-		drop := (len(matches)*(len(raw)-botHistoryTargetBytes))/len(raw) + 1
-		if drop >= len(matches) {
-			drop = len(matches) - 1
-		}
-		matches = matches[drop:]
+		encodedBytes += additional
+		start = i
+		retained++
 	}
-	return append([]botbrain.MatchEntry(nil), matches...)
+	if retained == 0 {
+		start = len(matches) - 1 // preserve the newest game even if it is oversized
+	}
+	return append([]botbrain.MatchEntry(nil), matches[start:]...)
 }
 
 // FetchBotGameHistory returns the bot's games that ended at or after `since`.

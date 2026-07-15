@@ -19,13 +19,25 @@ import (
 
 const maxPlies = 300
 
-var pieceValue = map[chess.PieceType]int{
-	chess.Pawn:   100,
-	chess.Knight: 320,
-	chess.Bishop: 330,
-	chess.Rook:   500,
-	chess.Queen:  900,
-	chess.King:   0,
+var pieceCentipawns = [...]int{
+	chess.NoPieceType: 0,
+	chess.King:        0,
+	chess.Queen:       900,
+	chess.Rook:        500,
+	chess.Bishop:      330,
+	chess.Knight:      320,
+	chess.Pawn:        100,
+}
+
+var materialPiecePairs = [...]struct {
+	white, black chess.Piece
+	value        int
+}{
+	{chess.WhiteQueen, chess.BlackQueen, 900},
+	{chess.WhiteRook, chess.BlackRook, 500},
+	{chess.WhiteBishop, chess.BlackBishop, 330},
+	{chess.WhiteKnight, chess.BlackKnight, 320},
+	{chess.WhitePawn, chess.BlackPawn, 100},
 }
 
 // styleParams are the move-picker knobs derived from a bot's style.json.
@@ -60,18 +72,49 @@ func neutralStyle() styleParams {
 	return styleParams{aggression: 0.45, kingAttack: 0.25, temperature: 45}
 }
 
+// Picker is a reusable move picker with style.json parsed once. Live sessions
+// should keep one Picker instead of decoding the same JSON on every turn.
+type Picker struct {
+	style styleParams
+}
+
+// NewPicker creates a reusable move picker for the supplied style.json.
+func NewPicker(styleJSON []byte) Picker {
+	return Picker{style: parseStyle(styleJSON)}
+}
+
+// ChooseMove returns a move for pos, or nil when there are no legal moves.
+func (p Picker) ChooseMove(pos *chess.Position, rng *rand.Rand) *chess.Move {
+	return pickMove(pos, p.style, rng)
+}
+
 // materialScore is centipawn material balance from persp's point of view.
 func materialScore(pos *chess.Position, persp chess.Color) int {
-	score := 0
-	for _, pc := range pos.Board().SquareMap() {
-		v := pieceValue[pc.Type()]
-		if pc.Color() == persp {
-			score += v
-		} else {
-			score -= v
-		}
+	board := pos.Board()
+	whiteScore := 0
+	for _, pair := range materialPiecePairs {
+		whiteScore += pair.value * (board.PieceCount(pair.white) - board.PieceCount(pair.black))
 	}
-	return score
+	if persp == chess.Black {
+		return -whiteScore
+	}
+	return whiteScore
+}
+
+// moveMaterialDelta returns the centipawn change from the mover's perspective.
+// All legal moves share the current material score, so comparing this delta is
+// equivalent to allocating and evaluating a child Position for every move.
+func moveMaterialDelta(board *chess.Board, move *chess.Move) int {
+	delta := 0
+	if move.HasTag(chess.EnPassant) {
+		delta += pieceCentipawns[chess.Pawn]
+	} else if move.HasTag(chess.Capture) {
+		delta += pieceCentipawns[board.Piece(move.S2()).Type()]
+	}
+	if promo := move.Promo(); promo != chess.NoPieceType {
+		delta += pieceCentipawns[promo] - pieceCentipawns[chess.Pawn]
+	}
+	return delta
 }
 
 // pickMove does a greedy 1-ply material search biased by style (captures, checks)
@@ -82,11 +125,12 @@ func pickMove(pos *chess.Position, st styleParams, rng *rand.Rand) *chess.Move {
 		return nil
 	}
 	mover := pos.Turn()
+	baseMaterial := materialScore(pos, mover)
+	board := pos.Board()
 	best := math.Inf(-1)
 	var chosen *chess.Move
 	for _, mv := range moves {
-		child := pos.Update(mv)
-		score := float64(materialScore(child, mover))
+		score := float64(baseMaterial + moveMaterialDelta(board, mv))
 		if mv.HasTag(chess.Capture) {
 			score += st.aggression * 30
 		}
@@ -106,7 +150,7 @@ func pickMove(pos *chess.Position, st styleParams, rng *rand.Rand) *chess.Move {
 // style.json knobs, or nil if the game is over. This is the move-selection entry
 // point a live opponent (e.g. the AMS dedicated server) calls each turn.
 func ChooseMove(g *chess.Game, styleJSON []byte, rng *rand.Rand) *chess.Move {
-	return pickMove(g.Position(), parseStyle(styleJSON), rng)
+	return NewPicker(styleJSON).ChooseMove(g.Position(), rng)
 }
 
 func playGame(botSt, sparSt styleParams, botColor chess.Color, rng *rand.Rand) *chess.Game {

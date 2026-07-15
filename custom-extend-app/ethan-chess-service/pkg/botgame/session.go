@@ -23,7 +23,7 @@ type Session struct {
 	mu      sync.Mutex
 	game    *chess.Game
 	rng     *rand.Rand
-	style   []byte
+	picker  selfplay.Picker
 	botName string
 }
 
@@ -31,7 +31,7 @@ type Session struct {
 func NewSession(style []byte, botName string) *Session {
 	return &Session{
 		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
-		style:   style,
+		picker:  selfplay.NewPicker(style),
 		botName: botName,
 	}
 }
@@ -71,7 +71,7 @@ func (s *Session) Handle(data []byte) string {
 			return s.gameoverMsg()
 		}
 		posBefore := s.game.Position()
-		bm := selfplay.ChooseMove(s.game, s.style, s.rng)
+		bm := s.picker.ChooseMove(posBefore, s.rng)
 		if bm == nil {
 			return s.gameoverMsg()
 		}

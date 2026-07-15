@@ -60,13 +60,14 @@ ARG CGO_ENABLED=0
 WORKDIR /build
 
 COPY go.mod go.sum ./
+COPY third_party/notnil-chess/go.mod third_party/notnil-chess/go.mod
 RUN go mod download
 
 COPY . .
 COPY --from=proto-builder /build/pkg/pb pkg/pb
 COPY --from=proto-builder /build/gateway/apidocs gateway/apidocs
 
-RUN go build -v -o /output/service ./cmd
+RUN go build -trimpath -ldflags="-s -w" -o /output/service ./cmd
 
 FROM alpine:3.24.1
 
@@ -78,7 +79,7 @@ RUN mkdir -p gateway/apidocs
 
 COPY --from=proto-builder /build/gateway/apidocs gateway/apidocs
 COPY --from=builder /output/service service
-COPY third_party third_party
+COPY third_party/swagger-ui third_party/swagger-ui
 # Bot persona/style (and the seed brain.json) for the self-learning trainer.
 COPY bots bots
 

@@ -11,6 +11,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/junaili/ethan-chess-service/pkg/botbrain"
 	"github.com/notnil/chess"
@@ -26,9 +27,29 @@ const (
 	unsoundBookRegretCP = 180
 )
 
-var analysisPieceValue = map[chess.PieceType]int{
-	chess.Pawn: 100, chess.Knight: 320, chess.Bishop: 330,
-	chess.Rook: 500, chess.Queen: 900, chess.King: 0,
+var analysisPieceValue = [...]int{
+	chess.NoPieceType: 0,
+	chess.King:        0,
+	chess.Queen:       900,
+	chess.Rook:        500,
+	chess.Bishop:      330,
+	chess.Knight:      320,
+	chess.Pawn:        100,
+}
+
+var analysisMaterialPairs = [...]struct {
+	white, black chess.Piece
+	value        int
+}{
+	{chess.WhiteQueen, chess.BlackQueen, 900},
+	{chess.WhiteRook, chess.BlackRook, 500},
+	{chess.WhiteBishop, chess.BlackBishop, 330},
+	{chess.WhiteKnight, chess.BlackKnight, 320},
+	{chess.WhitePawn, chess.BlackPawn, 100},
+}
+
+var analysisScratchPool = sync.Pool{
+	New: func() any { return new(analysisScratch) },
 }
 
 // CriticalMoment is a verified comparison from immediately before one of the
@@ -171,6 +192,14 @@ func AnalyzeGame(pair GamePair) GameAnalysis {
 
 	game := chess.NewGame()
 	enc := chess.AlgebraicNotation{}
+	scratch := analysisScratchPool.Get().(*analysisScratch)
+	*scratch = analysisScratch{}
+	defer func() {
+		// Drop cached move slices before pooling so a quiet trainer does not retain
+		// the last search tree between scheduled runs.
+		*scratch = analysisScratch{}
+		analysisScratchPool.Put(scratch)
+	}()
 	var worst *CriticalMoment
 	var regretTotal int
 	for ply, stored := range pair.Entry.Moves {
@@ -180,11 +209,13 @@ func AnalyzeGame(pair GamePair) GameAnalysis {
 			break
 		}
 		if pos.Turn() == botColor {
-			best, bestScore := bestMoveScore(pos, botColor, analysisDepth, &analysisBudget{remaining: analysisMaxNodes})
+			best, bestScore := bestMoveScore(pos, botColor, analysisDepth,
+				&analysisBudget{remaining: analysisMaxNodes}, scratch)
 			// Use an independent budget so the played move and candidate move are
 			// compared at the same bounded depth even in unusually wide positions.
-			playedScore := boundedMinimax(pos.Update(played), botColor, analysisDepth-1,
-				&analysisBudget{remaining: analysisMaxNodes}, math.MinInt/4, math.MaxInt/4)
+			playedPosition := scratch.update(pos, played, 0)
+			playedScore := boundedMinimax(playedPosition, botColor, analysisDepth-1,
+				&analysisBudget{remaining: analysisMaxNodes}, math.MinInt/4, math.MaxInt/4, scratch, 1)
 			regret := bestScore - playedScore
 			if regret < 0 { // node caps can make partial bounds slightly noisy
 				regret = 0
@@ -260,7 +291,20 @@ func promoType(name string) chess.PieceType {
 
 type analysisBudget struct{ remaining int }
 
-func bestMoveScore(pos *chess.Position, perspective chess.Color, depth int, budget *analysisBudget) (*chess.Move, int) {
+// analysisScratch owns one child position per search ply. The bounded minimax
+// visits one branch at a time, so a slot can be reused as soon as that branch
+// returns instead of allocating a Position and Board for every node.
+type analysisScratch struct {
+	positions [analysisDepth + 1]chess.Position
+	boards    [analysisDepth + 1]chess.Board
+}
+
+func (s *analysisScratch) update(pos *chess.Position, move *chess.Move, ply int) *chess.Position {
+	pos.UpdateInto(&s.positions[ply], &s.boards[ply], move)
+	return &s.positions[ply]
+}
+
+func bestMoveScore(pos *chess.Position, perspective chess.Color, depth int, budget *analysisBudget, scratch *analysisScratch) (*chess.Move, int) {
 	moves := pos.ValidMoves()
 	if len(moves) == 0 {
 		return nil, evaluatePosition(pos, perspective)
@@ -272,7 +316,9 @@ func bestMoveScore(pos *chess.Position, perspective chess.Color, depth int, budg
 	}
 	var best *chess.Move
 	for _, move := range orderedMoves(pos, moves) {
-		score := boundedMinimax(pos.Update(move), perspective, depth-1, budget, math.MinInt/4, math.MaxInt/4)
+		child := scratch.update(pos, move, 0)
+		score := boundedMinimax(child, perspective, depth-1, budget,
+			math.MinInt/4, math.MaxInt/4, scratch, 1)
 		if best == nil || (maximize && score > bestScore) || (!maximize && score < bestScore) {
 			best, bestScore = move, score
 		}
@@ -283,13 +329,16 @@ func bestMoveScore(pos *chess.Position, perspective chess.Color, depth int, budg
 	return best, bestScore
 }
 
-func boundedMinimax(pos *chess.Position, perspective chess.Color, depth int, budget *analysisBudget, alpha, beta int) int {
+func boundedMinimax(pos *chess.Position, perspective chess.Color, depth int, budget *analysisBudget, alpha, beta int, scratch *analysisScratch, ply int) int {
 	if budget.remaining <= 0 {
 		return evaluatePosition(pos, perspective)
 	}
 	budget.remaining--
-	if depth <= 0 || pos.Status() != chess.NoMethod {
+	if depth <= 0 {
 		return evaluatePosition(pos, perspective)
+	}
+	if status := pos.Status(); status != chess.NoMethod {
+		return evaluatePositionWithStatus(pos, perspective, status)
 	}
 	moves := pos.ValidMoves()
 	if len(moves) == 0 {
@@ -298,7 +347,8 @@ func boundedMinimax(pos *chess.Position, perspective chess.Color, depth int, bud
 	if pos.Turn() == perspective {
 		best := math.MinInt / 4
 		for _, move := range orderedMoves(pos, moves) {
-			v := boundedMinimax(pos.Update(move), perspective, depth-1, budget, alpha, beta)
+			child := scratch.update(pos, move, ply)
+			v := boundedMinimax(child, perspective, depth-1, budget, alpha, beta, scratch, ply+1)
 			if v > best {
 				best = v
 			}
@@ -313,7 +363,8 @@ func boundedMinimax(pos *chess.Position, perspective chess.Color, depth int, bud
 	}
 	best := math.MaxInt / 4
 	for _, move := range orderedMoves(pos, moves) {
-		v := boundedMinimax(pos.Update(move), perspective, depth-1, budget, alpha, beta)
+		child := scratch.update(pos, move, ply)
+		v := boundedMinimax(child, perspective, depth-1, budget, alpha, beta, scratch, ply+1)
 		if v < best {
 			best = v
 		}
@@ -328,37 +379,55 @@ func boundedMinimax(pos *chess.Position, perspective chess.Color, depth int, bud
 }
 
 func evaluatePosition(pos *chess.Position, perspective chess.Color) int {
-	if pos.Status() == chess.Checkmate {
+	return evaluatePositionWithStatus(pos, perspective, pos.Status())
+}
+
+func evaluatePositionWithStatus(pos *chess.Position, perspective chess.Color, status chess.Method) int {
+	if status == chess.Checkmate {
 		if pos.Turn() == perspective {
 			return -100000
 		}
 		return 100000
 	}
-	if pos.Status() != chess.NoMethod {
+	if status != chess.NoMethod {
 		return 0
 	}
-	score := 0
-	for _, piece := range pos.Board().SquareMap() {
-		value := analysisPieceValue[piece.Type()]
-		if piece.Color() == perspective {
-			score += value
-		} else {
-			score -= value
-		}
+	board := pos.Board()
+	whiteScore := 0
+	for _, pair := range analysisMaterialPairs {
+		whiteScore += pair.value * (board.PieceCount(pair.white) - board.PieceCount(pair.black))
 	}
-	return score
+	if perspective == chess.Black {
+		return -whiteScore
+	}
+	return whiteScore
 }
 
 func orderedMoves(pos *chess.Position, moves []*chess.Move) []*chess.Move {
-	ordered := append([]*chess.Move(nil), moves...)
-	// Stable insertion sort is sufficient for the small legal-move arrays and
-	// avoids importing a comparator that repeatedly allocates child positions.
-	for i := 1; i < len(ordered); i++ {
-		for j := i; j > 0 && movePriority(pos, ordered[j]) > movePriority(pos, ordered[j-1]); j-- {
-			ordered[j], ordered[j-1] = ordered[j-1], ordered[j]
+	// Position.ValidMoves already returns a defensive slice copy, so sorting it
+	// in place avoids another allocation. Cache each priority because insertion
+	// sort otherwise recalculates board lookups for every comparison.
+	var priorities [256]int // the legal-move maximum in chess is 218
+	if len(moves) > len(priorities) {
+		// Defensive fallback for malformed/non-chess callers.
+		for i := 1; i < len(moves); i++ {
+			for j := i; j > 0 && movePriority(pos, moves[j]) > movePriority(pos, moves[j-1]); j-- {
+				moves[j], moves[j-1] = moves[j-1], moves[j]
+			}
+		}
+		return moves
+	}
+	priority := priorities[:len(moves)]
+	for i, move := range moves {
+		priority[i] = movePriority(pos, move)
+	}
+	for i := 1; i < len(moves); i++ {
+		for j := i; j > 0 && priority[j] > priority[j-1]; j-- {
+			moves[j], moves[j-1] = moves[j-1], moves[j]
+			priority[j], priority[j-1] = priority[j-1], priority[j]
 		}
 	}
-	return ordered
+	return moves
 }
 
 func movePriority(pos *chess.Position, move *chess.Move) int {

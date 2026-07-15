@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
@@ -21,12 +22,28 @@ import (
 type Watchdog struct {
 	url     string
 	conn    *websocket.Conn
+	dsid    string
+	ready   []byte
 	onDrain func()
 	mu      sync.Mutex
 	closed  bool
 }
 
-func NewWatchdog(url string) *Watchdog { return &Watchdog{url: url} }
+var (
+	heartbeatMessage           = []byte(`{"heartbeat":{}}`)
+	resetSessionTimeoutMessage = []byte(`{"resetSessionTimeout":{}}`)
+)
+
+func NewWatchdog(url, dsid string) *Watchdog {
+	ready, _ := json.Marshal(struct {
+		Ready struct {
+			DSID string `json:"dsid"`
+		} `json:"ready"`
+	}{Ready: struct {
+		DSID string `json:"dsid"`
+	}{DSID: dsid}})
+	return &Watchdog{url: url, dsid: dsid, ready: ready}
+}
 
 // OnDrain registers the callback invoked when AMS asks the DS to drain.
 func (w *Watchdog) OnDrain(fn func()) { w.onDrain = fn }
@@ -34,7 +51,11 @@ func (w *Watchdog) OnDrain(fn func()) { w.onDrain = fn }
 // Connect dials the watchdog. Returns an error if unreachable (e.g. local dev
 // with no watchdog), letting the caller run in standalone mode.
 func (w *Watchdog) Connect(ctx context.Context) error {
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, w.url, nil)
+	header := http.Header{}
+	if w.dsid != "" {
+		header.Set("ams-dsid", w.dsid)
+	}
+	c, _, err := websocket.DefaultDialer.DialContext(ctx, w.url, header)
 	if err != nil {
 		return err
 	}
@@ -44,13 +65,13 @@ func (w *Watchdog) Connect(ctx context.Context) error {
 }
 
 // SendReady tells the watchdog the DS can now be allocated to a session.
-func (w *Watchdog) SendReady() error { return w.sendType("ready") }
+func (w *Watchdog) SendReady() error { return w.send(w.ready) }
 
 // SendHeartbeat keeps the DS marked healthy.
-func (w *Watchdog) SendHeartbeat() error { return w.sendType("heartbeat") }
+func (w *Watchdog) SendHeartbeat() error { return w.send(heartbeatMessage) }
 
 // ResetSessionTimeout optionally extends the session timeout (e.g. a long game).
-func (w *Watchdog) ResetSessionTimeout() error { return w.sendType("resetSessionTimeout") }
+func (w *Watchdog) ResetSessionTimeout() error { return w.send(resetSessionTimeoutMessage) }
 
 // StartHeartbeat sends a heartbeat on an interval until ctx is cancelled. AMS
 // expects one at least every 15s.
@@ -71,14 +92,15 @@ func (w *Watchdog) StartHeartbeat(ctx context.Context, every time.Duration) {
 	}()
 }
 
-// sendType writes a watchdog message of the form {"<msgType>":{}}.
-func (w *Watchdog) sendType(msgType string) error {
+// send writes a pre-encoded watchdog message without reflection or per-tick
+// map/JSON allocations.
+func (w *Watchdog) send(payload []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.conn == nil || w.closed {
 		return nil
 	}
-	return w.conn.WriteJSON(map[string]map[string]any{msgType: {}})
+	return w.conn.WriteMessage(websocket.TextMessage, payload)
 }
 
 func (w *Watchdog) readLoop() {

@@ -35,6 +35,18 @@ func TestAnalyzeGameFindsVerifiedCriticalMoment(t *testing.T) {
 	}
 }
 
+func BenchmarkAnalyzeGame(b *testing.B) {
+	pair := ReconstructAll([]botbrain.MatchEntry{foolsMate()}, "Gambit Gus")[0]
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		analysis := AnalyzeGame(pair)
+		if analysis.Moment == nil {
+			b.Fatal("expected a critical moment")
+		}
+	}
+}
+
 func TestPrepareHistoryAnalysesCachesAndPrunesDurableQuality(t *testing.T) {
 	pairs := ReconstructAll([]botbrain.MatchEntry{foolsMate()}, "Gambit Gus")
 	brain := &botbrain.Brain{MatchQuality: map[string]botbrain.MatchQuality{

@@ -35,7 +35,7 @@ func serveGames(addr string, bot *botbrain.Bot) {
 			http.Error(w, "bad offer", http.StatusBadRequest)
 			return
 		}
-		answer, _, err := botgame.Answer(offer, bot.Style, bot.ID)
+		answer, _, err := botgame.AnswerContext(r.Context(), offer, bot.Style, bot.ID)
 		if err != nil {
 			http.Error(w, "webrtc: "+err.Error(), http.StatusInternalServerError)
 			return

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -102,13 +103,17 @@ func LookupEmailInIAM(email string) (*LookupResult, error) {
 }
 
 func getClientCredentialsToken(baseURL, clientID, clientSecret string) (string, error) {
+	return getClientCredentialsTokenContext(context.Background(), baseURL, clientID, clientSecret)
+}
+
+func getClientCredentialsTokenContext(ctx context.Context, baseURL, clientID, clientSecret string) (string, error) {
 	if baseURL == "" || clientID == "" || clientSecret == "" {
 		return "", fmt.Errorf("IAM client configuration is incomplete")
 	}
 	data := url.Values{}
 	data.Set("grant_type", "client_credentials")
 
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/iam/v3/oauth/token",
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/iam/v3/oauth/token",
 		strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", err

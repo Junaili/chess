@@ -59,7 +59,7 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad offer", http.StatusBadRequest)
 		return
 	}
-	answer, _, err := botgame.Answer(offer, botStyle, botName)
+	answer, _, err := botgame.AnswerContext(r.Context(), offer, botStyle, botName)
 	if err != nil {
 		http.Error(w, "webrtc: "+err.Error(), http.StatusInternalServerError)
 		return
