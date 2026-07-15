@@ -19,7 +19,6 @@ import { extendFetch } from './extend-client.js'
 import { sdk, agsBaseURL, agsNamespace } from './ags-client.js'
 import { fetchWithTimeout } from './network.mjs'
 import { deriveClubUI, formatCoins, CLUB_SKUS, CLUB_SKU_ORDER } from './club-contract.mjs'
-import { store, ProductType, Platform } from 'capacitor-plugin-cdv-purchase'
 
 const CACHE_KEY = 'chess-club-status-v1'
 const TTL_MS = 60 * 60 * 1000 // 1h
@@ -187,9 +186,25 @@ export async function giveCoins(recipientUserId, amount) {
 
 let nativeIAPReady = false
 let nativeIAPInitStarted = false
-let nativeStore = store
-let nativeProductType = ProductType
-let nativePlatform = Platform
+let nativeStore = null
+let nativeProductType = null
+let nativePlatform = null
+let nativePurchaseRuntimePromise = null
+
+async function loadNativePurchaseRuntime() {
+  if (nativeStore && nativeProductType && nativePlatform) return
+  if (!nativePurchaseRuntimePromise) {
+    nativePurchaseRuntimePromise = import('capacitor-plugin-cdv-purchase').then(module => {
+      nativeStore ||= module.store
+      nativeProductType ||= module.ProductType
+      nativePlatform ||= module.Platform
+    }).catch(error => {
+      nativePurchaseRuntimePromise = null
+      throw error
+    })
+  }
+  await nativePurchaseRuntimePromise
+}
 
 export function isNativeIAPReady() {
   return nativeIAPReady
@@ -274,6 +289,13 @@ function nativeTransactionId(validationRequest) {
 export async function initNativeIAP() {
   if (!isNative() || nativeIAPInitStarted) return
   nativeIAPInitStarted = true
+  try {
+    await loadNativePurchaseRuntime()
+  } catch (error) {
+    nativeIAPInitStarted = false
+    console.warn('[club] native purchase runtime unavailable:', error?.message || error)
+    return
+  }
 
   nativeStore.register(CLUB_SKU_ORDER.map(sku => ({
     id: CLUB_SKUS[sku].appleId,
@@ -624,9 +646,9 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
     renderCurrentScreen()
   }
   window.agsSetClubNativePurchaseStoreForTesting = ({ store: testStore, ProductType: testProductType, Platform: testPlatform } = {}) => {
-    nativeStore = testStore || store
-    nativeProductType = testProductType || ProductType
-    nativePlatform = testPlatform || Platform
+    if (testStore) nativeStore = testStore
+    if (testProductType) nativeProductType = testProductType
+    if (testPlatform) nativePlatform = testPlatform
   }
   window.agsAppleTransactionIdForTesting = nativeTransactionId
   // Offline e2e seam: simulate a settled native transaction (success or

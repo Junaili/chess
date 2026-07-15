@@ -1,4 +1,3 @@
-import { Peer } from 'peerjs'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { ConfigApi as ChatConfigApi, TopicApi as ChatTopicApi } from '@accelbyte/sdk-chat'
 import { loginWithGoogle, loginWithApple, loginWithPassword, requestPasswordReset, resetPassword, registerWithPassword, registerChildAccount, handleCallback, getProfile, getDisplayName, updateDisplayName, syncBasicProfile, logout, refreshSession, hasStoredSession, clearStoredSession, clearLocalAccountData } from './auth.js'
@@ -51,17 +50,45 @@ import {
   submitAccountDeletion,
   validateDeletionConfirmation,
 } from './account-deletion.js'
-import { createVideoCallRuntime } from './video-call.mjs'
-
-window.Peer = Peer
 const nativeVideoCallAudio = registerPlugin('VideoCallAudio')
-window.chessVideoCall = createVideoCallRuntime({
-  Peer,
-  iceConfigUrl: import.meta.env.VITE_RTC_ICE_CONFIG_URL || '',
-  getAccessToken: () => sdk.getToken()?.accessToken || '',
-  nativeAudio: nativeVideoCallAudio,
-  isNativeIOS: () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios',
-})
+let realtimeRuntimePromise = null
+
+// PeerJS and the video runtime are unnecessary for guests, local games, and
+// most Home sessions. Load them only when an online flow begins; app.js starts
+// this during color selection, which overlaps the fetch with the player's taps.
+async function prepareRealtimeRuntime() {
+  if (window.chessVideoCall?.runtimeReady) return window.chessVideoCall
+  if (!realtimeRuntimePromise) {
+    realtimeRuntimePromise = Promise.all([
+      import('peerjs'),
+      import('./video-call.mjs'),
+    ]).then(([peerModule, videoModule]) => {
+      const Peer = peerModule.Peer
+      window.Peer = Peer
+      const runtime = videoModule.createVideoCallRuntime({
+        Peer,
+        iceConfigUrl: import.meta.env.VITE_RTC_ICE_CONFIG_URL || '',
+        getAccessToken: () => sdk.getToken()?.accessToken || '',
+        nativeAudio: nativeVideoCallAudio,
+        isNativeIOS: () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios',
+      })
+      // Preserve a peer factory injected while the chunk was loading (the
+      // same seam is useful for reconnect tests and native wrappers).
+      window.chessVideoCall = {
+        ...runtime,
+        ...(window.chessVideoCall || {}),
+        runtimeReady: true,
+      }
+      return window.chessVideoCall
+    }).catch(error => {
+      realtimeRuntimePromise = null
+      throw error
+    })
+  }
+  return realtimeRuntimePromise
+}
+
+window.agsPrepareRealtimeRuntime = prepareRealtimeRuntime
 window.chessContentModeration = Object.freeze({
   moderateIncomingChat,
   moderateIncomingDisplayName,
@@ -369,6 +396,7 @@ let legalReaderTrigger = null
 let friendsState = { friends: [], incoming: [], outgoing: [] }
 let familyState = { group: null, members: [], incomingInvites: [] }
 let friendsRefreshTimer = null
+let friendsVisibilityHandler = null
 let friendsRefreshPromise = null
 let friendsRefreshQueued = false
 let friendsRefreshQueuedPreserveMessage = false
@@ -912,6 +940,7 @@ function showInviteScreen(inviterName, { live = false } = {}) {
 }
 
 async function hydrateAuthenticatedUser(profile) {
+  const hydratedUserId = profile.userId
   currentUserId = profile.userId
   currentProfile = profile
   window.agsCurrentUserId = currentUserId
@@ -926,8 +955,10 @@ async function hydrateAuthenticatedUser(profile) {
   connectAuthenticatedChat().catch(error => {
     console.warn('[Chat] connection unavailable:', error?.message || error)
   })
-  // Flush any events queued before authentication (invite_link_clicked, etc.)
-  await flushPendingEvents()
+  // Telemetry delivery is never part of the first authenticated paint.
+  void flushPendingEvents().catch(error => {
+    console.warn('[telemetry] queued-event flush unavailable:', error?.message || error)
+  })
   const name = getDisplayName(profile)
   cacheDisplayName(currentUserId, name)
   syncBasicProfile(name)
@@ -935,19 +966,23 @@ async function hydrateAuthenticatedUser(profile) {
     window.setPlayerFromAGS(name)
   }
   updateAuthUI(true, name, currentUserId)
+  // Authentication and the legal gate are the only prerequisites for Home.
+  // Present it before starting any social/statistics/optional-feature hydration.
+  if (typeof window.showScreen === 'function') window.showScreen('home')
   setPresenceStatus('online')
   startPresenceUpdates()
   startGameInviteUpdates()
   startInviteJoinUpdates()
   startFriendsChangeUpdates()
   startFriendsRefresh()
-  await refreshFriendsUI()
-  try {
-    blockedPlayers = await listBlockedPlayers()
-  } catch (error) {
-    blockedPlayers = []
+  setFriendsMessage('Loading friends…')
+  void refreshFriendsUI(false)
+  void listBlockedPlayers().then(players => {
+    if (currentUserId === hydratedUserId) blockedPlayers = players
+  }).catch(error => {
+    if (currentUserId === hydratedUserId) blockedPlayers = []
     console.warn('[AGS safety] blocked-player list unavailable:', getSafetyError(error))
-  }
+  })
 
   const urlParams = new URLSearchParams(window.location.search)
   // The invitedBy param is stripped from the URL by the Google OAuth redirect
@@ -1002,18 +1037,36 @@ async function hydrateAuthenticatedUser(profile) {
     }
   }
 
-  await initStats(currentUserId)
-  await migrateStreakFromCloudSave(currentUserId)  // one-time CloudSave→Statistics backfill (no-op after first run)
-  const [stats, streakData] = await Promise.all([fetchStats(currentUserId), fetchStreak(currentUserId)])
-  currentUserWins = stats?.wins ?? 0
-  currentStreak = streakData?.streak ?? 0
-  currentUserRating = stats?.rating ?? 1200
-  updateStatsUI(stats, currentStreak)
-  primeUnlockedCache(currentUserId)  // silent: seed unlocked-achievement cache so later diffs only surface new ones
-  await refreshLeaderboard()
-  sendEvent('leaderboard_viewed', { trigger: 'session_start' })
   const randomBtn = document.getElementById('btn-play-random')
   if (randomBtn) randomBtn.style.display = ''
+  const leaderboardList = document.getElementById('lb-list')
+  if (leaderboardList) leaderboardList.innerHTML = '<p class="lb-empty">Loading leaderboard…</p>'
+
+  // Stats have a small internal dependency chain, but the entire chain is
+  // secondary to showing Home. It runs concurrently with friends and safety.
+  void (async () => {
+    await initStats(hydratedUserId)
+    if (currentUserId !== hydratedUserId) return
+    await migrateStreakFromCloudSave(hydratedUserId)
+    if (currentUserId !== hydratedUserId) return
+    const [stats, streakData] = await Promise.all([
+      fetchStats(hydratedUserId),
+      fetchStreak(hydratedUserId),
+    ])
+    if (currentUserId !== hydratedUserId) return
+    currentUserWins = stats?.wins ?? 0
+    currentStreak = streakData?.streak ?? 0
+    currentUserRating = stats?.rating ?? 1200
+    updateStatsUI(stats, currentStreak)
+    void primeUnlockedCache(hydratedUserId)
+    await refreshLeaderboard()
+    if (currentUserId === hydratedUserId) sendEvent('leaderboard_viewed', { trigger: 'session_start' })
+  })().catch(error => {
+    console.warn('[AGS] background stats hydration failed:', error?.message || error)
+    if (currentUserId === hydratedUserId && leaderboardList) {
+      leaderboardList.innerHTML = '<p class="lb-empty">Leaderboard unavailable — tap Refresh to retry.</p>'
+    }
+  })
   // Gus's home card + play button (fire-and-forget: a slow/absent Extend
   // service must not delay session hydration — Gus just stays hidden).
   void initGusPanel()
@@ -3746,14 +3799,22 @@ function notifyNewFriendRequests(incoming = []) {
 function startFriendsRefresh() {
   stopFriendsRefresh()
   friendsRefreshTimer = setInterval(() => {
-    if (currentUserId) void refreshFriendsUI(false)
-  }, 15000)
+    if (currentUserId && document.visibilityState === 'visible') void refreshFriendsUI(false)
+  }, 60000)
+  friendsVisibilityHandler = () => {
+    if (document.visibilityState === 'visible' && currentUserId) void refreshFriendsUI(false)
+  }
+  document.addEventListener('visibilitychange', friendsVisibilityHandler)
 }
 
 function stopFriendsRefresh() {
   if (friendsRefreshTimer) {
     clearInterval(friendsRefreshTimer)
     friendsRefreshTimer = null
+  }
+  if (friendsVisibilityHandler) {
+    document.removeEventListener('visibilitychange', friendsVisibilityHandler)
+    friendsVisibilityHandler = null
   }
 }
 
@@ -3768,6 +3829,7 @@ function startPresenceUpdates() {
     let changed = false
     const friends = friendsState.friends.map(friend => {
       if (normalizeFriendUserId(friend.userId) !== normalizedUserId) return friend
+      if (friend.presence?.status === presence?.status && friend.presence?.label === presence?.label) return friend
       changed = true
       return { ...friend, presence }
     })
@@ -3783,6 +3845,7 @@ function startPresenceUpdates() {
     let familyChanged = false
     const members = familyState.members.map(member => {
       if (normalizeFriendUserId(member.userId) !== normalizedUserId) return member
+      if (member.presence?.status === presence?.status && member.presence?.label === presence?.label) return member
       const wasOnline = ['online', 'in-match'].includes(member.presence?.status)
       const isOnline = ['online', 'in-match'].includes(presence?.status)
       if (!wasOnline && isOnline && member.userId !== currentUserId) {
@@ -3852,7 +3915,7 @@ function stopInviteJoinUpdates() {
 }
 
 // React the instant Lobby pushes a friend-relationship change, instead of
-// waiting on the 15s periodic refresh (startFriendsRefresh) — that gap is what
+// waiting on the periodic refresh (startFriendsRefresh) — that gap is what
 // made an invitee see their inviter stuck at "pending" for several seconds
 // after being accepted, while the accepting side (already refreshing itself
 // locally) saw the change immediately.
@@ -4552,10 +4615,24 @@ function buildReplayPosition(moves, throughIndex) {
 // position through a game and calls this per player ply — avoiding the O(n²)
 // prefix replays. Returns the human-facing grade fields plus the raw numbers
 // (loss/scores/SANs) that key-moment selection needs.
-function gradeMoveInPosition(before, played, { whiteName, blackName } = {}) {
+async function gradeMoveInPosition(before, played, names = {}) {
+  try {
+    if (window.chessBackgroundWorker?.gradePosition) {
+      return await window.chessBackgroundWorker.gradePosition(before, played, names, {
+        timeBudgetMs: 150,
+        maxNodes: 25_000,
+      })
+    }
+  } catch (error) {
+    console.warn('[analysis] background worker unavailable; using bounded fallback:', error?.message || error)
+  }
+  return gradeMoveInPositionSync(before, played, names)
+}
+
+function gradeMoveInPositionSync(before, played, { whiteName, blackName } = {}) {
   const mover = before.currentTurn
   const playedNotation = before.getMoveNotation(played.fr, played.fc, played.toR, played.toC, played.promType || 'queen')
-  const best = spectatorAi.getBestMove(before, 'medium')
+  const best = spectatorAi.getBestMove(before, 'medium', { timeBudgetMs: 150, maxNodes: 25_000 })
   if (!best) {
     return {
       grade: 'Forced',
@@ -4576,6 +4653,13 @@ function gradeMoveInPosition(before, played, { whiteName, blackName } = {}) {
   playedAfter.makeMove(played.fr, played.fc, played.toR, played.toC, played.promType || 'queen')
   const bestAfter = spectatorAi._cloneGame(before)
   bestAfter.makeMove(best.fr, best.fc, best.toR, best.toC, best.promType || 'queen')
+
+  // The preferred-move search is budgeted, while these two one-ply scores are
+  // tiny and must not inherit an already-expired search deadline.
+  spectatorAi._deadline = Infinity
+  spectatorAi._maxNodes = Infinity
+  spectatorAi._nodes = 0
+  spectatorAi._timedOut = false
 
   // Score each candidate AFTER the opponent's best answer (one-ply minimax),
   // not with a raw static eval of the resulting position — a static eval
@@ -4617,7 +4701,7 @@ function gradeMoveInPosition(before, played, { whiteName, blackName } = {}) {
   }
 }
 
-function analyzeReplayMove(matchData, moveIndex) {
+async function analyzeReplayMove(matchData, moveIndex) {
   const moves = matchData.moves || []
   const played = moves[moveIndex]
   if (!played) return null
@@ -4635,16 +4719,42 @@ function analyzeReplayMove(matchData, moveIndex) {
 // here; the pure counting/labeling lives in match-stats.mjs
 // (summarizeCoachingGrades/combineCoachingSummaries) where it's unit-tested.
 
-function gradeAllMoves(matchData) {
-  return (matchData.moves || []).map((_, i) => {
-    const analysis = analyzeReplayMove(matchData, i)
-    return analysis && {
-      moveIndex: i,
-      mover: i % 2 === 0 ? 'white' : 'black', // white always moves ply 0
-      grade: analysis.grade,
-      loss: analysis.loss || 0,
+const coachingGradesCache = new Map()
+
+async function gradeAllMoves(matchData) {
+  const moves = matchData.moves || []
+  const last = moves[moves.length - 1]
+  const cacheKey = `${matchData.id || ''}:${moves.length}:${last ? `${last.fr}${last.fc}${last.toR}${last.toC}${last.promType || ''}` : ''}`
+  if (coachingGradesCache.has(cacheKey)) return coachingGradesCache.get(cacheKey)
+  try {
+    if (window.chessBackgroundWorker?.analyzeMatch) {
+      const grades = await window.chessBackgroundWorker.analyzeMatch(matchData, {
+        scope: 'all',
+        timeBudgetMs: 150,
+        maxNodes: 25_000,
+      })
+      coachingGradesCache.set(cacheKey, grades)
+      if (coachingGradesCache.size > 25) coachingGradesCache.delete(coachingGradesCache.keys().next().value)
+      return grades
     }
-  }).filter(Boolean)
+  } catch (error) {
+    console.warn('[analysis] batch worker unavailable; grading incrementally:', error?.message || error)
+  }
+
+  const running = new ChessGame()
+  const grades = []
+  for (let index = 0; index < moves.length; index++) {
+    const move = moves[index]
+    const mover = running.currentTurn
+    const analysis = gradeMoveInPositionSync(running, move, {
+      whiteName: matchData.whiteName,
+      blackName: matchData.blackName,
+    })
+    if (analysis) grades.push({ moveIndex: index, mover, ...analysis })
+    if (!running.makeMove(move.fr, move.fc, move.toR, move.toC, move.promType || 'queen')) break
+  }
+  coachingGradesCache.set(cacheKey, grades)
+  return grades
 }
 
 // The subject's single worst graded ply — the "review this together" landing
@@ -4697,7 +4807,8 @@ async function renderFamilyCoachingTab(userId, matchHistory) {
   for (const { match, index } of candidates) {
     await new Promise(resolve => setTimeout(resolve, 0))
     if (token !== coachingRenderToken) return
-    const grades = gradeAllMoves(match)
+    const grades = await gradeAllMoves(match)
+    if (token !== coachingRenderToken) return
     perGame.push({
       index,
       match,
@@ -4749,7 +4860,9 @@ async function renderFamilyCoachingTab(userId, matchHistory) {
   })
 }
 
-function renderSpectatorAnalysis(matchData, replayIndex) {
+let spectatorAnalysisToken = 0
+
+async function renderSpectatorAnalysis(matchData, replayIndex) {
   const panel = document.getElementById('spectator-analysis')
   const gradeEl = document.getElementById('spectator-analysis-grade')
   const textEl = document.getElementById('spectator-analysis-text')
@@ -4757,11 +4870,18 @@ function renderSpectatorAnalysis(matchData, replayIndex) {
   if (!panel || !gradeEl || !textEl || !recEl) return
 
   if (replayIndex < 0 || matchData.active) {
+    spectatorAnalysisToken++
     panel.style.display = 'none'
     return
   }
 
-  const result = analyzeReplayMove(matchData, replayIndex)
+  const token = ++spectatorAnalysisToken
+  panel.style.display = ''
+  gradeEl.textContent = 'Analyzing…'
+  textEl.textContent = 'Reviewing this position without blocking the board.'
+  recEl.textContent = ''
+  const result = await analyzeReplayMove(matchData, replayIndex)
+  if (token !== spectatorAnalysisToken || spectatorLastMatchData !== matchData) return
   if (!result) {
     panel.style.display = 'none'
     return
@@ -4900,7 +5020,7 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
     if (countEl) countEl.textContent = notations.length ? `${notations.length} moves` : ''
   }
 
-  renderSpectatorAnalysis(matchData, replayIndex)
+  void renderSpectatorAnalysis(matchData, replayIndex)
 }
 
 window.addEventListener('beforeunload', disconnectPresence)

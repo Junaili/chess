@@ -104,7 +104,7 @@ async function gradePlayerGame(match, isStale) {
   for (let i = 0; i < match.moves.length; i++) {
     const m = match.moves[i]
     if (i % 2 === playerParity) {
-      const g = window.agsGradeMoveInPosition(running, m, names)
+      const g = await Promise.resolve(window.agsGradeMoveInPosition(running, m, names))
       if (g) grades.push({ moveIndex: i, ...g })
       if (grades.length % GRADED_PLIES_PER_YIELD === 0) {
         await new Promise(resolve => setTimeout(resolve, 0))
@@ -288,8 +288,8 @@ function startPuzzle(entry, puzzle) {
   sendEvent('journal_puzzle_started', { kind: puzzle.kind })
 }
 
-function judgePuzzleMove(before, move) {
-  const grade = window.agsGradeMoveInPosition?.(before, move)
+async function judgePuzzleMove(before, move) {
+  const grade = await Promise.resolve(window.agsGradeMoveInPosition?.(before, move))
   if (!grade) return null
   const solved = grade.matchedBest || (grade.loss || 0) < 35
   if (activePuzzle && state.record) {

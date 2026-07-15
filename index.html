@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; media-src 'self' blob:; connect-src 'self' https://*.accelbyte.io wss://*.accelbyte.io https://0.peerjs.com wss://0.peerjs.com https://api4.ipify.org; object-src 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; media-src 'self' blob:; connect-src 'self' https://*.accelbyte.io wss://*.accelbyte.io https://0.peerjs.com wss://0.peerjs.com https://api4.ipify.org; object-src 'none'; base-uri 'self'; form-action 'self'" />
   <script type="module" src="/src/native-auth-bounce.js"></script>
   <title>Ethan's Chess — Play Multiplayer Chess with Friends</title>
   <meta name="description" content="Play multiplayer chess with friends and family anywhere in the world. Real-time matches, leaderboard rankings, video chat, and more — free to play." />
@@ -47,6 +47,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Ethan's Chess" />
   <link rel="apple-touch-icon" href="/chess/icon-192.png" />
+  <link rel="preconnect" href="https://seal-chessags.prod.gamingservices.accelbyte.io" crossorigin />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />

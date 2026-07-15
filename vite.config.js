@@ -57,7 +57,7 @@ export default defineConfig(({ mode, command }) => {
         name: 'copy-classic-game-scripts',
         writeBundle(outputOptions) {
           const outDir = outputOptions.dir || resolve(process.cwd(), 'dist')
-          for (const file of ['app.js', 'chess-engine.js', 'ai-engine.js']) {
+          for (const file of ['app.js', 'chess-engine.js', 'ai-engine.js', 'analysis-worker.js']) {
             copyFileSync(resolve(process.cwd(), file), resolve(outDir, file))
           }
         },

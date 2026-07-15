@@ -3697,6 +3697,9 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 
 .chess-board {
   position: relative;
+  /* Board mutations are frequent while selecting and moving pieces. Keep
+     their layout/paint invalidation from escaping into the surrounding UI. */
+  contain: layout paint style;
   min-width: 0;
   min-height: 0;
   max-width: 100%;

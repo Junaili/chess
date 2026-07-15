@@ -65,8 +65,8 @@ xcodebuild \
   -derivedDataPath "$DERIVED" \
   build | tail -5
 
-APP_PATH="$(find "$DERIVED/Build/Products" -maxdepth 2 -name 'App.app' -type d | head -1)"
-[[ -n "$APP_PATH" ]] || fail "Build succeeded but App.app was not found under $DERIVED."
+APP_PATH="$(find "$DERIVED/Build/Products" -maxdepth 2 -name '*.app' -type d | head -1)"
+[[ -n "$APP_PATH" ]] || fail "Build succeeded but no .app bundle was found under $DERIVED."
 log "Built $APP_PATH"
 
 # ── Install, launch, screenshot ──────────────────────────────────────────────
