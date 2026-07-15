@@ -76,6 +76,14 @@ button, input, textarea {
   font: inherit;
 }
 
+/* Every custom button remains finger-sized even when a component uses a
+   compact visual treatment. Individual layouts can still supply a larger
+   visible surface or a full-width action. */
+button {
+  min-width: 44px;
+  min-height: 44px;
+}
+
 :focus-visible {
   outline: 2px solid rgba(240, 195, 122, 0.68);
   outline-offset: 3px;
@@ -138,6 +146,10 @@ button:focus-visible {
 
 /* ─── Buttons & Inputs ────────────────────────────────────────────────────── */
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
   border: 1px solid transparent;
   border-radius: 999px;
   padding: 13px 20px;
@@ -556,39 +568,22 @@ input[type="checkbox"] {
   scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
 }
 
-/* A cut-off row at the bottom edge reads as broken, not "scroll for more" —
-   the thin scrollbar alone is easy to miss. Static fade, not JS-toggled: it
-   still looks intentional even when there's nothing below to scroll to. */
-#screen-home.signed-in .friends-panel::after {
-  content: "";
-  position: sticky;
-  display: block;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 28px;
-  margin-top: -28px;
-  background: linear-gradient(to bottom, transparent, var(--surface));
-  pointer-events: none;
-}
-
 #screen-home.signed-in .gus-panel {
   flex: 0 0 auto;
   overflow: visible;
 }
 
-/* The leaderboard hugs its own content instead of being stretched to match
-   the People column's height — capped at 10 entries, it's usually much
-   shorter, and a card that fits its content reads as intentional where a
-   stretched one with dead space below the list reads as broken. */
+/* Keep both dashboard columns on the same grid so the right card does not
+   appear to float beside the People panel on iPad. The list, not the page,
+   absorbs extra entries. */
 #screen-home.signed-in .leaderboard-panel {
-  align-self: start;
+  align-self: stretch;
   min-height: 300px;
   overflow: hidden;
 }
 
 #screen-home.signed-in .lb-list {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
   max-height: min(52vh, 480px);
   overflow-y: auto;
@@ -625,7 +620,11 @@ input[type="checkbox"] {
 
 .auth-login-link {
   align-self: center;
-  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 12px;
   border: 0;
   color: var(--text-soft);
   background: transparent;
@@ -1048,7 +1047,7 @@ input[type="checkbox"] {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-dim);
   padding: 7px 10px;
-  min-height: 32px;
+  min-height: 44px;
   font-size: 0.72rem;
   font-weight: 800;
   cursor: pointer;
@@ -1464,7 +1463,7 @@ input[type="checkbox"] {
 }
 
 .lb-view-btn {
-  min-height: 34px;
+  min-height: 44px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -1533,7 +1532,8 @@ input[type="checkbox"] {
   font-weight: 800;
   cursor: pointer;
   transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
-  padding: 5px 8px;
+  min-height: 44px;
+  padding: 8px 12px;
   border-radius: 999px;
   white-space: nowrap;
 }
@@ -1601,6 +1601,7 @@ input[type="checkbox"] {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.03);
   color: var(--text-dim);
+  min-height: 44px;
   padding: 8px 12px;
   font-size: 0.78rem;
   font-weight: 700;
@@ -1613,6 +1614,7 @@ input[type="checkbox"] {
   border-radius: 999px;
   background: rgba(240, 195, 122, 0.08);
   color: var(--accent-2);
+  min-height: 44px;
   padding: 8px 12px;
   font-size: 0.78rem;
   font-weight: 800;
@@ -1806,7 +1808,7 @@ input[type="checkbox"] {
 }
 
 .profile-tab {
-  min-height: 40px;
+  min-height: 44px;
   padding: 7px 10px;
   border: 0;
   border-radius: 10px;
@@ -2978,6 +2980,7 @@ input[type="checkbox"] {
   z-index: 72;
   right: max(12px, env(safe-area-inset-right));
   bottom: max(18px, env(safe-area-inset-bottom));
+  min-height: 44px;
   padding: 8px 12px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
@@ -3040,6 +3043,7 @@ input[type="checkbox"] {
 
 .privacy-consent-actions .btn {
   width: auto;
+  min-height: 44px;
   padding: 9px 13px;
   font-size: 0.72rem;
 }
@@ -3048,7 +3052,7 @@ input[type="checkbox"] {
    on every non-game screen so it never covers a form, dashboard panel, or
    navigation control. */
 body.privacy-choice-pending .screen.active:not(#screen-game) {
-  height: calc(100dvh - 112px);
+  height: calc(100dvh - 124px);
 }
 
 /* Touch tablets have enough room for a compact consent card, but not for the
@@ -3059,7 +3063,7 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   }
 
   body.privacy-choice-pending .screen.active:not(#screen-game) {
-    height: calc(100dvh - 196px);
+    height: calc(100dvh - 220px);
   }
 
   .privacy-consent-banner {
@@ -3099,7 +3103,7 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 
 @media (pointer: coarse) and (min-width: 700px) and (orientation: landscape) {
   body.privacy-choice-pending .screen.active:not(#screen-game) {
-    height: calc(100dvh - 112px);
+    height: calc(100dvh - 124px);
   }
 
   .privacy-consent-banner {
@@ -3131,7 +3135,8 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 }
 
 .privacy-text-button {
-  padding: 8px 4px;
+  min-height: 44px;
+  padding: 8px;
   border: 0;
   color: var(--accent-2);
   background: transparent;
@@ -3530,7 +3535,7 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 
 .match-tab,
 .match-icon-button {
-  min-height: 40px;
+  min-height: 44px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -4109,7 +4114,8 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 }
 
 .btn-chat-safety {
-  padding: 5px 7px;
+  min-height: 44px;
+  padding: 8px 10px;
   border-radius: 8px;
   font-size: 0.7rem;
   font-weight: 800;
@@ -4197,7 +4203,9 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 }
 
 .chat-report-button {
-  padding: 1px 4px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px;
   border-radius: 5px;
   font-size: 0.64rem;
 }
@@ -4277,7 +4285,7 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 }
 
 .match-chat-gate-copy .btn-mini {
-  min-height: 34px;
+  min-height: 44px;
 }
 
 .online-chat-input:disabled {
@@ -4939,8 +4947,8 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 }
 
 .video-ctrl-btn {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5531,7 +5539,7 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   }
 
   .match-tab {
-    min-height: 36px;
+    min-height: 44px;
   }
 
   .match-panel {
@@ -5831,11 +5839,13 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 }
 
 .replay-btn {
+  min-width: 44px;
+  min-height: 44px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--text);
   border-radius: 8px;
-  padding: 6px 12px;
+  padding: 8px 12px;
   font-size: 0.82rem;
   font-weight: 700;
   cursor: pointer;

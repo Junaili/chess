@@ -45,6 +45,16 @@ function writeLocalStorageCache(status) {
   } catch {}
 }
 
+// Offline/Extend-down tolerance (dev-plan §11.6): a failed status fetch may
+// fall back to a cached copy up to 24h old for READS, but purchases stay
+// disabled while the flag below is set (deriveClubUI's statusUnreachable).
+const STALE_READ_MAX_MS = 24 * 60 * 60 * 1000
+let statusUnreachable = false
+
+export function isClubStatusUnreachable() {
+  return statusUnreachable
+}
+
 // fetchClubStatus: 1h cache (memory mirror + localStorage so it survives a
 // reload). Pass {force:true} on the exhaustive refresh-trigger list from
 // dev-plan §11.7 (login, logout, return-from-checkout, opening the Club
@@ -60,9 +70,25 @@ export async function fetchClubStatus({ force = false } = {}) {
       return cachedStatus
     }
   }
-  const res = await extendFetch('/club/status')
-  if (!res.ok) throw new Error(`club status ${res.status}`)
-  const status = await res.json()
+  let status
+  try {
+    const res = await extendFetch('/club/status')
+    if (!res.ok) throw new Error(`club status ${res.status}`)
+    status = await res.json()
+  } catch (error) {
+    // §11.6 fallback: serve the freshest cached copy up to 24h old. Keep
+    // cachedAt at the STORED timestamp (not now) so the next call retries
+    // the network instead of trusting the stale copy for a fresh TTL.
+    const stored = cachedStatus ? { status: cachedStatus, ts: cachedAt } : readLocalStorageCache()
+    if (stored && now - stored.ts < STALE_READ_MAX_MS) {
+      statusUnreachable = true
+      cachedStatus = stored.status
+      cachedAt = stored.ts
+      return cachedStatus
+    }
+    throw error
+  }
+  statusUnreachable = false
   cachedStatus = status
   cachedAt = now
   writeLocalStorageCache(status)
@@ -376,7 +402,7 @@ function setText(id, text) {
 function renderHomePanel(status, isChildSession) {
   const panel = document.getElementById('ags-club-panel')
   if (!panel) return
-  const ui = deriveClubUI(status, { isChildSession, isNative: isNative(), nativeIAPReady })
+  const ui = deriveClubUI(status, { isChildSession, isNative: isNative(), nativeIAPReady, statusUnreachable })
   const actionBtn = document.getElementById('btn-club-open')
   const staticNote = document.getElementById('club-home-static')
 
@@ -423,7 +449,7 @@ function skuButtonHtml(button) {
 }
 
 function renderClubScreen(status, isChildSession) {
-  const ui = deriveClubUI(status, { isChildSession, isNative: isNative(), nativeIAPReady })
+  const ui = deriveClubUI(status, { isChildSession, isNative: isNative(), nativeIAPReady, statusUnreachable })
   const statusLine = document.getElementById('club-status-line')
   const grid = document.getElementById('club-purchase-grid')
   const message = document.getElementById('club-message')
@@ -456,9 +482,12 @@ function renderClubScreen(status, isChildSession) {
     // branches of deriveClubUI; absent (undefined) for the normal purchase
     // branch, where the other parts below carry any messaging instead.
     if (ui.message) parts.push(ui.message)
+    if (ui.statusUnreachableReason) parts.push(ui.statusUnreachableReason)
     if (ui.nativePurchasesUnavailable) parts.push('The App Store connection isn\'t ready yet — try again in a moment, or use Restore Purchases below if you\'ve bought Club before.')
     if (ui.canPurchaseReason) parts.push(ui.canPurchaseReason)
     if (ui.monthlyCancelNotice) parts.push(ui.monthlyCancelNotice)
+    if (ui.cancelNote) parts.push(ui.cancelNote)
+    if (ui.upgradeNote) parts.push(ui.upgradeNote)
     message.textContent = parts.join(' ')
     message.style.display = parts.length ? '' : 'none'
   }

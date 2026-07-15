@@ -27,7 +27,12 @@ async function stubClubStatus(page, status) {
 }
 
 async function openClub(page) {
-  await page.evaluate(() => window.agsOpenClub && window.agsOpenClub());
+  await page.evaluate(() => {
+    // agsOpenClub hard-guards against signed-out sessions (dev-plan §11.5) —
+    // these specs simulate a signed-in adult, so declare that premise.
+    window.agsSetCurrentUserIdForTesting?.('club-spec-user');
+    window.agsOpenClub && window.agsOpenClub();
+  });
   await expect(page.locator('#screen-club')).toBeVisible();
 }
 
@@ -418,5 +423,100 @@ test.describe('Journal history depth gating', () => {
     await expect(page.locator('.journal-entry')).toHaveCount(5);
     await expect(page.locator('#journal-entries [data-purchase-ui]')).toHaveCount(0);
     await expect(page.locator('#journal-entries .profile-history-locked')).toContainText('Ask your parent');
+  });
+});
+
+// ── M9 lifecycle edges (dev-plan §11) ────────────────────────────────────────
+
+test.describe('Club lifecycle edges', () => {
+  test('Extend down: stale cached status still renders, purchases disabled with try-again-later', async ({ page }) => {
+    await gotoApp(page);
+    // Seed a <24h-old cached status AFTER boot (the signed-out boot path
+    // clears the cache via resetClubStatus), then make every /club/status
+    // call fail — reads honor the cache, purchases must not.
+    await page.evaluate(status => {
+      localStorage.setItem('chess-club-status-v1', JSON.stringify({ status, ts: Date.now() - 2 * 60 * 60 * 1000 }));
+    }, FREE_STATUS);
+    await page.route('**/club/status*', route => route.abort());
+    await openClub(page);
+
+    // Rendered from the stale copy (coins visible), not the failure caption.
+    await expect(page.locator('#club-status-line')).toContainText('40 🪙');
+    await expect(page.locator('#club-message')).toContainText('try again later');
+    for (const btn of await page.locator('[data-club-buy]').all()) {
+      await expect(btn).toBeDisabled();
+    }
+  });
+
+  test('Extend down with no usable cache: failure caption, no purchase grid', async ({ page }) => {
+    await gotoApp(page);
+    await page.route('**/club/status*', route => route.abort());
+    await openClub(page);
+
+    await expect(page.locator('#club-status-line')).toContainText('Could not load Club status');
+    await expect(page.locator('[data-club-buy]')).toHaveCount(0);
+  });
+
+  test('active monthly member sees cancel-keeps-access and Stripe upgrade notes', async ({ page }) => {
+    await gotoApp(page);
+    await stubClubStatus(page, ACTIVE_STATUS); // stripe individual monthly
+    await openClub(page);
+
+    await expect(page.locator('#club-message')).toContainText('If you cancel, you keep Club until');
+    await expect(page.locator('#club-message')).toContainText('Cancel your Individual plan first');
+  });
+
+  test('guest gate: signed-out agsOpenClub is a no-op and fires no status calls', async ({ page }) => {
+    await gotoApp(page);
+    let statusCalls = 0;
+    await page.route('**/club/status*', route => { statusCalls += 1; return route.abort(); });
+
+    // No agsSetCurrentUserIdForTesting — this IS the signed-out state.
+    await page.evaluate(() => window.agsOpenClub && window.agsOpenClub());
+    await page.waitForTimeout(500);
+
+    await expect(page.locator('#screen-club')).not.toBeVisible();
+    expect(statusCalls).toBe(0);
+  });
+
+  test('deletion modal warns about the surviving Apple subscription and forfeited coins (§11.8)', async ({ page }) => {
+    await gotoApp(page);
+    await page.route('**/account/deletion-requirements*', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        available: true, appleLinked: false, appleReauthorizationRequired: false,
+        appleClubSubscriptionActive: true, coinBalance: 415,
+      }),
+    }));
+    await page.evaluate(() => {
+      window.agsSetCurrentUserIdForTesting?.('deleting-user');
+      window.agsOpenDeleteAccount();
+    });
+
+    const notices = page.locator('#delete-account-club-notices');
+    await expect(notices).toBeVisible();
+    await expect(notices).toContainText('NOT cancelled by deleting your account');
+    await expect(notices).toContainText('Settings → Apple ID → Subscriptions');
+    await expect(notices).toContainText('415 Ethan Coins will be permanently lost');
+  });
+
+  test('deletion modal shows no Club notices for a free user with zero coins', async ({ page }) => {
+    await gotoApp(page);
+    await page.route('**/account/deletion-requirements*', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        available: true, appleLinked: false, appleReauthorizationRequired: false,
+        appleClubSubscriptionActive: false, coinBalance: 0,
+      }),
+    }));
+    await page.evaluate(() => {
+      window.agsSetCurrentUserIdForTesting?.('deleting-user');
+      window.agsOpenDeleteAccount();
+    });
+
+    await expect(page.locator('#delete-account-message')).toContainText('Type DELETE');
+    await expect(page.locator('#delete-account-club-notices')).toBeHidden();
   });
 });

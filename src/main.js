@@ -23,7 +23,7 @@ import { fetchFamilyState, createFamilyGroup, inviteToFamily, acceptFamilyInvite
 import { initGusPanel, resetGusPanel, openGusProfile, refreshGusProfile, showGusTab, startGusMatchmaking as startGusMatchmakingFlow } from './gus.js'
 import { renderJournalTab, resetJournalState } from './journal.js'
 import { initClubPanel, resetClubStatus, openClubScreen, refreshClubManageAction, consumeClubReturnParams, hasClub, getClubStatus, getCoins, initNativeIAP, triggerRestorePurchases, giveCoins } from './club.js'
-import { formatCoins } from './club-contract.mjs'
+import { formatCoins, accountDeletionNotices } from './club-contract.mjs'
 import { initCosmetics, resetCosmetics, loadCoinStore, getEquippedFlairBadge, triggerVictoryEffect } from './coin-store.js'
 import { sendHighFive, hasSentHighFive } from './kudos.js'
 import { deriveHighFiveButton, formatKudosCount } from './kudos-contract.mjs'
@@ -1895,7 +1895,13 @@ async function initAuth() {
   window.agsOpenGusProfile = openGusProfile
   window.agsRefreshGusProfile = refreshGusProfile
   window.agsShowGusTab = showGusTab
-  window.agsOpenClub = () => openClubScreen(isProtectedChildSession())
+  // Guest gate (dev-plan §11.5): signed-out sessions must never reach the
+  // Club screen or trigger a /club/status call — the UI entry points are
+  // already hidden for guests, this hard-guards direct invocation too.
+  window.agsOpenClub = () => {
+    if (!currentUserId) return
+    openClubScreen(isProtectedChildSession())
+  }
   window.agsClubManageSubscription = refreshClubManageAction
   window.agsClubRestorePurchases = triggerRestorePurchases
   window.agsRefreshFriends = refreshFriendsUI
@@ -3103,6 +3109,7 @@ async function openDeleteAccountModal() {
   const modal = document.getElementById('delete-account-modal')
   const input = document.getElementById('delete-account-confirmation')
   const submit = document.getElementById('delete-account-submit')
+  const clubNotices = document.getElementById('delete-account-club-notices')
   if (!modal || !currentUserId) return
   deletionRequirements = null
   modal.style.display = 'flex'
@@ -3111,9 +3118,18 @@ async function openDeleteAccountModal() {
     input.disabled = true
   }
   if (submit) submit.disabled = true
+  if (clubNotices) clubNotices.style.display = 'none'
   setAccountDeletionMessage('Checking account deletion requirements…')
   try {
     deletionRequirements = await fetchDeletionRequirements()
+    // Club/coins warnings (dev-plan §11.8) must be visible BEFORE the final
+    // confirm: an active Apple subscription survives account deletion, and
+    // any coin balance is forfeited.
+    if (clubNotices) {
+      const notices = accountDeletionNotices(deletionRequirements)
+      clubNotices.textContent = notices.join(' ')
+      clubNotices.style.display = notices.length ? '' : 'none'
+    }
     if (input) {
       input.disabled = false
       input.focus()
@@ -4898,6 +4914,10 @@ async function restoreRealtimeAfterResume() {
     // A transient refresh failure must not leave realtime permanently paused;
     // Presence will reconnect persistently and the session timer will retry.
     if (sdk.getToken()?.accessToken) resumePresence()
+    // Club status refresh-on-resume (dev-plan §11.7): non-forced — the 1h
+    // cache TTL inside fetchClubStatus is exactly the "when cache older
+    // than 1h" rule, so a recent cache stays untouched.
+    if (currentUserId) void initClubPanel(isProtectedChildSession())
   }
 }
 
