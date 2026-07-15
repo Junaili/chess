@@ -184,14 +184,25 @@ func (j *TrainJob) runTrainingAttempt(ctx context.Context, runID string, started
 	if err != nil {
 		return status, false, fmt.Errorf("load brain: %w", err)
 	}
+	if !found {
+		log.Printf("train: no CloudSave brain yet — creating seed from baked brain.json (v%d)", bot.Brain.Version)
+		if err := createAdminGameRecord(BotBrainKey(j.botID), bot.Brain); err != nil && !errors.Is(err, errAdminRecordConflict) {
+			return status, false, fmt.Errorf("create brain: %w", err)
+		}
+		rawBrain, brainUpdatedAt, found, err = fetchAdminGameRecordRaw(BotBrainKey(j.botID))
+		if err != nil {
+			return status, false, fmt.Errorf("reload created brain: %w", err)
+		}
+		if !found {
+			return status, false, fmt.Errorf("reload created brain: CloudSave record is still missing")
+		}
+	}
 	if found {
 		var cloudBrain botbrain.Brain
 		if err := json.Unmarshal(rawBrain, &cloudBrain); err != nil {
 			return status, false, fmt.Errorf("parse brain: %w", err)
 		}
 		bot.Brain = &cloudBrain
-	} else {
-		log.Printf("train: no CloudSave brain yet — seeding from baked brain.json (v%d)", bot.Brain.Version)
 	}
 	if bot.Brain.LastTrainingRunID == runID {
 		status["result"] = "already_completed"
@@ -339,8 +350,6 @@ func (j *TrainJob) runTrainingAttempt(ctx context.Context, runID string, started
 }
 
 func (j *TrainJob) commitBrain(brain *botbrain.Brain, updatedAt string) error {
-	// The concurrent endpoint accepts an empty updatedAt for creation. Using it
-	// for the first write closes the last replica race in a brand-new namespace.
 	return putAdminGameRecordConcurrent(BotBrainKey(j.botID), brain, updatedAt)
 }
 

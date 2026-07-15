@@ -39,6 +39,11 @@ const botHistoryTargetBytes = 900 << 10
 
 type adminRecordEnvelope struct {
 	Value     json.RawMessage `json:"value"`
+	UpdatedAt string          `json:"updated_at"`
+}
+
+type concurrentAdminRecordRequest struct {
+	Value     json.RawMessage `json:"value"`
 	UpdatedAt string          `json:"updatedAt"`
 }
 
@@ -97,7 +102,50 @@ func fetchAdminGameRecordRaw(key string) (value json.RawMessage, updatedAt strin
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&envelope); err != nil {
 		return nil, "", false, fmt.Errorf("parse admin record %q: %w", key, err)
 	}
+	if strings.TrimSpace(envelope.UpdatedAt) == "" {
+		return nil, "", false, fmt.Errorf("cloudsave admin record %q response is missing required updated_at", key)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, envelope.UpdatedAt); err != nil {
+		return nil, "", false, fmt.Errorf("cloudsave admin record %q returned invalid updated_at %q: %w", key, envelope.UpdatedAt, err)
+	}
 	return envelope.Value, envelope.UpdatedAt, true, nil
+}
+
+// createAdminGameRecord creates a record that does not exist yet. CloudSave's
+// concurrent PUT requires a real updatedAt precondition, so callers must use
+// POST once, re-read the server-issued updated_at, then continue through CAS.
+func createAdminGameRecord(key string, value any) error {
+	baseURL, clientID, clientSecret, namespace, err := agsConfig()
+	if err != nil {
+		return err
+	}
+	token, err := getClientCredentialsToken(baseURL, clientID, clientSecret)
+	if err != nil {
+		return fmt.Errorf("get token: %w", err)
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, adminRecordURL(baseURL, namespace, key), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := outboundHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	rawResp, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusPreconditionFailed {
+		return errAdminRecordConflict
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("create admin record %q returned %d: %s", key, resp.StatusCode, string(rawResp))
+	}
+	return nil
 }
 
 // putAdminGameRecordConcurrent writes only if updatedAt still matches the
@@ -105,6 +153,12 @@ func fetchAdminGameRecordRaw(key string) (value json.RawMessage, updatedAt strin
 // re-read, re-apply their pure mutation, and retry without losing another
 // replica's update.
 func putAdminGameRecordConcurrent(key string, value any, updatedAt string) error {
+	if strings.TrimSpace(updatedAt) == "" {
+		return fmt.Errorf("concurrent save admin record %q requires a non-empty updatedAt precondition", key)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, updatedAt); err != nil {
+		return fmt.Errorf("concurrent save admin record %q received invalid updatedAt %q: %w", key, updatedAt, err)
+	}
 	baseURL, clientID, clientSecret, namespace, err := agsConfig()
 	if err != nil {
 		return err
@@ -117,9 +171,9 @@ func putAdminGameRecordConcurrent(key string, value any, updatedAt string) error
 	if err != nil {
 		return err
 	}
-	body, err := json.Marshal(map[string]any{
-		"value":     json.RawMessage(raw),
-		"updatedAt": updatedAt,
+	body, err := json.Marshal(concurrentAdminRecordRequest{
+		Value:     json.RawMessage(raw),
+		UpdatedAt: updatedAt,
 	})
 	if err != nil {
 		return err
@@ -233,10 +287,15 @@ func SaveBotGameHistory(key string, matches []botbrain.MatchEntry) error {
 			return err
 		}
 		value := botHistoryValue{}
-		if found {
-			if err := json.Unmarshal(raw, &value); err != nil {
-				return fmt.Errorf("parse bot history %q: %w", key, err)
+		if !found {
+			seed := botHistoryValue{Matches: []botbrain.MatchEntry{}, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+			if err := createAdminGameRecord(key, seed); err != nil && !errors.Is(err, errAdminRecordConflict) {
+				return err
 			}
+			continue
+		}
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return fmt.Errorf("parse bot history %q: %w", key, err)
 		}
 		value.Matches = compactBotHistory(append(value.Matches, matches...), 500)
 		value.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -264,12 +323,17 @@ func AppendBotGame(key string, entry botbrain.MatchEntry, capEntries int) (dupli
 			return false, err
 		}
 		value := botHistoryValue{}
-		if found {
-			if err := json.Unmarshal(raw, &value); err != nil {
-				return false, fmt.Errorf("parse bot history %q: %w", key, err)
+		if !found {
+			seed := botHistoryValue{Matches: []botbrain.MatchEntry{}, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+			if err := createAdminGameRecord(key, seed); err != nil && !errors.Is(err, errAdminRecordConflict) {
+				return false, err
 			}
-			value.Matches = uniqueBotMatches(value.Matches)
+			continue
 		}
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return false, fmt.Errorf("parse bot history %q: %w", key, err)
+		}
+		value.Matches = uniqueBotMatches(value.Matches)
 		for _, m := range value.Matches {
 			if m.ID == entry.ID {
 				return true, nil

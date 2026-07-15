@@ -24,13 +24,19 @@ type fakeAdminRecord struct {
 }
 
 type fakeCloudSave struct {
-	mu            sync.Mutex
-	records       map[string]fakeAdminRecord
-	version       int
-	conflictKey   string
-	conflicted    bool
-	conflictValue any
-	concurrentPUT int
+	mu                      sync.Mutex
+	records                 map[string]fakeAdminRecord
+	version                 int
+	conflictKey             string
+	conflicted              bool
+	conflictValue           any
+	createConflictKey       string
+	createConflicted        bool
+	createConflictValue     any
+	omitUpdatedAt           bool
+	createPOST              int
+	concurrentPUT           int
+	lastConcurrentUpdatedAt string
 }
 
 func newFakeCloudSave() *fakeCloudSave {
@@ -69,8 +75,32 @@ func (f *fakeCloudSave) RoundTrip(req *http.Request) (*http.Response, error) {
 		if !ok {
 			return fakeHTTPResponse(http.StatusNotFound, `{}`), nil
 		}
-		body, _ := json.Marshal(map[string]any{"value": record.value, "updatedAt": record.updatedAt})
+		bodyValue := map[string]any{"value": record.value}
+		if !f.omitUpdatedAt {
+			bodyValue["updated_at"] = record.updatedAt
+		}
+		body, _ := json.Marshal(bodyValue)
 		return fakeHTTPResponse(http.StatusOK, string(body)), nil
+	}
+
+	if req.Method == http.MethodPost {
+		f.createPOST++
+		raw, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		if key == f.createConflictKey && !f.createConflicted {
+			f.createConflicted = true
+			f.storeLocked(key, f.createConflictValue)
+			return fakeHTTPResponse(http.StatusConflict, `{}`), nil
+		}
+		if _, exists := f.records[key]; exists {
+			return fakeHTTPResponse(http.StatusConflict, `{}`), nil
+		}
+		f.storeLocked(key, json.RawMessage(raw))
+		record := f.records[key]
+		body, _ := json.Marshal(map[string]any{"value": record.value, "updated_at": record.updatedAt})
+		return fakeHTTPResponse(http.StatusCreated, string(body)), nil
 	}
 
 	if req.Method == http.MethodPut && strings.Contains(req.URL.Path, "/concurrent/adminrecords/") {
@@ -82,6 +112,10 @@ func (f *fakeCloudSave) RoundTrip(req *http.Request) (*http.Response, error) {
 		if err := json.NewDecoder(req.Body).Decode(&envelope); err != nil {
 			return nil, err
 		}
+		f.lastConcurrentUpdatedAt = envelope.UpdatedAt
+		if envelope.UpdatedAt == "" {
+			return fakeHTTPResponse(http.StatusBadRequest, `{"errorCode":18144}`), nil
+		}
 		if key == f.conflictKey && !f.conflicted {
 			f.conflicted = true
 			f.storeLocked(key, f.conflictValue)
@@ -89,11 +123,7 @@ func (f *fakeCloudSave) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		record, ok := f.records[key]
 		if !ok {
-			if envelope.UpdatedAt != "" {
-				return fakeHTTPResponse(http.StatusPreconditionFailed, `{}`), nil
-			}
-			f.storeLocked(key, json.RawMessage(envelope.Value))
-			return fakeHTTPResponse(http.StatusCreated, ``), nil
+			return fakeHTTPResponse(http.StatusPreconditionFailed, `{}`), nil
 		}
 		if record.updatedAt != envelope.UpdatedAt {
 			return fakeHTTPResponse(http.StatusPreconditionFailed, `{}`), nil
@@ -180,7 +210,51 @@ func TestAppendBotGameRetriesConflictWithoutLosingEitherWriter(t *testing.T) {
 	}
 }
 
-func TestAppendBotGameCreatesFirstRecordThroughCAS(t *testing.T) {
+func TestCloudSaveConcurrencyTokenUsesResponseAndRequestCasing(t *testing.T) {
+	store := newFakeCloudSave()
+	key := BotHistoryKey("gambit-gus")
+	store.seed(key, botHistoryValue{Matches: []botbrain.MatchEntry{completedFoolsMate("existing")}})
+	useFakeAGS(t, store)
+
+	raw, updatedAt, found, err := fetchAdminGameRecordRaw(key)
+	if err != nil || !found {
+		t.Fatalf("fetch: found=%v err=%v", found, err)
+	}
+	store.mu.Lock()
+	wantUpdatedAt := store.records[key].updatedAt
+	store.mu.Unlock()
+	if updatedAt != wantUpdatedAt {
+		t.Fatalf("response updated_at was not decoded exactly: got=%q want=%q", updatedAt, wantUpdatedAt)
+	}
+	var value botHistoryValue
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatal(err)
+	}
+	if err := putAdminGameRecordConcurrent(key, value, updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if store.lastConcurrentUpdatedAt != wantUpdatedAt {
+		t.Fatalf("request updatedAt changed: got=%q want=%q", store.lastConcurrentUpdatedAt, wantUpdatedAt)
+	}
+}
+
+func TestMissingCloudSaveUpdatedAtFailsBeforeWrite(t *testing.T) {
+	store := newFakeCloudSave()
+	key := BotHistoryKey("gambit-gus")
+	store.seed(key, botHistoryValue{})
+	store.omitUpdatedAt = true
+	useFakeAGS(t, store)
+
+	_, err := AppendBotGame(key, completedFoolsMate("incoming"), 500)
+	if err == nil || !strings.Contains(err.Error(), "missing required updated_at") {
+		t.Fatalf("missing concurrency token was not rejected: %v", err)
+	}
+	if store.concurrentPUT != 0 {
+		t.Fatalf("write attempted without a concurrency token: puts=%d", store.concurrentPUT)
+	}
+}
+
+func TestAppendBotGameCreatesFirstRecordThenUsesCAS(t *testing.T) {
 	store := newFakeCloudSave()
 	useFakeAGS(t, store)
 	key := BotHistoryKey("gambit-gus")
@@ -190,10 +264,29 @@ func TestAppendBotGameCreatesFirstRecordThroughCAS(t *testing.T) {
 	}
 	games, err := FetchAllBotGames(key)
 	if err != nil || len(games) != 1 || games[0].ID != "first" {
-		t.Fatalf("first CAS create was not durable: games=%#v err=%v", games, err)
+		t.Fatalf("first create was not durable: games=%#v err=%v", games, err)
 	}
-	if store.concurrentPUT != 1 {
-		t.Fatalf("first record bypassed concurrency endpoint: puts=%d", store.concurrentPUT)
+	if store.createPOST != 1 || store.concurrentPUT != 1 {
+		t.Fatalf("first record did not create then update through CAS: posts=%d puts=%d", store.createPOST, store.concurrentPUT)
+	}
+}
+
+func TestAppendBotGameRetriesConcurrentCreateWithoutLosingEitherWriter(t *testing.T) {
+	store := newFakeCloudSave()
+	key := BotHistoryKey("gambit-gus")
+	racer := completedFoolsMate("creator-racer")
+	incoming := completedFoolsMate("incoming")
+	store.createConflictKey = key
+	store.createConflictValue = botHistoryValue{Matches: []botbrain.MatchEntry{racer}}
+	useFakeAGS(t, store)
+
+	duplicate, err := AppendBotGame(key, incoming, 500)
+	if err != nil || duplicate {
+		t.Fatalf("append after create conflict: duplicate=%v err=%v", duplicate, err)
+	}
+	games, err := FetchAllBotGames(key)
+	if err != nil || len(games) != 2 || games[0].ID != "creator-racer" || games[1].ID != "incoming" {
+		t.Fatalf("concurrent creator lost a game: games=%#v err=%v", games, err)
 	}
 }
 
@@ -216,20 +309,23 @@ func TestSaveBotGameHistoryMergesConcurrentLiveGame(t *testing.T) {
 	}
 }
 
-func TestCommitBrainCreatesFirstRecordThroughCAS(t *testing.T) {
+func TestTrainingCreatesFirstBrainThenCommitsThroughCAS(t *testing.T) {
 	store := newFakeCloudSave()
 	useFakeAGS(t, store)
-	job := NewTrainJob("gambit-gus", "unused")
-	brain := &botbrain.Brain{SchemaVersion: 1, BotID: "gambit-gus"}
-	if err := job.commitBrain(brain, ""); err != nil {
+	job := NewTrainJob("gambit-gus", filepath.Join("..", "..", "bots", "gambit-gus"))
+	status, err := job.RunTrainingFor(context.Background(), "first-daily-run")
+	if err != nil {
 		t.Fatal(err)
 	}
-	stored, found, err := FetchBotBrain("gambit-gus")
-	if err != nil || !found || stored.BotID != "gambit-gus" {
-		t.Fatalf("first brain CAS create failed: brain=%#v found=%v err=%v", stored, found, err)
+	if status["result"] != "no_new_games" {
+		t.Fatalf("unexpected training result: %#v", status)
 	}
-	if store.concurrentPUT != 1 {
-		t.Fatalf("first brain write bypassed concurrency endpoint: puts=%d", store.concurrentPUT)
+	stored, found, err := FetchBotBrain("gambit-gus")
+	if err != nil || !found || stored.BotID != "gambit-gus" || stored.LastChecked == nil {
+		t.Fatalf("first brain create failed: brain=%#v found=%v err=%v", stored, found, err)
+	}
+	if store.createPOST != 1 || store.concurrentPUT != 1 {
+		t.Fatalf("first brain did not create then update through CAS: posts=%d puts=%d", store.createPOST, store.concurrentPUT)
 	}
 }
 
