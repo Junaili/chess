@@ -67,9 +67,12 @@ function setChessPieceGraphic(element, type, color, label = '') {
     element.innerHTML = renderChessPieceSVG(type);
     element.dataset.pieceRender = renderKey;
   }
-  element.dataset.pieceType = type;
-  element.dataset.pieceColor = color;
-  element.setAttribute('aria-label', label || `${color} ${PIECE_LABELS[type] || type}`);
+  if (element.dataset.pieceType !== type) element.dataset.pieceType = type;
+  if (element.dataset.pieceColor !== color) element.dataset.pieceColor = color;
+  const accessibleLabel = label || `${color} ${PIECE_LABELS[type] || type}`;
+  if (element.getAttribute('aria-label') !== accessibleLabel) {
+    element.setAttribute('aria-label', accessibleLabel);
+  }
 }
 
 function hydrateStaticPieceIcons(root = document) {
@@ -110,6 +113,114 @@ const MAX_RECONNECTS = 3;
 let game = null;
 let ai = new ChessAI();
 
+function serializeGameForWorker(source) {
+  return {
+    board: source.cloneBoard(),
+    currentTurn: source.currentTurn,
+    enPassantTarget: source.enPassantTarget ? { ...source.enPassantTarget } : null,
+    castlingRights: JSON.parse(JSON.stringify(source.castlingRights)),
+    // Search correctness comes from the position/repetition state below; the
+    // verbose undo records in moveHistory are UI history and need not cross the
+    // worker boundary on every hint or turn.
+    moveHistory: [],
+    capturedByWhite: source.capturedByWhite.map(piece => ({ ...piece })),
+    capturedByBlack: source.capturedByBlack.map(piece => ({ ...piece })),
+    status: source.status,
+    winner: source.winner,
+    halfmoveClock: source.halfmoveClock,
+    positionCounts: [...source.positionCounts.entries()],
+  };
+}
+
+function createChessWorkerClient() {
+  let worker = null;
+  let nextId = 0;
+  const pending = new Map();
+
+  function ensureWorker() {
+    if (worker || typeof Worker === 'undefined') return worker;
+    worker = new Worker(new URL('analysis-worker.js', document.baseURI).href);
+    worker.addEventListener('message', event => {
+      const request = pending.get(event.data?.id);
+      if (!request) return;
+      pending.delete(event.data.id);
+      if (event.data.error) request.reject(new Error(event.data.error));
+      else request.resolve(event.data.result);
+    });
+    worker.addEventListener('error', error => {
+      for (const request of pending.values()) request.reject(error);
+      pending.clear();
+      worker?.terminate();
+      worker = null;
+    });
+    return worker;
+  }
+
+  function request(type, payload) {
+    const activeWorker = ensureWorker();
+    if (!activeWorker) return Promise.reject(new Error('Web Workers are unavailable'));
+    const id = ++nextId;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      try {
+        activeWorker.postMessage({ id, type, payload });
+      } catch (error) {
+        pending.delete(id);
+        reject(error);
+      }
+    });
+  }
+
+  return {
+    bestMove(source, difficulty, options = {}) {
+      return request('best-move', { position: serializeGameForWorker(source), difficulty, options });
+    },
+    gradePosition(source, move, names = {}, options = {}) {
+      return request('grade-position', { position: serializeGameForWorker(source), move, names, options });
+    },
+    analyzeMatch(match, options = {}) {
+      return request('analyze-match', {
+        moves: match.moves || [],
+        names: { whiteName: match.whiteName, blackName: match.blackName },
+        playerColor: match.myColor,
+        scope: options.scope || 'all',
+        options,
+      });
+    },
+    terminate() {
+      worker?.terminate();
+      worker = null;
+      for (const request of pending.values()) request.reject(new Error('Chess worker terminated'));
+      pending.clear();
+    },
+  };
+}
+
+// Gameplay and long-running reports use separate queues. A five-game coaching
+// report can never delay the computer's next move or an explicitly requested hint.
+window.chessGameplayWorker = createChessWorkerClient();
+window.chessBackgroundWorker = createChessWorkerClient();
+window.serializeGameForWorker = serializeGameForWorker;
+
+// Warm only the worker file in the HTTP cache during idle time. Keeping this
+// in the copied classic script prevents Vite from rewriting it into a second,
+// hashed asset whose relative importScripts() URLs would not match production.
+function prefetchAnalysisWorker() {
+  if (document.querySelector('link[data-analysis-worker-prefetch]')) return;
+  const link = document.createElement('link');
+  link.rel = 'prefetch';
+  link.as = 'script';
+  link.href = new URL('analysis-worker.js', document.baseURI).href;
+  link.dataset.analysisWorkerPrefetch = '1';
+  document.head.appendChild(link);
+}
+
+if (typeof requestIdleCallback === 'function') {
+  requestIdleCallback(prefetchAnalysisWorker, { timeout: 2000 });
+} else {
+  setTimeout(prefetchAnalysisWorker, 1000);
+}
+
 // ── Journal practice loop state ──────────────────────────────────────────────
 // retryContext: set while playing on from a mid-game position (journal "try
 // again" / puzzle drills). judge=true means src/journal.js wants the player's
@@ -129,6 +240,9 @@ let pendingPromotion = null;
 let suggestedMoveBeforePlay = null;
 let selectedPieceColor = null;
 let aiThinking = false;
+let gameplaySearchGeneration = 0;
+let suggestionGeneration = 0;
+let suggestionSearch = null;
 let contacts = JSON.parse(localStorage.getItem('chess_contacts') || '[]');
 let playerName = localStorage.getItem('chess_player_name') || '';
 let leaderboard = JSON.parse(localStorage.getItem('chess_leaderboard') || '[]');
@@ -311,6 +425,20 @@ function showScreen(name) {
 function showColorSelect(mode) {
   savePlayerName();
   gameMode = mode;
+  if (mode === 'online') {
+    // Hide the lazy PeerJS download behind the color/piece-selection steps.
+    if (!document.querySelector('link[data-peer-preconnect]')) {
+      const preconnect = document.createElement('link');
+      preconnect.rel = 'preconnect';
+      preconnect.href = 'https://0.peerjs.com';
+      preconnect.crossOrigin = 'anonymous';
+      preconnect.dataset.peerPreconnect = '1';
+      document.head.appendChild(preconnect);
+    }
+    void window.agsPrepareRealtimeRuntime?.().catch(error => {
+      console.warn('Could not prewarm online play:', error?.message || error);
+    });
+  }
   selectedPieceColor = null;
   document.documentElement.style.removeProperty('--white-piece-color');
   document.documentElement.style.removeProperty('--black-piece-color');
@@ -457,6 +585,8 @@ function forceGameOverStateForTesting(status, winner) {
 }
 
 function startGame() {
+  gameplaySearchGeneration++;
+  suggestionGeneration++;
   if (typeof window.agsSetPresence === 'function') {
     window.agsSetPresence('in-match');
   }
@@ -481,6 +611,7 @@ function startGame() {
   dragging = null;
   pendingPromotion = null;
   suggestedMoveBeforePlay = null;
+  suggestionSearch = null;
   aiThinking = false;
 
   document.getElementById('hint-box').style.display = 'none';
@@ -544,6 +675,8 @@ function startGame() {
 
   if (gameMode === 'computer' && playerColor === 'black') {
     scheduleAIMove();
+  } else if (gameMode === 'computer') {
+    primeSuggestedMove();
   }
 }
 
@@ -563,6 +696,7 @@ function playAgainFromGameOver() {
 function initBoard() {
   const boardEl = document.getElementById('chess-board');
   boardEl.innerHTML = '';
+  delete boardEl.dataset.arrowKey;
   const flipped = boardFlipped;
   boardEl.dataset.flipped = flipped;
 
@@ -586,7 +720,7 @@ function initBoard() {
 
 function renderBoard() {
   const boardEl = document.getElementById('chess-board');
-  const flipped = playerColor === 'black';
+  const flipped = boardFlipped;
 
   // Rebuild DOM only when orientation changes or board is not yet initialized
   if (boardEl.children.length !== 64 || boardEl.dataset.flipped !== String(flipped)) {
@@ -594,6 +728,7 @@ function renderBoard() {
   }
 
   const last = game.moveHistory.length > 0 ? game.moveHistory[game.moveHistory.length - 1] : null;
+  const validTargets = new Set(validMoves.map(move => move.toR * 8 + move.toC));
   let checkKing = null;
   if (game.status === 'check' || game.status === 'checkmate') {
     checkKing = game.findKing(game.currentTurn);
@@ -606,28 +741,34 @@ function renderBoard() {
     const c = +sq.dataset.c;
 
     const isSelected  = selectedSquare?.r === r && selectedSquare?.c === c;
-    const isValid     = validMoves.some(m => m.toR === r && m.toC === c);
+    const isValid     = validTargets.has(r * 8 + c);
     const isLastFrom  = !!last && last.fr === r && last.fc === c;
     const isLastTo    = !!last && last.toR === r && last.toC === c;
     const isInCheck   = !!checkKing && checkKing.r === r && checkKing.c === c;
 
-    sq.classList.toggle('selected',       isSelected);
-    sq.classList.toggle('valid-move',     isValid);
-    sq.classList.toggle('last-move',      isLastFrom || isLastTo);
-    sq.classList.toggle('last-move-from', isLastFrom);
-    sq.classList.toggle('last-move-to',   isLastTo);
-    sq.classList.toggle('in-check',       isInCheck);
+    const visualState = `${+isSelected}${+isValid}${+isLastFrom}${+isLastTo}${+isInCheck}`;
+    if (sq.dataset.visualState !== visualState) {
+      sq.dataset.visualState = visualState;
+      sq.classList.toggle('selected',       isSelected);
+      sq.classList.toggle('valid-move',     isValid);
+      sq.classList.toggle('last-move',      isLastFrom || isLastTo);
+      sq.classList.toggle('last-move-from', isLastFrom);
+      sq.classList.toggle('last-move-to',   isLastTo);
+      sq.classList.toggle('in-check',       isInCheck);
+    }
 
     const piece = game.board[r][c];
-    let pieceEl = sq.querySelector('.piece');
+    let pieceEl = sq._pieceElement || null;
     if (piece) {
       if (!pieceEl) {
         pieceEl = document.createElement('div');
         pieceEl.draggable = true;
         pieceEl.addEventListener('dragstart', e => onDragStart(e, r, c));
         sq.appendChild(pieceEl);
+        sq._pieceElement = pieceEl;
       }
-      pieceEl.className = 'piece ' + piece.color;
+      const className = 'piece ' + piece.color;
+      if (pieceEl.className !== className) pieceEl.className = className;
       setChessPieceGraphic(
         pieceEl,
         piece.type,
@@ -636,11 +777,10 @@ function renderBoard() {
       );
     } else if (pieceEl) {
       pieceEl.remove();
+      sq._pieceElement = null;
     }
   }
 
-  const existingArrow = boardEl.querySelector('.last-move-arrow');
-  if (existingArrow) existingArrow.remove();
   renderLastMoveArrow(boardEl, flipped);
 }
 
@@ -660,9 +800,17 @@ function addCoordinateLabels(squareEl, r, c, displayRow, displayCol) {
 }
 
 function renderLastMoveArrow(boardEl, flipped) {
-  if (!game?.moveHistory.length) return;
+  if (!game?.moveHistory.length) {
+    boardEl.querySelector('.last-move-arrow')?.remove();
+    delete boardEl.dataset.arrowKey;
+    return;
+  }
 
   const last = game.moveHistory[game.moveHistory.length - 1];
+  const arrowKey = `${+flipped}:${last.fr}:${last.fc}:${last.toR}:${last.toC}`;
+  if (boardEl.dataset.arrowKey === arrowKey && boardEl.querySelector('.last-move-arrow')) return;
+  boardEl.querySelector('.last-move-arrow')?.remove();
+  boardEl.dataset.arrowKey = arrowKey;
   const fromCol = flipped ? 7 - last.fc : last.fc;
   const fromRow = flipped ? 7 - last.fr : last.fr;
   const toCol = flipped ? 7 - last.toC : last.toC;
@@ -707,8 +855,7 @@ function onSquareClick(r, c) {
 }
 
 function selectSquare(r, c) {
-  if (!suggestedMoveBeforePlay && gameMode !== 'online')
-    suggestedMoveBeforePlay = ai.getSuggestedMove(game, game.currentTurn);
+  if (!suggestedMoveBeforePlay && gameMode !== 'online') primeSuggestedMove();
   selectedSquare = { r, c };
   validMoves = game.getLegalMoves(r, c);
   renderBoard();
@@ -718,8 +865,7 @@ function onDragStart(e, r, c) {
   if (!isPlayerTurn() || aiThinking || pendingPromotion || connectionLost) { e.preventDefault(); return; }
   const piece = game.board[r][c];
   if (!piece || piece.color !== game.currentTurn) { e.preventDefault(); return; }
-  if (!suggestedMoveBeforePlay && gameMode !== 'online')
-    suggestedMoveBeforePlay = ai.getSuggestedMove(game, game.currentTurn);
+  if (!suggestedMoveBeforePlay && gameMode !== 'online') primeSuggestedMove();
   dragging = { r, c };
   selectedSquare = { r, c };
   validMoves = game.getLegalMoves(r, c);
@@ -783,38 +929,55 @@ function executeMove(fr, fc, toR, toC, promType) {
   suggestedMoveBeforePlay = null;
   if (gameMode === 'online') window.agsPublishLiveMove?.()
 
-  if (wantsJudge && positionBefore) {
-    retryContext.judged = true;
-    const verdict = window.agsJournalJudgeMove(positionBefore, { fr, fc, toR, toC, promType });
-    if (verdict) {
-      document.getElementById('hint-text').textContent = verdict.text;
-      document.getElementById('hint-box').style.display = 'flex';
-    }
-  }
-
   if (isGameOverStatus(game.status)) {
     setTimeout(showGameOver, 600);
     return;
   }
 
-  // Coach Mode: on a genuine blunder, hold the AI's reply and offer a
-  // take-back — the point is the pause, so the better move is NOT revealed.
-  if (wantsCoach && positionBefore) {
-    const review = window.agsGradeMoveInPosition(positionBefore, { fr, fc, toR, toC, promType });
-    if (review && review.grade === 'Better move available') {
-      coachPromptPending = true;
-      const loss = Math.abs(review.loss || 0);
-      const pawns = (loss / 100).toFixed(1);
-      document.getElementById('coach-prompt-text').textContent = loss >= 5000
-        ? `Careful — ${review.playedNotation} loses the game on the spot. Want another look?`
-        : `Hmm — ${review.playedNotation} gives up about ${pawns} pawn${pawns === '1.0' ? '' : 's'}. Want another look?`;
-      document.getElementById('coach-prompt').style.display = 'flex';
-      return; // AI waits for Take it back / Play on
-    }
+  // Move grading is CPU-heavy engine work. It returns a Promise in production
+  // (worker-backed), but Promise.resolve preserves the synchronous e2e seam.
+  // Hold the computer's reply until the verdict arrives so Coach Mode can still
+  // offer a take-back before the position advances.
+  if ((wantsJudge || wantsCoach) && positionBefore) {
+    const gameAtRequest = game;
+    const plyAtRequest = game.moveHistory.length;
+    const playedMove = { fr, fc, toR, toC, promType };
+    if (wantsJudge) retryContext.judged = true;
+    document.getElementById('turn-indicator').textContent = 'Reviewing your move…';
+    const grading = wantsJudge
+      ? window.agsJournalJudgeMove(positionBefore, playedMove)
+      : window.agsGradeMoveInPosition(positionBefore, playedMove);
+    void Promise.resolve(grading).then(review => {
+      if (game !== gameAtRequest || game.moveHistory.length !== plyAtRequest) return;
+      if (wantsJudge && review) {
+        document.getElementById('hint-text').textContent = review.text;
+        document.getElementById('hint-box').style.display = 'flex';
+      }
+      if (wantsCoach && review?.grade === 'Better move available') {
+        coachPromptPending = true;
+        const loss = Math.abs(review.loss || 0);
+        const pawns = (loss / 100).toFixed(1);
+        document.getElementById('coach-prompt-text').textContent = loss >= 5000
+          ? `Careful — ${review.playedNotation} loses the game on the spot. Want another look?`
+          : `Hmm — ${review.playedNotation} gives up about ${pawns} pawn${pawns === '1.0' ? '' : 's'}. Want another look?`;
+        document.getElementById('coach-prompt').style.display = 'flex';
+        return;
+      }
+      updateStatus();
+      if (gameMode === 'computer' && game.currentTurn !== playerColor) scheduleAIMove();
+    }).catch(error => {
+      console.warn('[analysis] move grading failed:', error?.message || error);
+      if (game !== gameAtRequest || game.moveHistory.length !== plyAtRequest) return;
+      updateStatus();
+      if (gameMode === 'computer' && game.currentTurn !== playerColor) scheduleAIMove();
+    });
+    return;
   }
 
   if (gameMode === 'computer' && game.currentTurn !== playerColor)
     scheduleAIMove();
+  else if (gameMode === 'computer')
+    primeSuggestedMove();
 }
 
 // Apply a move received from the online opponent
@@ -913,17 +1076,60 @@ function playDunDunDun() {
 
 // ─── AI ───────────────────────────────────────────────────────────────────────
 
-function scheduleAIMove() {
+async function requestBestMove(source, requestedDifficulty, options) {
+  try {
+    return await window.chessGameplayWorker.bestMove(source, requestedDifficulty, options);
+  } catch (error) {
+    console.warn('[analysis] worker search unavailable; using bounded fallback:', error?.message || error);
+    return ai.getBestMove(source, requestedDifficulty, options);
+  }
+}
+
+function primeSuggestedMove() {
+  if (!game || gameMode === 'online' || game.currentTurn !== playerColor || isGameOverStatus(game.status)) return;
+  const gameAtRequest = game;
+  const plyAtRequest = game.moveHistory.length;
+  if (suggestionSearch?.game === gameAtRequest && suggestionSearch.ply === plyAtRequest) return;
+  const generation = ++suggestionGeneration;
+  const request = requestBestMove(game, 'medium', { timeBudgetMs: 120, maxNodes: 20_000 });
+  suggestionSearch = { game: gameAtRequest, ply: plyAtRequest, request };
+  void request.then(move => {
+    if (generation !== suggestionGeneration || game !== gameAtRequest) return;
+    if (game.moveHistory.length !== plyAtRequest || game.currentTurn !== playerColor) return;
+    suggestedMoveBeforePlay = move;
+  }).catch(error => {
+    console.warn('[analysis] suggestion search failed:', error?.message || error);
+  }).finally(() => {
+    if (suggestionSearch?.request === request) suggestionSearch = null;
+  });
+}
+
+async function scheduleAIMove() {
+  const generation = ++gameplaySearchGeneration;
+  const gameAtRequest = game;
+  const plyAtRequest = game?.moveHistory.length;
   aiThinking = true;
   document.getElementById('turn-indicator').textContent = 'Computer is thinking…';
-  setTimeout(() => {
-    const move = ai.getBestMove(game, difficulty);
-    aiThinking = false;
-    if (move) {
-      const piece = game.board[move.fr][move.fc];
-      executeMove(move.fr, move.fc, move.toR, move.toC, 'queen');
+  const budgets = difficulty === 'hard'
+    ? { timeBudgetMs: 350, maxNodes: 50_000 }
+    : difficulty === 'easy'
+      ? { timeBudgetMs: 50, maxNodes: 5_000 }
+      : { timeBudgetMs: 120, maxNodes: 20_000 };
+  let move;
+  try {
+    move = await requestBestMove(game, difficulty, budgets);
+  } catch (error) {
+    console.warn('[analysis] computer search failed:', error?.message || error);
+    if (generation === gameplaySearchGeneration && game === gameAtRequest) {
+      aiThinking = false;
+      updateStatus();
     }
-  }, 400);
+    return;
+  }
+  if (generation !== gameplaySearchGeneration || game !== gameAtRequest) return;
+  if (game.moveHistory.length !== plyAtRequest || game.currentTurn === playerColor) return;
+  aiThinking = false;
+  if (move) executeMove(move.fr, move.fc, move.toR, move.toC, move.promType || 'queen');
 }
 
 // ─── Move hints ───────────────────────────────────────────────────────────────
@@ -943,16 +1149,29 @@ function showMoveHint(fr, fc, toR, toC) {
   hintBox.style.display = 'flex';
 }
 
-function showHint() {
+async function showHint() {
   if (!game || !isPlayerTurn() || aiThinking || gameMode === 'online') return;
-  const best = ai.getBestMove(game, 'medium');
-  if (!best) return;
+  const gameAtRequest = game;
+  const plyAtRequest = game.moveHistory.length;
+  const hintText = document.getElementById('hint-text');
+  const hintBox = document.getElementById('hint-box');
+  hintText.textContent = 'Finding a helpful move…';
+  hintBox.style.display = 'flex';
+  const best = suggestedMoveBeforePlay || await requestBestMove(game, 'medium', {
+    timeBudgetMs: 150,
+    maxNodes: 25_000,
+  });
+  if (game !== gameAtRequest || game.moveHistory.length !== plyAtRequest || !isPlayerTurn()) return;
+  if (!best) {
+    hintText.textContent = 'No helpful move is available in this position.';
+    return;
+  }
   if (typeof window.agsSendEvent === 'function') window.agsSendEvent('hint_used', {});
   const cols = 'abcdefgh', rows = '87654321';
   const piece = game.board[best.fr][best.fc];
-  document.getElementById('hint-text').textContent =
+  hintText.textContent =
     `Try ${PIECE_LABELS[piece.type]} ${cols[best.fc]}${rows[best.fr]} → ${cols[best.toC]}${rows[best.toR]}`;
-  document.getElementById('hint-box').style.display = 'flex';
+  hintBox.style.display = 'flex';
   selectedSquare = { r: best.fr, c: best.fc };
   validMoves = [{ toR: best.toR, toC: best.toC }];
   renderBoard();
@@ -1025,6 +1244,7 @@ function coachTakeBack() {
   const prefix = game.moveHistory.slice(0, -1)
     .map(m => ({ fr: m.fr, fc: m.fc, toR: m.toR, toC: m.toC, promType: m.promType || 'queen' }));
   rebuildBoardFromMoves(prefix);
+  primeSuggestedMove();
   if (typeof window.agsSendEvent === 'function') window.agsSendEvent('coach_take_back', {});
 }
 
@@ -1642,7 +1862,11 @@ async function forfeitOnlineMatchAndGoHome() {
 // ─── PeerJS — Online Multiplayer ──────────────────────────────────────────────
 
 async function createGamePeer(id) {
+  if (!window.chessVideoCall?.runtimeReady && window.agsPrepareRealtimeRuntime) {
+    await window.agsPrepareRealtimeRuntime();
+  }
   if (window.chessVideoCall?.createPeer) return window.chessVideoCall.createPeer(id);
+  if (typeof window.Peer === 'function') return id ? new window.Peer(id) : new window.Peer();
   return id ? new Peer(id) : new Peer();
 }
 
