@@ -50,9 +50,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-C-sQWqvw.js"></script>
+  <script type="module" crossorigin src="/chess/assets/index-waxIy8n8.js"></script>
   <link rel="modulepreload" crossorigin href="/chess/assets/chunk-CMxvf4Kt.js">
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-B0ILIRGv.css">
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-CYm95tG5.css">
 </head>
 <body>
 
@@ -648,6 +648,16 @@
       </div>
       <p id="club-message" class="auth-message" aria-live="polite" style="display:none"></p>
       <div id="club-purchase-grid" class="club-purchase-grid"></div>
+      <!-- Stripe embedded Checkout (dev-plan: "make the payment screen feel
+           native") mounts here inline instead of redirecting to a Stripe-hosted
+           page — see openWebCheckout/mountEmbeddedCheckout in src/club.js. -->
+      <div id="club-checkout-container" class="club-checkout-container" style="display:none">
+        <div class="club-checkout-head">
+          <button type="button" class="btn-mini" data-click="window.agsClubCancelCheckout && window.agsClubCancelCheckout()">‹ Change plan</button>
+        </div>
+        <p id="club-checkout-loading" class="club-checkout-loading">Loading secure payment form…</p>
+        <div id="club-checkout-mount"></div>
+      </div>
       <button type="button" class="btn-mini" id="btn-club-manage" style="display:none" data-click="window.agsClubManageSubscription && window.agsClubManageSubscription()">Manage subscription</button>
       <button type="button" class="btn-mini" id="btn-club-restore" style="display:none" data-click="window.agsClubRestorePurchases && window.agsClubRestorePurchases()">Restore Purchases</button>
       <p id="club-legal-note" class="club-legal-note" style="display:none">
