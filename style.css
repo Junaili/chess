@@ -2079,7 +2079,7 @@ input[type="checkbox"] {
      (Overview/Stats/History/Journal/Account) where others show four, and a
      fixed repeat(4) wrapped the fifth onto its own row. */
   grid-auto-flow: column;
-  grid-auto-columns: 1fr;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 5px;
   flex: 0 0 auto;
   margin-bottom: 16px;
@@ -2643,6 +2643,7 @@ input[type="checkbox"] {
 #profile-panel-history.active {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 #profile-panel-history > .profile-history-card {
@@ -2650,12 +2651,38 @@ input[type="checkbox"] {
   height: 100%;
   min-height: 0;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .player-profile-container #profile-panel-history .profile-match-history {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
   max-height: none;
+  gap: 8px;
+  overflow: hidden;
+  padding-right: 0;
+}
+
+.player-profile-container #profile-panel-history .profile-history-row {
+  min-height: 44px;
+  padding: 7px 14px;
+}
+
+.player-profile-container #profile-panel-history .profile-history-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+}
+
+.player-profile-container #profile-panel-history .profile-history-main strong {
+  grid-column: 1 / -1;
+}
+
+.player-profile-container #profile-panel-history .profile-history-main > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-history-row {
@@ -2757,20 +2784,21 @@ input[type="checkbox"] {
    entirely while the flag is off; kept minimal since only the row content
    above is the improving player's actual destination. */
 .profile-history-filters {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 10px 16px;
   margin-bottom: 10px;
 }
 
 .profile-history-chips {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
   gap: 6px;
 }
 
 .profile-history-chip {
+  min-height: 36px;
   padding: 5px 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.045);
@@ -2790,14 +2818,14 @@ input[type="checkbox"] {
 }
 
 .profile-history-more-filters {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(142px, 1fr));
   gap: 6px;
-  margin-left: auto;
 }
 
 .profile-history-more-filters select {
-  padding: 5px 8px;
+  min-height: 36px;
+  padding: 5px 30px 5px 10px;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.045);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -2806,9 +2834,43 @@ input[type="checkbox"] {
   font-size: 0.74rem;
 }
 
-.profile-history-load-more {
-  width: 100%;
+.profile-history-pagination {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr) minmax(88px, auto);
+  align-items: center;
+  gap: 12px;
   margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.profile-history-pagination[hidden] {
+  display: none;
+}
+
+.profile-history-pagination .btn-mini {
+  min-width: 88px;
+}
+
+#profile-history-page-status {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .player-profile-container .profile-history-filters {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .player-profile-container .profile-history-more-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .profile-history-empty,
@@ -6998,8 +7060,10 @@ button.square:focus-visible {
 
   .player-profile-container .profile-tab {
     min-height: 44px;
-    padding-inline: 13px;
-    font-size: 0.78rem;
+    min-width: 0;
+    padding-inline: 4px;
+    font-size: 0.72rem;
+    white-space: nowrap;
   }
 
   .player-profile-container .profile-panel {
@@ -7104,6 +7168,57 @@ button.square:focus-visible {
   .profile-history-head {
     align-items: flex-start;
     flex-wrap: wrap;
+  }
+
+  .profile-history-filters {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .profile-history-chips {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .profile-history-chip {
+    min-width: 0;
+    padding-inline: 5px;
+    font-size: 0.68rem;
+  }
+
+  .profile-history-more-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .player-profile-container #profile-panel-history .profile-history-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding-inline: 8px;
+  }
+
+  .player-profile-container #profile-panel-history .profile-history-result {
+    grid-column: auto;
+    width: auto;
+    min-width: 58px;
+    padding-inline: 5px;
+  }
+
+  .player-profile-container #profile-panel-history .profile-history-meta {
+    min-width: 48px;
+  }
+
+  .player-profile-container #profile-panel-history .profile-history-main > span,
+  .player-profile-container #profile-panel-history .profile-history-meta span:first-child {
+    font-size: 0.68rem;
+  }
+
+  .profile-history-pagination {
+    grid-template-columns: minmax(72px, auto) minmax(0, 1fr) minmax(72px, auto);
+    gap: 8px;
+  }
+
+  .profile-history-pagination .btn-mini {
+    min-width: 72px;
   }
 
   .profile-blocked-row {

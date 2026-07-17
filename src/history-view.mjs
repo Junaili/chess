@@ -5,7 +5,7 @@
 
 import { toAlgebraic } from './match-stats.mjs'
 
-export const HISTORY_PAGE_SIZE = 20
+export const HISTORY_PAGE_SIZE = 5
 
 // Mirrors the table already duplicated in src/main.js (renderChessStats) and
 // src/journal-data.mjs (openingSignal) — first-move-only, not full ECO
@@ -122,16 +122,30 @@ export function historyFilterCounts(matches) {
   return counts
 }
 
-// pageHistory: incremental reveal in fixed page-size steps, never duplicating
-// rows and never exceeding the filtered list's length.
-export function pageHistory(matches, visibleCount, pageSize = HISTORY_PAGE_SIZE) {
+// pageHistory: returns one stable page and clamps stale page requests after a
+// filter or viewport change. Pages never overlap, so replay IDs remain stable.
+export function pageHistory(matches, requestedPage = 1, pageSize = HISTORY_PAGE_SIZE) {
   const list = matches || []
-  const size = pageSize > 0 ? pageSize : HISTORY_PAGE_SIZE
-  const count = Math.min(Math.max(visibleCount || size, size), list.length)
+  const size = Number.isFinite(pageSize) && pageSize > 0
+    ? Math.floor(pageSize)
+    : HISTORY_PAGE_SIZE
+  const pageCount = Math.max(1, Math.ceil(list.length / size))
+  const normalizedPage = Number.isFinite(requestedPage)
+    ? Math.floor(requestedPage)
+    : 1
+  const page = Math.min(Math.max(normalizedPage, 1), pageCount)
+  const startIndex = (page - 1) * size
+  const endIndex = Math.min(startIndex + size, list.length)
+
   return {
-    visible: list.slice(0, count),
-    hasMore: count < list.length,
-    nextVisibleCount: Math.min(count + size, list.length),
+    visible: list.slice(startIndex, endIndex),
+    page,
+    pageCount,
+    pageSize: size,
+    startIndex,
+    endIndex,
+    hasPrevious: page > 1,
+    hasNext: page < pageCount,
     totalCount: list.length,
   }
 }

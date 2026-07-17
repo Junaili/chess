@@ -388,7 +388,7 @@
       </div>
       <div class="profile-tabs" role="tablist" aria-label="Profile sections">
         <button type="button" id="profile-tab-overview" class="profile-tab active" data-profile-tab="overview" data-click="window.agsShowProfileTab && window.agsShowProfileTab('overview')" role="tab" aria-selected="true" aria-controls="profile-panel-overview">Overview</button>
-        <button type="button" id="profile-tab-stats" class="profile-tab" data-profile-tab="stats" data-click="window.agsShowProfileTab && window.agsShowProfileTab('stats')" role="tab" aria-selected="false" aria-controls="profile-panel-stats" tabindex="-1">Chess Stats</button>
+        <button type="button" id="profile-tab-stats" class="profile-tab" data-profile-tab="stats" data-click="window.agsShowProfileTab && window.agsShowProfileTab('stats')" role="tab" aria-label="Chess stats" aria-selected="false" aria-controls="profile-panel-stats" tabindex="-1">Stats</button>
         <button type="button" id="profile-tab-history" class="profile-tab" data-profile-tab="history" data-click="window.agsShowProfileTab && window.agsShowProfileTab('history')" role="tab" aria-selected="false" aria-controls="profile-panel-history" tabindex="-1">History</button>
         <button type="button" id="profile-tab-journal" class="profile-tab" data-profile-tab="journal" data-click="window.agsShowProfileTab && window.agsShowProfileTab('journal')" role="tab" aria-selected="false" aria-controls="profile-panel-journal" tabindex="-1" hidden>Journal</button>
         <button type="button" id="profile-tab-coaching" class="profile-tab" data-profile-tab="coaching" data-click="window.agsShowProfileTab && window.agsShowProfileTab('coaching')" role="tab" aria-selected="false" aria-controls="profile-panel-coaching" tabindex="-1" hidden>Coaching</button>
@@ -534,7 +534,11 @@
             <span>Completed games and replays will appear here after you sign in.</span>
           </div>
         </div>
-        <button type="button" id="profile-history-load-more" class="btn-mini profile-history-load-more" hidden></button>
+        <nav id="profile-history-pagination" class="profile-history-pagination" aria-label="Match history pages" hidden>
+          <button type="button" id="profile-history-previous" class="btn-mini" aria-label="Previous match history page">Previous</button>
+          <span id="profile-history-page-status" aria-live="polite">Page 1 of 1</span>
+          <button type="button" id="profile-history-next" class="btn-mini" aria-label="Next match history page">Next</button>
+        </nav>
       </section>
       </div>
       <!-- ── My Chess Journal (owner-only): self-reflection + coach report +

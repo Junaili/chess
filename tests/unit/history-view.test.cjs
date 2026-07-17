@@ -169,41 +169,64 @@ function fixtureMatches(n) {
   return Array.from({ length: n }, (_, i) => match({ id: `m${i}` }))
 }
 
-test('pageHistory: reaches all 50 matches in fixed-size steps without duplication', async () => {
+test('pageHistory: splits 50 matches into non-overlapping pages', async () => {
   const { pageHistory } = await viewPromise
   const matches = fixtureMatches(50)
 
-  const page1 = pageHistory(matches, 20, 20)
+  const page1 = pageHistory(matches, 1, 20)
   assert.equal(page1.visible.length, 20)
-  assert.equal(page1.hasMore, true)
-  assert.equal(page1.nextVisibleCount, 40)
+  assert.equal(page1.page, 1)
+  assert.equal(page1.pageCount, 3)
+  assert.equal(page1.hasPrevious, false)
+  assert.equal(page1.hasNext, true)
+  assert.deepEqual(page1.visible.map(m => m.id), fixtureMatches(20).map(m => m.id))
 
-  const page2 = pageHistory(matches, page1.nextVisibleCount, 20)
-  assert.equal(page2.visible.length, 40)
-  assert.equal(page2.hasMore, true)
-  assert.equal(page2.nextVisibleCount, 50)
-  // No duplication: page2 must be a strict superset prefix of page1.
-  assert.deepEqual(page2.visible.slice(0, 20).map(m => m.id), page1.visible.map(m => m.id))
+  const page2 = pageHistory(matches, 2, 20)
+  assert.equal(page2.visible.length, 20)
+  assert.equal(page2.startIndex, 20)
+  assert.equal(page2.endIndex, 40)
+  assert.equal(page2.hasPrevious, true)
+  assert.equal(page2.hasNext, true)
+  assert.equal(page2.visible[0].id, 'm20')
+  assert.equal(page2.visible[19].id, 'm39')
+  assert.equal(
+    new Set([...page1.visible, ...page2.visible].map(m => m.id)).size,
+    40,
+  )
 
-  const page3 = pageHistory(matches, page2.nextVisibleCount, 20)
-  assert.equal(page3.visible.length, 50)
-  assert.equal(page3.hasMore, false)
-  assert.equal(page3.nextVisibleCount, 50)
-  assert.deepEqual(new Set(page3.visible.map(m => m.id)).size, 50) // no duplicates
+  const page3 = pageHistory(matches, 3, 20)
+  assert.equal(page3.visible.length, 10)
+  assert.equal(page3.hasPrevious, true)
+  assert.equal(page3.hasNext, false)
+  assert.equal(page3.visible[0].id, 'm40')
+  assert.equal(page3.visible[9].id, 'm49')
 })
 
-test('pageHistory: fewer matches than one page shows everything with no "load more"', async () => {
+test('pageHistory: fewer matches than one page shows everything with no next page', async () => {
   const { pageHistory } = await viewPromise
   const matches = fixtureMatches(5)
-  const page = pageHistory(matches, 20, 20)
+  const page = pageHistory(matches, 1, 20)
   assert.equal(page.visible.length, 5)
-  assert.equal(page.hasMore, false)
+  assert.equal(page.pageCount, 1)
+  assert.equal(page.hasPrevious, false)
+  assert.equal(page.hasNext, false)
   assert.equal(page.totalCount, 5)
+})
+
+test('pageHistory: clamps a stale page after filtering reduces the result set', async () => {
+  const { pageHistory } = await viewPromise
+  const page = pageHistory(fixtureMatches(7), 9, 5)
+  assert.equal(page.page, 2)
+  assert.equal(page.pageCount, 2)
+  assert.deepEqual(page.visible.map(m => m.id), ['m5', 'm6'])
 })
 
 test('pageHistory: empty input never throws', async () => {
   const { pageHistory } = await viewPromise
-  const page = pageHistory([], 20, 20)
+  const page = pageHistory([], 1, 20)
   assert.equal(page.visible.length, 0)
-  assert.equal(page.hasMore, false)
+  assert.equal(page.page, 1)
+  assert.equal(page.pageCount, 1)
+  assert.equal(page.hasPrevious, false)
+  assert.equal(page.hasNext, false)
 })

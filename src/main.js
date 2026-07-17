@@ -1055,7 +1055,8 @@ let profileHistoryState = {
   profileUserId: '',
   allMatches: [],
   filters: { result: 'all', color: 'all', mode: 'all' },
-  visibleCount: HISTORY_PAGE_SIZE,
+  page: 1,
+  pageSize: HISTORY_PAGE_SIZE,
 }
 let blockedPlayers = []
 let deletionRequirements = null
@@ -3596,6 +3597,7 @@ function showProfileTab(name = 'overview') {
     if (selected) panel.scrollTop = 0
   })
   if (name === 'journal') void renderPreparedJournalTab()
+  if (name === 'history') window.requestAnimationFrame(refreshProfileHistoryPageSize)
 }
 
 function setProfileTabVisible(name, visible) {
@@ -3664,6 +3666,9 @@ async function openPublicProfile(userId, displayName = '') {
         <span>Completed games and replays will appear here after you sign in.</span>
       </div>`
     }
+    hideProfileHistoryPagination()
+    const historyFilters = document.getElementById('profile-history-filters')
+    if (historyFilters) historyFilters.hidden = true
     return
   }
 
@@ -3677,6 +3682,7 @@ async function openPublicProfile(userId, displayName = '') {
   if (addBtn) addBtn.style.display = 'none'
   if (matchHistoryCountEl) matchHistoryCountEl.textContent = 'Loading'
   if (matchHistoryEl) matchHistoryEl.innerHTML = '<div class="profile-history-loading"><span></span><span></span><span></span></div>'
+  hideProfileHistoryPagination()
 
   const [stats, rank, matchHistory, myMatchHistory] = await Promise.all([
     fetchStats(userId),
@@ -3951,26 +3957,136 @@ async function requestProfileFriend(profile) {
   await openPublicProfile(profile.userId, profile.displayName)
 }
 
+function fallbackProfileHistoryPageSize() {
+  if (window.innerWidth <= 640) return window.innerHeight < 760 ? 2 : 3
+  return window.innerHeight <= 700 ? 4 : HISTORY_PAGE_SIZE
+}
+
+function profileHistoryOuterHeight(element) {
+  if (!element || element.hidden) return 0
+  const style = window.getComputedStyle(element)
+  return element.getBoundingClientRect().height
+    + (Number.parseFloat(style.marginTop) || 0)
+    + (Number.parseFloat(style.marginBottom) || 0)
+}
+
+function profileHistoryPagerHeight() {
+  const pagination = document.getElementById('profile-history-pagination')
+  if (!pagination) return 0
+  const wasHidden = pagination.hidden
+  if (wasHidden) {
+    pagination.hidden = false
+    pagination.style.visibility = 'hidden'
+  }
+  const height = profileHistoryOuterHeight(pagination)
+  if (wasHidden) {
+    pagination.hidden = true
+    pagination.style.removeProperty('visibility')
+  }
+  return height
+}
+
+function fittedProfileHistoryPageSize() {
+  const fallback = fallbackProfileHistoryPageSize()
+  const panel = document.getElementById('profile-panel-history')
+  const card = panel?.querySelector(':scope > .profile-history-card')
+  const list = document.getElementById('profile-match-history')
+  const sampleRow = list?.querySelector('.profile-history-row')
+  if (!panel?.classList.contains('active') || !card?.clientHeight || !sampleRow) return fallback
+
+  const cardStyle = window.getComputedStyle(card)
+  const listStyle = window.getComputedStyle(list)
+  const contentHeight = card.clientHeight
+    - (Number.parseFloat(cardStyle.paddingTop) || 0)
+    - (Number.parseFloat(cardStyle.paddingBottom) || 0)
+  const fixedHeight = profileHistoryOuterHeight(card.querySelector('.profile-history-head'))
+    + profileHistoryOuterHeight(document.getElementById('profile-history-filters'))
+    + profileHistoryPagerHeight()
+  const rowHeight = Math.max(sampleRow.getBoundingClientRect().height, 44)
+  const gap = Number.parseFloat(listStyle.rowGap) || 0
+  const availableHeight = Math.max(0, contentHeight - fixedHeight)
+  const fittedRows = Math.floor((availableHeight + gap) / (rowHeight + gap))
+  return Math.max(1, Math.min(HISTORY_PAGE_SIZE, fittedRows))
+}
+
+function hideProfileHistoryPagination() {
+  const pagination = document.getElementById('profile-history-pagination')
+  if (pagination) pagination.hidden = true
+}
+
+function renderProfileHistoryPagination(pageView) {
+  const pagination = document.getElementById('profile-history-pagination')
+  const previous = document.getElementById('profile-history-previous')
+  const next = document.getElementById('profile-history-next')
+  const status = document.getElementById('profile-history-page-status')
+  if (!pagination || !previous || !next || !status) return
+
+  pagination.hidden = pageView.totalCount === 0 || pageView.pageCount <= 1
+  previous.disabled = !pageView.hasPrevious
+  next.disabled = !pageView.hasNext
+  status.textContent = `Page ${pageView.page} of ${pageView.pageCount}`
+  previous.onclick = pageView.hasPrevious
+    ? () => setProfileHistoryPage(pageView.page - 1)
+    : null
+  next.onclick = pageView.hasNext
+    ? () => setProfileHistoryPage(pageView.page + 1)
+    : null
+}
+
+function setProfileHistoryPage(page) {
+  profileHistoryState.page = page
+  renderProfileMatchHistory(profileHistoryState.allMatches, profileHistoryState.profileUserId)
+}
+
+function refreshProfileHistoryPageSize() {
+  const panel = document.getElementById('profile-panel-history')
+  if (!panel?.classList.contains('active')) return
+  if (!currentUserId || panel.querySelector('.profile-history-loading')) return
+  if (!profileHistoryState.profileUserId || profileHistoryState.profileUserId !== activeProfileUser?.userId) return
+  const pageSize = fittedProfileHistoryPageSize()
+  if (pageSize === profileHistoryState.pageSize) return
+  profileHistoryState.pageSize = pageSize
+  renderProfileMatchHistory(profileHistoryState.allMatches, profileHistoryState.profileUserId)
+}
+
+let profileHistoryResizeFrame = 0
+window.addEventListener('resize', () => {
+  window.cancelAnimationFrame(profileHistoryResizeFrame)
+  profileHistoryResizeFrame = window.requestAnimationFrame(refreshProfileHistoryPageSize)
+})
+
 function renderProfileMatchHistory(matches, userId) {
   if (getLearningFlags().historyV2) return renderProfileMatchHistoryV2(matches, userId)
   const el = document.getElementById('profile-match-history')
   const countEl = document.getElementById('profile-match-history-count')
+  const filtersEl = document.getElementById('profile-history-filters')
   if (!el) return
   const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
-  const visibleMatches = matches.slice(0, 20)
-  profileMatchHistoryRows = visibleMatches
-  if (countEl) countEl.textContent = `${matches.length} ${matches.length === 1 ? 'match' : 'matches'}`
+  const matchList = Array.isArray(matches) ? matches : []
 
-  if (!matches.length) {
+  if (profileHistoryState.profileUserId !== userId) {
+    resetProfileHistoryState(userId, matchList)
+  } else {
+    profileHistoryState.allMatches = matchList
+  }
+  profileHistoryState.pageSize = fittedProfileHistoryPageSize()
+  const pageView = pageHistory(matchList, profileHistoryState.page, profileHistoryState.pageSize)
+  profileHistoryState.page = pageView.page
+  profileMatchHistoryRows = matchList
+  if (filtersEl) filtersEl.hidden = true
+  if (countEl) countEl.textContent = `${matchList.length} ${matchList.length === 1 ? 'match' : 'matches'}`
+
+  if (!matchList.length) {
     profileMatchHistoryRows = []
     el.innerHTML = `<div class="profile-history-empty">
       <strong>No completed matches</strong>
       <span>Finished games will appear here with result, opponent, time, and duration.</span>
     </div>`
+    hideProfileHistoryPagination()
     return
   }
 
-  el.innerHTML = visibleMatches.map((match, index) => {
+  el.innerHTML = pageView.visible.map((match, index) => {
     const canReplay = Array.isArray(match.moves) && match.moves.length > 0
     const ended = new Date(match.endedAt)
     const time = Number.isNaN(ended.getTime())
@@ -3985,7 +4101,8 @@ function renderProfileMatchHistory(matches, userId) {
       : match.mode === 'online'
         ? 'Online'
         : 'Match'
-    return `<button class="profile-history-row${canReplay ? ' replayable' : ' no-replay'}" type="button" ${canReplay ? `data-replay-index="${index}"` : 'disabled'}>
+    const replayIndex = pageView.startIndex + index
+    return `<button class="profile-history-row${canReplay ? ' replayable' : ' no-replay'}" type="button" ${canReplay ? `data-replay-index="${replayIndex}"` : 'disabled'}>
       <span class="profile-history-result ${esc(resultClass)}">${esc(result)}</span>
       <div class="profile-history-main">
         <strong>${esc(opponent)}</strong>
@@ -4002,6 +4119,8 @@ function renderProfileMatchHistory(matches, userId) {
       window.agsReplayMatchHistory?.(Number(button.dataset.replayIndex))
     })
   })
+  renderProfileHistoryPagination(pageView)
+  window.requestAnimationFrame(refreshProfileHistoryPageSize)
 }
 
 // ─── History enrichment (dev-plan §9, VITE_LEARNING_HISTORY_V2) ─────────────
@@ -4011,7 +4130,8 @@ function resetProfileHistoryState(userId, matches) {
     profileUserId: userId || '',
     allMatches: Array.isArray(matches) ? matches : [],
     filters: { result: 'all', color: 'all', mode: 'all' },
-    visibleCount: HISTORY_PAGE_SIZE,
+    page: 1,
+    pageSize: fallbackProfileHistoryPageSize(),
   }
 }
 
@@ -4040,7 +4160,7 @@ function bindHistoryFilterControls() {
   filtersEl.dataset.historyBound = '1'
   const applyFilterChange = (key, value) => {
     profileHistoryState.filters[key] = value
-    profileHistoryState.visibleCount = HISTORY_PAGE_SIZE
+    profileHistoryState.page = 1
     renderProfileMatchHistoryV2(profileHistoryState.allMatches, profileHistoryState.profileUserId)
   }
   filtersEl.querySelectorAll('[data-history-filter="result"]').forEach(chip => {
@@ -4056,13 +4176,11 @@ function renderProfileMatchHistoryV2(matches, userId) {
   const el = document.getElementById('profile-match-history')
   const countEl = document.getElementById('profile-match-history-count')
   const filtersEl = document.getElementById('profile-history-filters')
-  const loadMoreEl = document.getElementById('profile-history-load-more')
   if (!el) return
   const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
 
   // Reset paging/filters whenever the profile being viewed changes (§9.3);
-  // otherwise keep the player's current filter selection across a re-render
-  // (e.g. after Load more or a filter change re-invokes this function).
+  // otherwise keep the player's current filter and page across a re-render.
   if (profileHistoryState.profileUserId !== userId) {
     resetProfileHistoryState(userId, matches)
   } else {
@@ -4079,7 +4197,10 @@ function renderProfileMatchHistoryV2(matches, userId) {
 
   const isOwnProfile = userId === currentUserId
   const filtered = filterHistory(profileHistoryState.allMatches, profileHistoryState.filters)
-  const { visible, hasMore, nextVisibleCount, totalCount: filteredCount } = pageHistory(filtered, profileHistoryState.visibleCount, HISTORY_PAGE_SIZE)
+  profileHistoryState.pageSize = fittedProfileHistoryPageSize()
+  const pageView = pageHistory(filtered, profileHistoryState.page, profileHistoryState.pageSize)
+  const { visible, totalCount: filteredCount } = pageView
+  profileHistoryState.page = pageView.page
 
   if (countEl) {
     const total = profileHistoryState.allMatches.length
@@ -4099,7 +4220,7 @@ function renderProfileMatchHistoryV2(matches, userId) {
       <strong>No completed matches</strong>
       <span>Finished games will appear here with result, opponent, time, and duration.</span>
     </div>`
-    if (loadMoreEl) loadMoreEl.hidden = true
+    hideProfileHistoryPagination()
     return
   }
 
@@ -4108,7 +4229,7 @@ function renderProfileMatchHistoryV2(matches, userId) {
       <strong>No matches for this filter</strong>
       <span>Try a different filter, or choose All to see everything.</span>
     </div>`
-    if (loadMoreEl) loadMoreEl.hidden = true
+    hideProfileHistoryPagination()
     return
   }
 
@@ -4141,20 +4262,13 @@ function renderProfileMatchHistoryV2(matches, userId) {
       }
     })
   })
-
-  if (loadMoreEl) {
-    loadMoreEl.hidden = !hasMore
-    loadMoreEl.textContent = hasMore ? `Show more (${filteredCount - visible.length} remaining)` : ''
-    loadMoreEl.onclick = () => {
-      profileHistoryState.visibleCount = nextVisibleCount
-      renderProfileMatchHistoryV2(profileHistoryState.allMatches, profileHistoryState.profileUserId)
-    }
-  }
+  renderProfileHistoryPagination(pageView)
+  window.requestAnimationFrame(refreshProfileHistoryPageSize)
 
   // Learning-index badges (dev-plan §11.3) — own profile only, lazy-loaded
   // AFTER the public-data render above so a slow/failed fetch never blocks
   // History. Patches existing rows in place; never re-renders or resets
-  // scroll/filter state.
+  // page/filter state.
   if (isOwnProfile && getLearningFlags().indexV1) {
     patchHistoryLearningBadges(userId, ++profileHistoryBadgeGeneration)
   } else {

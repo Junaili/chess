@@ -340,21 +340,87 @@ async function openProfileWithHistoryV2(page, userId, displayName = 'Me') {
   return signInAndOpenProfile(page, userId, userId, displayName);
 }
 
+async function readHistoryGeometry(page) {
+  return page.evaluate(() => {
+    const screen = document.getElementById('screen-profile');
+    const container = document.querySelector('.profile-container').getBoundingClientRect();
+    const panelElement = document.getElementById('profile-panel-history');
+    const panel = panelElement.getBoundingClientRect();
+    const cardElement = document.querySelector('#profile-panel-history > .profile-history-card');
+    const card = cardElement.getBoundingClientRect();
+    const listElement = document.getElementById('profile-match-history');
+    const list = listElement.getBoundingClientRect();
+    const pager = document.getElementById('profile-history-pagination').getBoundingClientRect();
+    const rows = [...listElement.querySelectorAll('.profile-history-row')];
+    const lastRow = rows.at(-1)?.getBoundingClientRect();
+    return {
+      viewport: { width: innerWidth, height: innerHeight },
+      screenScrollHeight: screen.scrollHeight,
+      screenClientHeight: screen.clientHeight,
+      panelScrollHeight: panelElement.scrollHeight,
+      panelClientHeight: panelElement.clientHeight,
+      cardScrollHeight: cardElement.scrollHeight,
+      cardClientHeight: cardElement.clientHeight,
+      listOverflowY: getComputedStyle(listElement).overflowY,
+      rowCount: rows.length,
+      container: { top: container.top, right: container.right, bottom: container.bottom, left: container.left },
+      panel: { top: panel.top, right: panel.right, bottom: panel.bottom, left: panel.left },
+      card: { top: card.top, right: card.right, bottom: card.bottom, left: card.left },
+      list: { top: list.top, right: list.right, bottom: list.bottom, left: list.left },
+      pager: { top: pager.top, right: pager.right, bottom: pager.bottom, left: pager.left },
+      lastRow: lastRow
+        ? { top: lastRow.top, right: lastRow.right, bottom: lastRow.bottom, left: lastRow.left }
+        : null,
+    };
+  });
+}
+
+function expectHistoryToFit(geometry) {
+  expect(geometry.screenScrollHeight).toBeLessThanOrEqual(geometry.screenClientHeight);
+  expect(geometry.panelScrollHeight).toBeLessThanOrEqual(geometry.panelClientHeight);
+  expect(geometry.cardScrollHeight).toBeLessThanOrEqual(geometry.cardClientHeight);
+  expect(geometry.listOverflowY).toBe('hidden');
+  expect(geometry.rowCount).toBeGreaterThan(0);
+  expect(geometry.rowCount).toBeLessThanOrEqual(5);
+  expect(geometry.container.top).toBeGreaterThanOrEqual(0);
+  expect(geometry.container.left).toBeGreaterThanOrEqual(0);
+  expect(geometry.container.right).toBeLessThanOrEqual(geometry.viewport.width);
+  expect(geometry.container.bottom).toBeLessThanOrEqual(geometry.viewport.height);
+  expect(geometry.panel.top).toBeGreaterThanOrEqual(geometry.container.top);
+  expect(geometry.panel.bottom).toBeLessThanOrEqual(geometry.container.bottom);
+  expect(geometry.lastRow.bottom).toBeLessThanOrEqual(geometry.pager.top);
+  expect(geometry.pager.bottom).toBeLessThanOrEqual(geometry.card.bottom);
+}
+
 test.describe('History enrichment (VITE_LEARNING_HISTORY_V2)', () => {
-  test('reveals 50 fixture matches in fixed steps: 20, then 40, then 50', async ({ page }) => {
+  test('paginates all 50 fixture matches without duplication', async ({ page }) => {
     await gotoApp(page);
     await stubMatchHistoryRoute(page, { 'self-player': fixtureMatches(50) });
     await openProfileWithHistoryV2(page, 'self-player');
 
-    await expect(page.locator('.profile-history-row')).toHaveCount(20);
-    await expect(page.locator('#profile-history-load-more')).toBeVisible();
+    const rows = page.locator('#profile-match-history .profile-history-row');
+    const previous = page.locator('#profile-history-previous');
+    const next = page.locator('#profile-history-next');
+    const status = page.locator('#profile-history-page-status');
+    await expect(page.locator('#profile-history-pagination')).toBeVisible();
+    await expect(previous).toBeDisabled();
 
-    await page.locator('#profile-history-load-more').click();
-    await expect(page.locator('.profile-history-row')).toHaveCount(40);
+    const seen = new Set();
+    for (let pageNumber = 1; pageNumber <= 50; pageNumber += 1) {
+      await expect(status).toContainText(`Page ${pageNumber} of`);
+      const ids = await rows.evaluateAll(elements => elements.map(element => element.dataset.matchId));
+      expect(ids.length).toBeGreaterThan(0);
+      for (const id of ids) {
+        expect(seen.has(id)).toBe(false);
+        seen.add(id);
+      }
+      if (await next.isDisabled()) break;
+      await next.click();
+    }
 
-    await page.locator('#profile-history-load-more').click();
-    await expect(page.locator('.profile-history-row')).toHaveCount(50);
-    await expect(page.locator('#profile-history-load-more')).toBeHidden();
+    expect(seen.size).toBe(50);
+    await expect(next).toBeDisabled();
+    await expect(previous).toBeEnabled();
   });
 
   test('filter selection updates rows and the result count', async ({ page }) => {
@@ -366,7 +432,9 @@ test.describe('History enrichment (VITE_LEARNING_HISTORY_V2)', () => {
     await stubMatchHistoryRoute(page, { 'self-player': matches });
     await openProfileWithHistoryV2(page, 'self-player');
 
-    await expect(page.locator('.profile-history-row')).toHaveCount(5);
+    await expect.poll(() => page.locator('.profile-history-row').count()).toBeGreaterThan(0);
+    const firstPageCount = await page.locator('.profile-history-row').count();
+    expect(firstPageCount).toBeLessThanOrEqual(5);
     await expect(page.locator('#profile-match-history-count')).toContainText('5 matches');
 
     await page.locator('[data-history-filter="result"][data-history-value="loss"]').click();
@@ -374,7 +442,7 @@ test.describe('History enrichment (VITE_LEARNING_HISTORY_V2)', () => {
     await expect(page.locator('#profile-match-history-count')).toContainText('2 of 5 matches');
 
     await page.locator('[data-history-filter="result"][data-history-value="all"]').click();
-    await expect(page.locator('.profile-history-row')).toHaveCount(5);
+    await expect(page.locator('.profile-history-row')).toHaveCount(firstPageCount);
   });
 
   test('switching profile resets filters and loads the new profile\'s matches', async ({ page }) => {
@@ -427,32 +495,35 @@ test.describe('History enrichment (VITE_LEARNING_HISTORY_V2)', () => {
     await expect(page.locator('#spectator-black-name')).toContainText('Target Opponent');
   });
 
-  test('iPad profile stays inside its internal scroll container with filters and 50 rows', async ({ page }) => {
+  test('history pages stay fully contained without a nested scroll region', async ({ page }) => {
     await gotoApp(page);
     await stubMatchHistoryRoute(page, { 'self-player': fixtureMatches(50) });
     await openProfileWithHistoryV2(page, 'self-player');
-    await expect(page.locator('.profile-history-row')).toHaveCount(20);
+    await expect(page.locator('#profile-history-pagination')).toBeVisible();
 
-    const geometry = await page.evaluate(() => {
-      const screen = document.getElementById('screen-profile');
-      const container = document.querySelector('.profile-container').getBoundingClientRect();
-      const panel = document.querySelector('[data-profile-panel="history"]').getBoundingClientRect();
-      return {
-        viewportHeight: innerHeight,
-        screenScrollHeight: screen.scrollHeight,
-        screenClientHeight: screen.clientHeight,
-        container: { top: container.top, bottom: container.bottom },
-        panel: { top: panel.top, bottom: panel.bottom },
-      };
-    });
+    expectHistoryToFit(await readHistoryGeometry(page));
+  });
 
-    // The OUTER screen must not scroll — filters, 20 rows, and Load more
-    // scroll inside .profile-container, same contract as every other tab.
-    expect(geometry.screenScrollHeight).toBeLessThanOrEqual(geometry.screenClientHeight);
-    expect(geometry.container.top).toBeGreaterThanOrEqual(0);
-    expect(geometry.container.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
-    expect(geometry.panel.top).toBeGreaterThanOrEqual(geometry.container.top);
-    expect(geometry.panel.bottom).toBeLessThanOrEqual(geometry.container.bottom);
+  test('reported 1093x685 viewport keeps every row and pager visible', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium');
+    await page.setViewportSize({ width: 1093, height: 685 });
+    await gotoApp(page);
+    await stubMatchHistoryRoute(page, { 'self-player': fixtureMatches(33) });
+    await openProfileWithHistoryV2(page, 'self-player');
+    await expect(page.locator('#profile-history-pagination')).toBeVisible();
+
+    expectHistoryToFit(await readHistoryGeometry(page));
+  });
+
+  test('phone viewport uses compact pages without vertical history scrolling', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium');
+    await page.setViewportSize({ width: 390, height: 667 });
+    await gotoApp(page);
+    await stubMatchHistoryRoute(page, { 'self-player': fixtureMatches(33) });
+    await openProfileWithHistoryV2(page, 'self-player');
+    await expect(page.locator('#profile-history-pagination')).toBeVisible();
+
+    expectHistoryToFit(await readHistoryGeometry(page));
   });
 
   test('a match with no moves stays non-interactive', async ({ page }) => {
