@@ -54,10 +54,10 @@ func (h *monetizationHandler) stripePriceIDForSKU(sku string) (string, error) {
 }
 
 // createStripeCheckoutSession creates an embedded Checkout Session for sku
-// and returns its client secret (for Stripe.js's initEmbeddedCheckout, mounted
-// inline in the Club screen — see src/club.js's openWebCheckout — rather than
-// a hosted-page redirect) plus the resulting customer id (for the ledger's
-// stripeCustomerId, so /club/web-portal can find it later).
+// and returns its client secret (for Stripe.js's createEmbeddedCheckoutPage,
+// mounted inline in the Club screen — see src/club.js's openWebCheckout —
+// rather than a hosted-page redirect) plus the resulting customer id (for the
+// ledger's stripeCustomerId, so /club/web-portal can find it later).
 func (h *monetizationHandler) createStripeCheckoutSession(userID, sku string) (clientSecret string, customerID string, err error) {
 	priceID, err := h.stripePriceIDForSKU(sku)
 	if err != nil {
@@ -80,6 +80,12 @@ func (h *monetizationHandler) createStripeCheckoutSession(userID, sku string) (c
 	// cancelling is just the caller unmounting it.
 	form.Set("ui_mode", "embedded")
 	form.Set("return_url", h.webBaseURL+"/?club=success")
+	// Per-session branding override (verified live against the real Checkout
+	// Sessions API — it echoes these back on the created session) so the
+	// embedded widget matches the app's dark theme (style.css --bg-2 /
+	// --accent-2) instead of Stripe's default white/blue card.
+	form.Set("branding_settings[background_color]", "#1d1820")
+	form.Set("branding_settings[button_color]", "#f0c37a")
 	if mode == "subscription" {
 		// Metadata on the SUBSCRIPTION (not just the session) so invoice.paid
 		// — which references a subscription, not a session — can recover
