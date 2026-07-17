@@ -7279,8 +7279,18 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   overflow: visible;
 }
 
+/* Wider than the base .profile-container (820px): Stripe's embedded
+   Checkout only switches from its cramped single-column "mobile" layout to
+   its proper 2-column desktop layout (order summary beside the form,
+   verified live) once its own content area is roughly 995px+ wide — below
+   that it always renders single-column regardless of how much extra space
+   its container has. 1160px gives room for that content width plus this
+   container's own padding on typical desktop windows; narrower windows
+   still fall back to min(1160px, 100vw - 32px) and the single-column layout,
+   which remains fully functional. */
 .club-profile-container {
   overflow-y: auto;
+  width: min(1160px, calc(100vw - 32px));
 }
 
 .club-purchase-grid {
@@ -7337,21 +7347,22 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   border-color: rgba(80, 200, 120, 0.32);
 }
 
-/* Stripe's embedded Checkout content is tall (order summary + expanded
-   payment fields) and doesn't stretch past its own natural form width, so
-   without a cap here the card floats in a much wider parent, leaving dead
-   space on both sides. Capping width to roughly that natural width AND
-   making this container a flex child that scrolls internally (rather than
-   letting the whole .profile-container scroll, which would carry the
-   Membership header and Change-plan button off-screen too) keeps the
-   header pinned and only the payment form itself scrolling. */
+/* max-width is wide enough (paired with .club-profile-container's own
+   1160px width above) to clear the ~995px content width where Stripe's
+   embedded Checkout switches from a tall single-column "mobile" layout to
+   its 2-column desktop one (order summary beside the form instead of above
+   it) — verified live. Below that width it still gracefully falls back to
+   single-column. Making this container a flex child that scrolls internally
+   (rather than letting the whole .profile-container scroll, which would
+   carry the Membership header and Change-plan button off-screen too) keeps
+   the header pinned and only the payment form itself scrolling. */
 .club-checkout-container {
   margin-top: 8px;
   padding: 18px 16px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  max-width: 480px;
+  max-width: 1080px;
   width: 100%;
   margin-left: auto;
   margin-right: auto;
