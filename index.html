@@ -50,9 +50,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-CZ2D_Hov.js"></script>
+  <script type="module" crossorigin src="/chess/assets/index-CiPFjiS9.js"></script>
   <link rel="modulepreload" crossorigin href="/chess/assets/chunk-CMxvf4Kt.js">
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-DdZSJpoX.css">
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-DGA_J2gW.css">
 </head>
 <body>
 
@@ -469,7 +469,29 @@
       <section class="profile-history-card">
         <div class="profile-history-head">
           <h3>Match History</h3>
-          <span id="profile-match-history-count">Sign in required</span>
+          <span id="profile-match-history-count" aria-live="polite">Sign in required</span>
+        </div>
+        <!-- History enrichment (dev-plan §9.2, VITE_LEARNING_HISTORY_V2). Hidden
+             until the flag is on; the plain list above remains the fallback. -->
+        <div id="profile-history-filters" class="profile-history-filters" hidden>
+          <div class="profile-history-chips" role="group" aria-label="Filter by result">
+            <button type="button" class="profile-history-chip" data-history-filter="result" data-history-value="all">All</button>
+            <button type="button" class="profile-history-chip" data-history-filter="result" data-history-value="win">Wins</button>
+            <button type="button" class="profile-history-chip" data-history-filter="result" data-history-value="loss">Losses</button>
+            <button type="button" class="profile-history-chip" data-history-filter="result" data-history-value="draw">Draws</button>
+          </div>
+          <div class="profile-history-more-filters">
+            <select id="profile-history-color-filter" aria-label="Filter by color">
+              <option value="all">Any color</option>
+              <option value="white">White</option>
+              <option value="black">Black</option>
+            </select>
+            <select id="profile-history-mode-filter" aria-label="Filter by mode">
+              <option value="all">Any mode</option>
+              <option value="online">Online</option>
+              <option value="computer">Computer</option>
+            </select>
+          </div>
         </div>
         <div id="profile-match-history" class="profile-match-history">
           <div class="profile-history-empty profile-history-locked">
@@ -477,6 +499,7 @@
             <span>Completed games and replays will appear here after you sign in.</span>
           </div>
         </div>
+        <button type="button" id="profile-history-load-more" class="btn-mini profile-history-load-more" hidden></button>
       </section>
       </div>
       <!-- ── My Chess Journal (owner-only): self-reflection + coach report +
@@ -498,6 +521,15 @@
           <button type="button" id="btn-journal-generate" class="btn btn-primary">Write a new entry</button>
         </div>
         <p id="journal-narrative-banner" class="journal-narrative-banner" style="display:none"></p>
+        <!-- Journal hierarchy (dev-plan §14.1, VITE_LEARNING_JOURNAL_LAYOUT_V2) —
+             next action and active goal, hidden until the flag is on and
+             there's something to show. Order matches §14.1: next action,
+             active goal, practice queue, entries. -->
+        <div id="journal-next-action" class="journal-next-action" style="display:none"></div>
+        <div id="journal-active-goal" class="journal-active-goal" style="display:none"></div>
+        <!-- Global practice queue (dev-plan §12, VITE_LEARNING_PRACTICE_V2) —
+             hidden until there's at least one puzzle to schedule. -->
+        <div id="journal-practice-queue" class="journal-practice-queue" style="display:none"></div>
         <div id="journal-entries" class="journal-entries"></div>
       </section>
       </div>
@@ -1055,6 +1087,9 @@
           <strong>Tip:</strong>
           <span id="hint-text"></span>
         </div>
+        <!-- Optional return-to-Journal after a judged practice-queue drill
+             (dev-plan §12.5) — hidden outside that specific moment. -->
+        <button type="button" class="btn-mini hint-back-to-journal" id="btn-hint-back-to-journal" data-click="window.agsOpenJournal && window.agsOpenJournal()" style="display:none">← Back to Journal</button>
         <!-- Coach Mode take-back prompt: shown when the engine flags the move
              just played as a blunder; the AI holds its reply until decided. -->
         <div class="coach-prompt" id="coach-prompt" style="display:none">
@@ -1177,14 +1212,20 @@
   <div id="screen-spectator" class="screen">
     <div class="spectator-container">
       <div class="spectator-header">
-        <button class="btn-back spectator-back" data-click="window.agsStopWatching && window.agsStopWatching()">← Stop Watching</button>
+        <button class="btn-back spectator-back" id="spectator-back-btn" data-click="window.agsStopWatching && window.agsStopWatching()">← Stop Watching</button>
         <div class="spectator-players">
           <span id="spectator-white-name" class="spectator-player-name white-player">White</span>
           <span class="spectator-vs">vs</span>
           <span id="spectator-black-name" class="spectator-player-name black-player">Black</span>
         </div>
+        <button class="btn-mini spectator-flip" id="spectator-flip-btn" type="button" data-click="window.agsSpectatorFlip && window.agsSpectatorFlip()" style="display:none">Flip board</button>
       </div>
       <div id="spectator-status" class="spectator-status">Loading match…</div>
+      <!-- Review mode (dev-plan §10.2, VITE_LEARNING_REVIEW_V2) — hidden
+           entirely outside an explicit owner review session. -->
+      <div id="spectator-review-badge" class="spectator-review-badge" style="display:none">Quick Review</div>
+      <p id="spectator-review-summary" class="spectator-review-summary" style="display:none"></p>
+      <div id="spectator-review-progress" class="spectator-review-progress" style="display:none"></div>
       <div class="spectator-body">
         <div id="spectator-board" class="chess-board spectator-board"></div>
         <div class="spectator-sidebar">
@@ -1203,6 +1244,21 @@
         <span id="spectator-replay-pos" class="replay-pos"></span>
         <button class="replay-btn" title="Next move" data-click="window.agsSpectatorNext()">Next &#x25B6;</button>
         <button class="replay-btn" title="End" data-click="window.agsSpectatorLast()">&#x23ED;</button>
+      </div>
+      <div id="spectator-review-actions" class="spectator-review-actions" style="display:none">
+        <button class="btn-mini" id="spectator-review-prev-lesson" type="button" data-click="window.agsReviewPrevLesson && window.agsReviewPrevLesson()">&#x25C0; Prev lesson</button>
+        <button class="btn-mini" id="spectator-review-next-lesson" type="button" data-click="window.agsReviewNextLesson && window.agsReviewNextLesson()">Next lesson &#x25B6;</button>
+        <button class="btn-mini success" id="spectator-review-try" type="button" data-click="window.agsReviewTryFromHere && window.agsReviewTryFromHere()">Try from here</button>
+      </div>
+      <!-- Finish Review (dev-plan §11.2, VITE_LEARNING_INDEX_V1) — hidden
+           until an owner review session finishes analysis with the flag on. -->
+      <div id="spectator-review-finish-panel" class="spectator-review-finish-panel" style="display:none">
+        <div id="spectator-review-chips" class="spectator-review-chips"></div>
+        <input type="text" id="spectator-review-takeaway" class="spectator-review-takeaway-input" maxlength="120" placeholder="One thing to remember (optional)" />
+        <div class="spectator-review-finish-row">
+          <button type="button" class="btn-mini success" id="spectator-review-finish-btn" data-click="window.agsReviewFinish && window.agsReviewFinish()">Finish review</button>
+          <span id="spectator-review-save-note" class="spectator-review-save-note" aria-live="polite"></span>
+        </div>
       </div>
       <div id="spectator-analysis" class="spectator-analysis" style="display:none">
         <div class="spectator-analysis-head">
@@ -1237,6 +1293,7 @@
         <button class="btn btn-secondary" id="btn-add-match-friend" data-click="window.agsRequestLastOpponent && window.agsRequestLastOpponent()" style="display:none">Add Opponent</button>
         <button class="btn btn-secondary" id="btn-high-five" data-click="sendHighFive()" style="display:none">🙌 High Five</button>
         <button class="btn btn-secondary" id="btn-journal-nudge" data-click="openJournalFromGameOver()" style="display:none">📓 Reflect in your journal</button>
+        <button class="btn btn-secondary" id="btn-review-game" data-click="reviewGameFromGameOver()" style="display:none">🔍 Review game</button>
       </div>
       <p id="rematch-message" class="rematch-message"></p>
       <p id="game-over-countdown" class="game-over-countdown"></p>
