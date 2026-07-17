@@ -9,7 +9,7 @@
 //     playedScore, bestScore, preScore, matchedBest }
 // All scores are centipawns from the PLAYER's perspective.
 
-import { bucketMoveIndexByPhase } from './match-stats.mjs'
+import { bucketMoveIndexByPhase, stageDisplayLabel } from './match-stats.mjs'
 
 export const JOURNAL_WINDOWS = ['24h', '7d', 'since-last']
 export const JOURNAL_ENTRY_CAP = 20
@@ -205,6 +205,20 @@ export function buildPuzzleDeck(gradedGames, previousDeck = []) {
   return [...byId.values()].slice(0, PUZZLE_DECK_CAP)
 }
 
+// findEmbeddedGame: resolve a puzzle/moment's playable game across ALL
+// retained entries, newest to oldest — not just the entry that currently
+// owns the puzzle object. A carried-over puzzle's matchId is often only
+// embedded in an older entry once newer windows no longer include that
+// match (dev-plan §8.3, correctness gap #3).
+export function findEmbeddedGame(entries, matchId) {
+  if (!matchId) return null
+  for (const entry of entries || []) {
+    const g = entry?.games?.[matchId]
+    if (g && Array.isArray(g.moves) && g.moves.length) return g
+  }
+  return null
+}
+
 // ─── Goals (behavioral, auto-verified) ───────────────────────────────────────
 
 function castledByMove(match, byMove = 10) {
@@ -218,6 +232,27 @@ function castledByMove(match, byMove = 10) {
   return false
 }
 
+// reachedOwnMoveNumber: true once the match's move list includes the
+// player's `moveNumber`th own move (used to tell "didn't castle" apart from
+// "game ended before castling was even possible", dev-plan §8.2).
+function reachedOwnMoveNumber(match, moveNumber) {
+  if (!Array.isArray(match.moves) || (match.myColor !== 'white' && match.myColor !== 'black')) return false
+  const startPly = match.myColor === 'white' ? 0 : 1
+  return match.moves.length > startPly + (moveNumber - 1) * 2
+}
+
+// castleGoalResult: pure { applicable, completed } for the "castle by move
+// N" goal (dev-plan §8.2). A game that ends before the player's Nth move is
+// excluded rather than counted as a castling failure, so a short miniature
+// can never fail this goal just for ending early.
+export function castleGoalResult(match, byMove = 10) {
+  if (!Array.isArray(match.moves) || (match.myColor !== 'white' && match.myColor !== 'black')) {
+    return { applicable: false, completed: false }
+  }
+  if (castledByMove(match, byMove)) return { applicable: true, completed: true }
+  return { applicable: reachedOwnMoveNumber(match, byMove), completed: false }
+}
+
 function earlyResignation(match) {
   return match.endReason === 'resignation' && Array.isArray(match.moves) && match.moves.length < 40
 }
@@ -226,13 +261,16 @@ function earlyResignation(match) {
 // behavior goals a kid can act on over outcome goals.
 export function deriveGoal(matches, aggregate) {
   const withColor = (matches || []).filter(m => m.myColor === 'white' || m.myColor === 'black')
-  const castleChecks = withColor.map(m => castledByMove(m)).filter(v => v !== null)
-  const notCastled = castleChecks.filter(v => v === false).length
-  if (castleChecks.length >= 2 && notCastled / castleChecks.length > 0.5) {
+  // Applicable games only — a game that ended before the player's 10th move
+  // never reached the decision point and must not count as a castling miss
+  // (dev-plan §8.2, correctness gap #2).
+  const castleResults = withColor.map(m => castleGoalResult(m)).filter(r => r.applicable)
+  const notCastled = castleResults.filter(r => !r.completed).length
+  if (castleResults.length >= 2 && notCastled / castleResults.length > 0.5) {
     return {
       kind: 'castle-early',
       label: 'Castle by move 10 in your next 3 games',
-      detail: `You castled early in only ${castleChecks.length - notCastled} of ${castleChecks.length} games — a safe king survives longer.`,
+      detail: `You castled early in only ${castleResults.length - notCastled} of ${castleResults.length} applicable games — a safe king survives longer.`,
     }
   }
   const earlyResigns = (matches || []).filter(earlyResignation).length
@@ -247,8 +285,8 @@ export function deriveGoal(matches, aggregate) {
     return {
       kind: 'phase-blunders',
       phase: aggregate.weakestPhase,
-      label: `Cut down your ${aggregate.weakestPhase} mistakes`,
-      detail: `Most of your lost advantage this window came in the ${aggregate.weakestPhase}. Slow down there — check captures and checks before you move.`,
+      label: `Cut down your ${stageDisplayLabel(aggregate.weakestPhase)} mistakes`,
+      detail: `Most of your lost advantage this window came in the ${stageDisplayLabel(aggregate.weakestPhase)}. Slow down there — check captures and checks before you move.`,
     }
   }
   return {
@@ -265,12 +303,22 @@ export function verifyGoal(goal, matches, aggregate, previousAggregate) {
   const withColor = (matches || []).filter(m => m.myColor === 'white' || m.myColor === 'black')
   switch (goal.kind) {
     case 'castle-early': {
-      const checks = withColor.map(m => castledByMove(m)).filter(v => v !== null)
-      if (!checks.length) return { achieved: null, detail: 'No new games to check yet.' }
-      const done = checks.filter(Boolean).length
+      // Target is three APPLICABLE games (dev-plan §8.2) — resolve only once
+      // three games actually reached the decision point; short games that
+      // ended before move 10 are excluded and never advance or fail this goal.
+      const CASTLE_GOAL_TARGET = 3
+      const results = withColor.map(m => castleGoalResult(m)).filter(r => r.applicable).slice(0, CASTLE_GOAL_TARGET)
+      if (!results.length) return { achieved: null, detail: 'No new applicable games to check yet.' }
+      const done = results.filter(r => r.completed).length
+      if (results.length < CASTLE_GOAL_TARGET) {
+        return {
+          achieved: null,
+          detail: `Castled early in ${done} of ${results.length} applicable game${results.length === 1 ? '' : 's'} so far — ${CASTLE_GOAL_TARGET} needed.`,
+        }
+      }
       return {
-        achieved: done === checks.length,
-        detail: `You castled early in ${done} of ${checks.length} game${checks.length === 1 ? '' : 's'}.`,
+        achieved: done === CASTLE_GOAL_TARGET,
+        detail: `Castled early in ${done} of ${CASTLE_GOAL_TARGET} applicable games.`,
       }
     }
     case 'no-early-resign': {
@@ -290,7 +338,7 @@ export function verifyGoal(goal, matches, aggregate, previousAggregate) {
       const after = rate(aggregate)
       return {
         achieved: after < before,
-        detail: `${goal.phase} blunder rate: ${Math.round(before * 100)}% → ${Math.round(after * 100)}% of your moves.`,
+        detail: `${stageDisplayLabel(goal.phase)} blunder rate: ${Math.round(before * 100)}% → ${Math.round(after * 100)}% of your moves.`,
       }
     }
     case 'blunder-rate': {
@@ -307,6 +355,180 @@ export function verifyGoal(goal, matches, aggregate, previousAggregate) {
     default:
       return null
   }
+}
+
+// ─── Goals v2 — chosen goals with idempotent, honest progress (dev-plan §13) ─
+// Replaces the auto-judged single-goal system above (deriveGoal/verifyGoal
+// stay fully intact for VITE_LEARNING_GOALS_V2=false / legacy entries — no
+// migration, no shared state between the two systems).
+
+const GOAL_V2_MODEL_VERSION = 'goal-v2'
+const GOAL_V2_MATCH_TARGET = 3
+const GOAL_V2_PRACTICE_TARGET = 5
+
+function makeGoalCandidate({ kind, label, detail, target }) {
+  return {
+    kind, label, detail, target,
+    status: 'suggested',
+    applicable: 0,
+    completed: 0,
+    selectedAt: '',
+    completedAt: '',
+    modelVersion: GOAL_V2_MODEL_VERSION,
+    evidenceIds: [],
+  }
+}
+
+// deriveGoalCandidates: at most 3, in priority order (dev-plan §13.1). The
+// last candidate (review-next-games) is a pure fallback that always
+// qualifies, so the pool is never empty. review-games/practice-positions are
+// only offered when their own milestone flags are on (dev-plan §13.5).
+export function deriveGoalCandidates({ matches, reviewSupport = false, practiceSupport = false } = {}) {
+  const withColor = (matches || []).filter(m => m.myColor === 'white' || m.myColor === 'black')
+  const pool = []
+
+  const castleApplicable = withColor.map(m => castleGoalResult(m)).filter(r => r.applicable)
+  if (castleApplicable.length >= 2) {
+    pool.push(makeGoalCandidate({
+      kind: 'castle-early',
+      label: `Castle by move 10 in ${GOAL_V2_MATCH_TARGET} applicable games`,
+      detail: 'A safe king survives longer — castle before move 10.',
+      target: GOAL_V2_MATCH_TARGET,
+    }))
+  }
+
+  const earlyResigns = (matches || []).filter(earlyResignation).length
+  if (earlyResigns >= 2) {
+    pool.push(makeGoalCandidate({
+      kind: 'no-early-resign',
+      label: 'Play your games out — no resigning before move 20',
+      detail: 'Lost positions are where comebacks (and stalemate saves) come from.',
+      target: GOAL_V2_MATCH_TARGET,
+    }))
+  }
+
+  if (reviewSupport) {
+    pool.push(makeGoalCandidate({
+      kind: 'review-games',
+      label: `Review your next ${GOAL_V2_MATCH_TARGET} games`,
+      detail: 'A Quick Review after each game turns a loss into a lesson.',
+      target: GOAL_V2_MATCH_TARGET,
+    }))
+  }
+
+  if (practiceSupport) {
+    pool.push(makeGoalCandidate({
+      kind: 'practice-positions',
+      label: `Practice ${GOAL_V2_PRACTICE_TARGET} positions from your queue`,
+      detail: 'Solving a puzzle more than once is how it sticks.',
+      target: GOAL_V2_PRACTICE_TARGET,
+    }))
+  }
+
+  pool.push(makeGoalCandidate({
+    kind: 'review-next-games',
+    label: `Review your next ${GOAL_V2_MATCH_TARGET} finished games`,
+    detail: 'Look back at how each game went — result, key moment, one takeaway.',
+    target: GOAL_V2_MATCH_TARGET,
+  }))
+
+  return pool.slice(0, 3)
+}
+
+// selectGoal: the player's explicit choice (dev-plan §13.2) — a suggested
+// candidate becomes the active goal. Never called automatically.
+export function selectGoal(candidate, now = new Date()) {
+  return { ...candidate, status: 'active', selectedAt: now.toISOString() }
+}
+
+// replaceActiveGoal: marks a still-active goal 'replaced' rather than
+// deleting it, preserving history (dev-plan §13.2).
+export function replaceActiveGoal(goal) {
+  if (!goal || goal.status !== 'active') return goal
+  return { ...goal, status: 'replaced' }
+}
+
+// matchEvidenceForGoal: [{ id, applicable, completed }] derived purely from
+// a window of matches, for the goal kinds that only need match data. Games
+// that never reach the decision point are excluded (dev-plan §13.3 "Games
+// that do not reach the relevant decision point are excluded").
+export function matchEvidenceForGoal(kind, matches) {
+  const withColor = (matches || []).filter(m => m.myColor === 'white' || m.myColor === 'black')
+  if (kind === 'castle-early') {
+    return withColor.map(m => {
+      const r = castleGoalResult(m)
+      return { id: m.id, applicable: r.applicable, completed: r.completed }
+    })
+  }
+  if (kind === 'no-early-resign') {
+    return withColor
+      .filter(m => Array.isArray(m.moves) && m.moves.length)
+      .map(m => ({ id: m.id, applicable: true, completed: !earlyResignation(m) }))
+  }
+  if (kind === 'review-next-games') {
+    // Fallback goal (dev-plan §13.1 item 5): being covered by a generated
+    // Journal entry — the coach report already analyzed it — counts as
+    // "reviewed" in the loose sense this weaker fallback promises. The
+    // richer review-games candidate (real Quick Review completion) is
+    // offered instead whenever the M4 flag makes that possible.
+    return withColor
+      .filter(m => Array.isArray(m.moves) && m.moves.length)
+      .map(m => ({ id: m.id, applicable: true, completed: true }))
+  }
+  return []
+}
+
+// applyGoalEvidence: the single idempotent progress-update path (dev-plan
+// §13.3) — every trigger (new Journal entry, a finished review, a solved
+// practice puzzle) funnels through this. `evidence` is domain-specific
+// [{ id, applicable, completed }] the CALLER derives (matches for
+// castle-early/no-early-resign/review-next-games; a reviewed matchId for
+// review-games; a solved puzzleId for practice-positions) — this function
+// only knows how to dedupe by id and accumulate, never how applicability
+// itself is decided. A no-op for anything but an active goal.
+export function applyGoalEvidence(goal, evidence, now = new Date()) {
+  if (!goal || goal.status !== 'active') return goal
+  const seen = new Set(goal.evidenceIds || [])
+  const nextIds = [...seen]
+  let applicable = goal.applicable || 0
+  let completed = goal.completed || 0
+  for (const item of evidence || []) {
+    if (!item?.id || seen.has(item.id) || !item.applicable) continue
+    seen.add(item.id)
+    nextIds.push(item.id)
+    applicable++
+    if (item.completed) completed++
+  }
+  const target = goal.target || GOAL_V2_MATCH_TARGET
+  const achieved = completed >= target
+  return {
+    ...goal,
+    applicable,
+    completed,
+    evidenceIds: nextIds,
+    status: achieved ? 'achieved' : 'active',
+    completedAt: achieved ? now.toISOString() : (goal.completedAt || ''),
+  }
+}
+
+// goalResolutionState: the DISPLAY-level state the copy in dev-plan §13.4
+// keys off. 'stalled' — the target number of applicable games was reached
+// without full success — is a UI determination, not a stored status; the
+// goal stays 'active' underneath so "Keep goal" can resume it seamlessly.
+export function goalResolutionState(goal) {
+  if (!goal) return null
+  if (goal.status === 'achieved' || goal.status === 'replaced') return goal.status
+  if (goal.status === 'active' && (goal.applicable || 0) >= (goal.target || GOAL_V2_MATCH_TARGET)) return 'stalled'
+  return goal.status
+}
+
+// normalizeGoalForDisplay: legacy goals (pre-Goal v2, built by the old
+// deriveGoal above) have no `status` field at all — dev-plan §6.5: "Missing
+// status on legacy goals normalizes to active for display compatibility."
+export function normalizeGoalForDisplay(goal) {
+  if (!goal) return null
+  if (goal.status) return goal
+  return { ...goal, status: 'active' }
 }
 
 // ─── Aggregation, trend, opening signal ──────────────────────────────────────
@@ -578,4 +800,21 @@ export function detectProcessBadges({ gradedGames, matches, journalRecord }) {
     .filter(p => p.solved).length
   if (solved >= 10) codes.push('chess-blunder-buster')
   return codes
+}
+
+// ─── Journal hierarchy — next action (dev-plan §14.1) ────────────────────────
+
+// deriveNextAction: the single highest-priority thing worth doing, covering
+// priorities 1 (due practice), 3 (active goal), 4 (recap new matches), and 5
+// (calm empty state). Priority 2 ("ready review from the learning index")
+// needs an async cross-module CloudSave fetch the caller (journal.js) layers
+// on top separately — this stays pure and synchronous so it's fully testable
+// and tolerates missing M5/M6 data on its own (dev-plan §14.1's "each module
+// must render independently").
+export function deriveNextAction({ dueCount = 0, activeGoal = null, newMatchCount = 0 } = {}) {
+  if (dueCount > 0) return { kind: 'practice', dueCount }
+  const goal = normalizeGoalForDisplay(activeGoal)
+  if (goal?.status === 'active') return { kind: 'goal', goal }
+  if (newMatchCount > 0) return { kind: 'recap', count: newMatchCount }
+  return { kind: 'empty' }
 }

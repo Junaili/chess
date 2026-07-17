@@ -29,7 +29,13 @@ const totals = launchFiles.reduce((sum, file) => ({
   rawBytes: sum.rawBytes + file.rawBytes,
   gzipBytes: sum.gzipBytes + file.gzipBytes,
 }), { rawBytes: 0, gzipBytes: 0 })
-const limits = { rawBytes: 220 * 1024, gzipBytes: 70 * 1024 }
+// Raised from 220/70 KiB during the History+Journal learning-loop build-out
+// (dev-plan M0-M4): the eager wiring for six rollout flags, spectator mode/
+// orientation, and History enrichment left only ~2.7 KiB gzip of headroom
+// with M5-M7 (practice queue, goals, Journal hierarchy) still to land. Most
+// of that work lands in already-lazy chunks (journal.js, review.js), so this
+// gives real margin without expecting to need it all.
+const limits = { rawBytes: 260 * 1024, gzipBytes: 85 * 1024 }
 const report = {
   commit: process.env.GITHUB_SHA || 'local',
   generatedAt: new Date().toISOString(),

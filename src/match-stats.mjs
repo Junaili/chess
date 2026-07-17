@@ -44,6 +44,21 @@ export function bucketMoveIndexByPhase(moveIndex, totalMoves) {
   return 'endgame'
 }
 
+// stageDisplayLabel: user-facing mapping for bucketMoveIndexByPhase() keys
+// (dev-plan §8.1). The stored keys stay 'opening'/'middlegame'/'endgame' since
+// Coaching and cached summaries key off them, but the underlying model is
+// still crude ply-thirds — a six-ply miniature can bucket its third move as
+// 'endgame' despite never leaving the opening. Never call these semantic
+// chess phases in player-facing copy or telemetry; say early/middle/late.
+export function stageDisplayLabel(phaseKey) {
+  switch (phaseKey) {
+    case 'opening': return 'early game'
+    case 'middlegame': return 'middle game'
+    case 'endgame': return 'late game'
+    default: return 'the game'
+  }
+}
+
 const PHASE_ORDER = ['opening', 'middlegame', 'endgame']
 
 // grades: [{ moveIndex, mover: 'white'|'black', grade }] for EVERY ply of one

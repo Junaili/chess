@@ -236,6 +236,10 @@ let currentMatchId = null;
 // clearActiveMatch() nulls it out — the High Five button needs a matchId
 // after the modal is already showing, when currentMatchId itself is gone.
 let lastCompletedMatchId = null;
+// Full match-history record built by recordMatchHistoryOnce(), snapshotted
+// for the same reason as lastCompletedMatchId above — reviewGameFromGameOver()
+// needs moves/myColor/names AFTER destroyPeer() has already nulled `game`.
+let lastCompletedMatchRecord = null;
 let gameOverCountdownTimer = null;
 let gameOverCountdownRemaining = 0;
 let boardFlipped = false;
@@ -551,6 +555,7 @@ function startGame() {
   aiThinking = false;
 
   document.getElementById('hint-box').style.display = 'none';
+  document.getElementById('btn-hint-back-to-journal').style.display = 'none';
   document.getElementById('move-list').innerHTML = '';
   document.getElementById('captured-by-white').innerHTML = '';
   document.getElementById('captured-by-black').innerHTML = '';
@@ -888,6 +893,10 @@ function executeMove(fr, fc, toR, toC, promType) {
       if (wantsJudge && review) {
         document.getElementById('hint-text').textContent = review.text;
         document.getElementById('hint-box').style.display = 'flex';
+        // Optional explicit return to Journal after the judged move
+        // (dev-plan §12.5) — the player can also just keep playing normally.
+        const backBtn = document.getElementById('btn-hint-back-to-journal');
+        if (backBtn) backBtn.style.display = typeof window.agsOpenJournal === 'function' ? '' : 'none';
       }
       if (wantsCoach && review?.grade === 'Better move available') {
         coachPromptPending = true;
@@ -1217,6 +1226,19 @@ function openJournalFromGameOver() {
   if (typeof window.agsOpenJournal === 'function') window.agsOpenJournal();
 }
 
+// Post-game "Review game" entry point (dev-plan §10.8) — the loop's primary
+// funnel. Snapshot the match BEFORE destroyPeer() (it nulls `game`), same
+// ordering constraint openJournalFromGameOver doesn't have to worry about
+// since Journal only needs a userId, not this game's move list.
+function reviewGameFromGameOver() {
+  const match = lastCompletedMatchRecord;
+  closeModal('game-over-modal');
+  destroyPeer();
+  if (match && typeof window.agsStartReviewFromGameOver === 'function') {
+    window.agsStartReviewFromGameOver(match);
+  }
+}
+
 // ─── UI updates ───────────────────────────────────────────────────────────────
 
 function showMatchTab(name) {
@@ -1508,6 +1530,17 @@ function showGameOver() {
       window.agsCurrentUserId && typeof window.agsOpenJournal === 'function' ? '' : 'none';
   }
 
+  // Post-game "Review game" entry (dev-plan §10.8) — same signed-in gate as
+  // the journal nudge, plus a recorded move list and the milestone flag.
+  // Absent (never disabled) when the match has no moves to review.
+  const reviewGameBtn = document.getElementById('btn-review-game');
+  if (reviewGameBtn) {
+    const reviewEnabled = typeof window.agsLearningFlags === 'function' && window.agsLearningFlags().reviewV2;
+    reviewGameBtn.style.display =
+      window.agsCurrentUserId && reviewEnabled && game.moveHistory.length > 0
+        && typeof window.agsStartReviewFromGameOver === 'function' ? '' : 'none';
+  }
+
   // Contextual invite prompt
   const invitePrompt = document.getElementById('game-over-invite-prompt');
   if (invitePrompt) {
@@ -1586,7 +1619,7 @@ function recordMatchHistoryOnce() {
     });
   }
 
-  window.agsRecordMatchHistory({
+  const record = {
     id: 'match-' + endedAt.getTime() + '-' + Math.random().toString(36).slice(2, 8),
     mode: gameMode,
     opponentName,
@@ -1604,7 +1637,9 @@ function recordMatchHistoryOnce() {
     // compact since match history caps at 50 entries per player.
     capturedByWhite: game.capturedByWhite.map(p => p.type),
     capturedByBlack: game.capturedByBlack.map(p => p.type),
-  });
+  };
+  lastCompletedMatchRecord = record;
+  window.agsRecordMatchHistory(record);
 }
 
 function closeModal(id) {
@@ -4834,6 +4869,7 @@ Object.assign(window, {
   requestRematch,
   resetLeaderboard,
   resignGame,
+  reviewGameFromGameOver,
   selectColor,
   selectPieceColor,
   sendChatMessage,

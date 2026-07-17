@@ -5,7 +5,7 @@ import { extendFetch } from './extend-client.js'
 import { parseLegalMarkdown } from './legal-markdown.mjs'
 import { sendEvent, flushPendingEvents, captureUtm, clearPendingEvents } from './telemetry.js'
 import { readPrivacyPreferences, writePrivacyPreferences } from './privacy-preferences.mjs'
-import { computeMatchStats, summarizeCoachingGrades, combineCoachingSummaries } from './match-stats.mjs'
+import { computeMatchStats, summarizeCoachingGrades, combineCoachingSummaries, stageDisplayLabel } from './match-stats.mjs'
 import { deriveMatchRoles, computeDeadline, isPastDeadline, isResumable, pickAuthoritativeMoves } from './match-resume.mjs'
 import { formatCoins, accountDeletionNotices } from './club-contract.mjs'
 import { deriveHighFiveButton, formatKudosCount } from './kudos-contract.mjs'
@@ -17,7 +17,21 @@ import {
 } from './content-moderation.mjs'
 import { getReportTicketId, getSafetyError } from './safety-payloads.mjs'
 import { validateDeletionConfirmation } from './account-deletion-contract.mjs'
+import { resolveLearningFlags } from './learning-flags.mjs'
+import { historyRowView, filterHistory, historyFilterCounts, pageHistory, HISTORY_PAGE_SIZE } from './history-view.mjs'
 import './app-shell.js'
+
+// Learning-loop rollout flags (dev-plan/history-journal-learning-loop-development-plan.md
+// §5.5). All false in production until each milestone is approved; getLearningFlags()
+// is the single read path so review/history/journal code never reads import.meta.env
+// directly.
+let learningFlagOverrides = null
+function getLearningFlags() {
+  return resolveLearningFlags(import.meta.env, learningFlagOverrides)
+}
+// app.js is a plain script (no import.meta.env), so the game-over "Review
+// game" button (dev-plan §10.8) reads the flag through this accessor.
+window.agsLearningFlags = getLearningFlags
 
 function createFeatureLoader(label, importer) {
   let loadedModule = null
@@ -46,6 +60,7 @@ const spectatorFeature = createFeatureLoader('Spectator', () => import('./specta
 const matchmakingFeature = createFeatureLoader('Matchmaking', () => import('./matchmaking.js'))
 const gusFeature = createFeatureLoader('Gambit Gus', () => import('./gus.js'))
 const journalFeature = createFeatureLoader('Journal', () => import('./journal.js'))
+const reviewFeature = createFeatureLoader('Game Review', () => import('./review.js'))
 const clubFeature = createFeatureLoader('Chess Club', () => import('./club.js'))
 const coinStoreFeature = createFeatureLoader('Coin Store', () => import('./coin-store.js'))
 const kudosFeature = createFeatureLoader('High Five', () => import('./kudos.js'))
@@ -112,6 +127,7 @@ const GAMEPLAY_GLOBALS = [
   'declineVideoCall', 'endVideoChat', 'flipBoard', 'handleChatInputKeydown',
   'hideAddContact', 'openJournalFromGameOver', 'playAgainFromGameOver',
   'reportCurrentOpponent', 'requestRematch', 'resetLeaderboard', 'resignGame',
+  'reviewGameFromGameOver',
   'selectColor', 'sendChatMessage', 'sendHighFive', 'shareInviteLink',
   'showAddContact', 'showColorSelect', 'showContactsForInvite', 'showHint',
   'showGameOver', 'showMatchTab', 'showWaitingScreen', 'toggleCoachMode',
@@ -780,6 +796,7 @@ const STATIC_ACTIONS = new Set([
   'requestRematch',
   'resetLeaderboard',
   'resignGame',
+  'reviewGameFromGameOver',
   'selectColor',
   'sendChatMessage',
   'sendHighFive',
@@ -858,7 +875,12 @@ const STATIC_ACTIONS = new Set([
   'agsSavePrivacyChoices',
   'agsShowProfileTab',
   'agsShowGusTab',
+  'agsReviewPrevLesson',
+  'agsReviewNextLesson',
+  'agsReviewTryFromHere',
+  'agsReviewFinish',
   'agsSpectatorFirst',
+  'agsSpectatorFlip',
   'agsSpectatorLast',
   'agsSpectatorNext',
   'agsSpectatorPrev',
@@ -1013,6 +1035,17 @@ let activeProfileUser = null
 let spectatorPrevScreen = null
 let spectatorReturnProfileTab = ''
 let profileMatchHistoryRows = []
+// History enrichment (dev-plan §9.3), only used when VITE_LEARNING_HISTORY_V2
+// is on. profileMatchHistoryRows above stays index-aligned with the full
+// fetched list for window.agsReplayMatchHistory/Coaching's drill-down either
+// way — this is additive state for the new by-ID filtered/paged UI.
+let profileMatchHistoryById = new Map()
+let profileHistoryState = {
+  profileUserId: '',
+  allMatches: [],
+  filters: { result: 'all', color: 'all', mode: 'all' },
+  visibleCount: HISTORY_PAGE_SIZE,
+}
 let blockedPlayers = []
 let deletionRequirements = null
 
@@ -2234,6 +2267,7 @@ async function initAuth() {
     clearUnlockedCache()
     resetGusPanel()
     resetJournalState()
+    resetProfileHistoryState('', [])
     resetClubStatus()
     resetCosmetics()
     chatClient.disconnect()
@@ -3140,8 +3174,13 @@ async function initAuth() {
     await prepareSpectatorAnalysis()
     spectatorReplayIndex = -1
     spectatorLastMatchData = null
+    spectatorMode = 'live'
+    spectatorSource = 'live'
+    spectatorFlipped = false
+    reviewFeature.peek()?.resetReviewSession()
     // Save the current screen so Stop Watching returns to it, not unconditionally to home.
     spectatorPrevScreen = document.querySelector('.screen.active')?.id?.replace('screen-', '') || 'home'
+    updateSpectatorBackButton()
     const statusEl = document.getElementById('spectator-status')
     const whiteEl = document.getElementById('spectator-white-name')
     const blackEl = document.getElementById('spectator-black-name')
@@ -3165,9 +3204,14 @@ async function initAuth() {
     })
   }
   window.agsStopWatching = () => {
+    const wasReview = spectatorMode === 'review'
     stopWatching()
     spectatorReplayIndex = -1
     spectatorLastMatchData = null
+    spectatorMode = 'live'
+    spectatorFlipped = false
+    spectatorSource = ''
+    reviewFeature.peek()?.resetReviewSession()
     setSpectatorReplayControls(false)
     const target = spectatorPrevScreen || 'home'
     spectatorPrevScreen = null
@@ -3185,6 +3229,13 @@ async function initAuth() {
       showProfileTab(spectatorReturnProfileTab)
     }
     spectatorReturnProfileTab = ''
+    // Coming back from a review session (dev-plan §11.3's "Finish Review
+    // updates status and History badge") — re-render from the already-cached
+    // match list so a just-finished review's badge reflects immediately,
+    // without a network round-trip for the rows themselves.
+    if (wasReview && target === 'profile' && profileHistoryState.profileUserId) {
+      renderProfileMatchHistoryV2(profileHistoryState.allMatches, profileHistoryState.profileUserId)
+    }
   }
   window.agsSpectatorFirst = () => replayAt(0)
   window.agsSpectatorPrev  = () => replayAt(spectatorReplayIndex - 1)
@@ -3618,7 +3669,7 @@ async function openPublicProfile(userId, displayName = '') {
   if (rankEl) rankEl.textContent = rank?.rank ? `#${rank.rank}` : 'Unranked'
   if (ratingEl) ratingEl.textContent = stats?.rating ?? '—'
   if (kudosEl) kudosEl.textContent = formatKudosCount(stats?.kudos)
-  renderProfileMatchHistory(matchHistory)
+  renderProfileMatchHistory(matchHistory, userId)
   // Head-to-head is "my record vs this person" — on my own profile that's
   // just my own computed stats; on a friend's profile it needs my own match
   // history too (already fetched above), looked up by their userId.
@@ -3879,7 +3930,8 @@ async function requestProfileFriend(profile) {
   await openPublicProfile(profile.userId, profile.displayName)
 }
 
-function renderProfileMatchHistory(matches) {
+function renderProfileMatchHistory(matches, userId) {
+  if (getLearningFlags().historyV2) return renderProfileMatchHistoryV2(matches, userId)
   const el = document.getElementById('profile-match-history')
   const countEl = document.getElementById('profile-match-history-count')
   if (!el) return
@@ -3928,6 +3980,195 @@ function renderProfileMatchHistory(matches) {
     button.addEventListener('click', () => {
       window.agsReplayMatchHistory?.(Number(button.dataset.replayIndex))
     })
+  })
+}
+
+// ─── History enrichment (dev-plan §9, VITE_LEARNING_HISTORY_V2) ─────────────
+
+function resetProfileHistoryState(userId, matches) {
+  profileHistoryState = {
+    profileUserId: userId || '',
+    allMatches: Array.isArray(matches) ? matches : [],
+    filters: { result: 'all', color: 'all', mode: 'all' },
+    visibleCount: HISTORY_PAGE_SIZE,
+  }
+}
+
+const HISTORY_RESULT_CHIP_LABELS = { all: 'All', win: 'Wins', loss: 'Losses', draw: 'Draws' }
+
+function renderHistoryFilterChips(filtersEl, counts, filters) {
+  filtersEl.querySelectorAll('[data-history-filter="result"]').forEach(chip => {
+    const value = chip.dataset.historyValue
+    const active = filters.result === value
+    chip.classList.toggle('active', active)
+    chip.setAttribute('aria-pressed', String(active))
+    chip.textContent = `${HISTORY_RESULT_CHIP_LABELS[value] || value} (${counts[value] ?? 0})`
+  })
+  const colorSelect = document.getElementById('profile-history-color-filter')
+  if (colorSelect) colorSelect.value = filters.color
+  const modeSelect = document.getElementById('profile-history-mode-filter')
+  if (modeSelect) modeSelect.value = filters.mode
+}
+
+// One-time listener wiring (dataset guard mirrors journalBound elsewhere) —
+// re-renders always go through renderProfileMatchHistoryV2 so state stays
+// the single source of truth instead of being read back out of the DOM.
+function bindHistoryFilterControls() {
+  const filtersEl = document.getElementById('profile-history-filters')
+  if (!filtersEl || filtersEl.dataset.historyBound === '1') return
+  filtersEl.dataset.historyBound = '1'
+  const applyFilterChange = (key, value) => {
+    profileHistoryState.filters[key] = value
+    profileHistoryState.visibleCount = HISTORY_PAGE_SIZE
+    renderProfileMatchHistoryV2(profileHistoryState.allMatches, profileHistoryState.profileUserId)
+  }
+  filtersEl.querySelectorAll('[data-history-filter="result"]').forEach(chip => {
+    chip.addEventListener('click', () => applyFilterChange('result', chip.dataset.historyValue))
+  })
+  const colorSelect = document.getElementById('profile-history-color-filter')
+  colorSelect?.addEventListener('change', () => applyFilterChange('color', colorSelect.value))
+  const modeSelect = document.getElementById('profile-history-mode-filter')
+  modeSelect?.addEventListener('change', () => applyFilterChange('mode', modeSelect.value))
+}
+
+function renderProfileMatchHistoryV2(matches, userId) {
+  const el = document.getElementById('profile-match-history')
+  const countEl = document.getElementById('profile-match-history-count')
+  const filtersEl = document.getElementById('profile-history-filters')
+  const loadMoreEl = document.getElementById('profile-history-load-more')
+  if (!el) return
+  const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
+
+  // Reset paging/filters whenever the profile being viewed changes (§9.3);
+  // otherwise keep the player's current filter selection across a re-render
+  // (e.g. after Load more or a filter change re-invokes this function).
+  if (profileHistoryState.profileUserId !== userId) {
+    resetProfileHistoryState(userId, matches)
+  } else {
+    profileHistoryState.allMatches = Array.isArray(matches) ? matches : []
+  }
+
+  // Back-compat: keep these index/id-aligned with the FULL fetched list (not
+  // the filtered/paged view) so window.agsReplayMatchHistory(index) and
+  // Coaching's drill-down — which shares these same indices — keep working.
+  profileMatchHistoryRows = profileHistoryState.allMatches
+  profileMatchHistoryById = new Map(
+    profileHistoryState.allMatches.filter(m => m?.id).map(m => [m.id, m])
+  )
+
+  const isOwnProfile = userId === currentUserId
+  const filtered = filterHistory(profileHistoryState.allMatches, profileHistoryState.filters)
+  const { visible, hasMore, nextVisibleCount, totalCount: filteredCount } = pageHistory(filtered, profileHistoryState.visibleCount, HISTORY_PAGE_SIZE)
+
+  if (countEl) {
+    const total = profileHistoryState.allMatches.length
+    countEl.textContent = filteredCount === total
+      ? `${total} ${total === 1 ? 'match' : 'matches'}`
+      : `${filteredCount} of ${total} ${total === 1 ? 'match' : 'matches'}`
+  }
+
+  if (filtersEl) {
+    filtersEl.hidden = !profileHistoryState.allMatches.length
+    bindHistoryFilterControls()
+    renderHistoryFilterChips(filtersEl, historyFilterCounts(profileHistoryState.allMatches), profileHistoryState.filters)
+  }
+
+  if (!profileHistoryState.allMatches.length) {
+    el.innerHTML = `<div class="profile-history-empty">
+      <strong>No completed matches</strong>
+      <span>Finished games will appear here with result, opponent, time, and duration.</span>
+    </div>`
+    if (loadMoreEl) loadMoreEl.hidden = true
+    return
+  }
+
+  if (!filtered.length) {
+    el.innerHTML = `<div class="profile-history-empty">
+      <strong>No matches for this filter</strong>
+      <span>Try a different filter, or choose All to see everything.</span>
+    </div>`
+    if (loadMoreEl) loadMoreEl.hidden = true
+    return
+  }
+
+  el.innerHTML = visible.map(match => {
+    const row = historyRowView(match)
+    const metaParts = [row.modeLabel, row.colorLabel, row.moveCountLabel, row.endReasonLabel, row.dateLabel].filter(Boolean)
+    const actionLabel = !row.canReplay ? 'Replay unavailable' : isOwnProfile ? 'Click to review' : 'Click to replay'
+    return `<button class="profile-history-row${row.canReplay ? ' replayable' : ' no-replay'}" type="button" data-match-id="${esc(row.id)}"${row.canReplay ? '' : ' disabled'}>
+      <span class="profile-history-result ${esc(row.resultClass)}">${esc(row.resultLabel)}</span>
+      <div class="profile-history-main">
+        <strong>${esc(row.opponent)}</strong>
+        <span>${esc(metaParts.join(' · '))}${metaParts.length ? ' · ' : ''}${esc(actionLabel)}</span>
+        <span class="profile-history-learning-badge" data-learning-badge></span>
+      </div>
+      <div class="profile-history-meta">
+        <span>Length</span>
+        <span>${esc(row.durationLabel || '—')}</span>
+      </div>
+    </button>`
+  }).join('')
+
+  el.querySelectorAll('[data-match-id]').forEach(button => {
+    button.addEventListener('click', () => {
+      const match = profileMatchHistoryById.get(button.dataset.matchId)
+      if (!match) return
+      if (isOwnProfile && getLearningFlags().reviewV2) {
+        replayMatchData(match, 'profile', { reviewMode: true, ownerColor: match.myColor, source: 'history' })
+      } else {
+        replayMatchData(match, 'profile')
+      }
+    })
+  })
+
+  if (loadMoreEl) {
+    loadMoreEl.hidden = !hasMore
+    loadMoreEl.textContent = hasMore ? `Show more (${filteredCount - visible.length} remaining)` : ''
+    loadMoreEl.onclick = () => {
+      profileHistoryState.visibleCount = nextVisibleCount
+      renderProfileMatchHistoryV2(profileHistoryState.allMatches, profileHistoryState.profileUserId)
+    }
+  }
+
+  // Learning-index badges (dev-plan §11.3) — own profile only, lazy-loaded
+  // AFTER the public-data render above so a slow/failed fetch never blocks
+  // History. Patches existing rows in place; never re-renders or resets
+  // scroll/filter state.
+  if (isOwnProfile && getLearningFlags().indexV1) {
+    patchHistoryLearningBadges(userId, ++profileHistoryBadgeGeneration)
+  } else {
+    profileHistoryBadgeGeneration++ // invalidate any in-flight patch from a previous render
+  }
+}
+
+let profileHistoryBadgeGeneration = 0
+
+async function patchHistoryLearningBadges(userId, generation) {
+  let module
+  try {
+    module = await reviewFeature.load()
+  } catch (error) {
+    console.warn('[learning] review module unavailable for badges:', error?.message || error)
+    return
+  }
+  let record
+  try {
+    record = await module.loadLearningIndex(userId)
+  } catch (error) {
+    console.warn('[learning] index fetch failed:', error?.message || error)
+    return // fetch failure -> no badge, normal Review action remains (§11.3)
+  }
+  // Stale-request guard (§11.3 rule 4): a newer render or a profile switch
+  // happened while the fetch was in flight — do not patch a screen that has
+  // moved on.
+  if (generation !== profileHistoryBadgeGeneration || profileHistoryState.profileUserId !== userId) return
+  const el = document.getElementById('profile-match-history')
+  if (!el) return
+  profileMatchHistoryById.forEach((match, matchId) => {
+    const badge = module.reviewBadge(record, match)
+    if (!badge?.label) return
+    const badgeEl = el.querySelector(`[data-match-id="${CSS.escape(matchId)}"] [data-learning-badge]`)
+    if (badgeEl) badgeEl.textContent = badge.takeaway ? `${badge.label} · “${badge.takeaway}”` : badge.label
   })
 }
 
@@ -4772,6 +5013,12 @@ if (import.meta.env.DEV) {
     familyState = { group: null, members: [], incomingInvites: [], ...state }
     renderFamilyPanel(true)
   }
+  // Learning-loop flags (§5.5): overrides merge on top of VITE_LEARNING_* env
+  // vars so E2E specs can enable one milestone at a time without a real env
+  // build. Stripped from production because the whole block is import.meta.env.DEV-gated.
+  window.agsSetLearningFlagsForTesting = overrides => {
+    learningFlagOverrides = overrides
+  }
 }
 
 // onAction(action, userId) is called when any data-action button is clicked.
@@ -5115,11 +5362,66 @@ window.agsIsFamilyMember = userId => !!userId
 // Replay state — index of the move currently shown (-1 = live / not in replay)
 let spectatorReplayIndex = -1
 let spectatorLastMatchData = null
+// Explicit spectator mode (dev-plan §10.1). Only the three entry points below
+// (agsWatchFriend, replayMatchData, agsStopWatching) may change it — no other
+// code should read/write player orientation, review chrome, or back-button
+// copy without going through the mode this drives.
+let spectatorMode = 'live' // 'live' | 'replay' | 'review'
+let spectatorBaseOrientation = 'white'
+let spectatorFlipped = false
+let spectatorSource = ''
+
+function currentSpectatorOrientation() {
+  if (spectatorMode === 'live') return 'white'
+  if (!spectatorFlipped) return spectatorBaseOrientation
+  return spectatorBaseOrientation === 'white' ? 'black' : 'white'
+}
+
+// toEngineCoords: maps a DISPLAY grid position to the engine's board[r][c]
+// coordinates for the current orientation (dev-plan §10.3). Never mutates
+// the board or moves — a pure 180° remap used only at render time.
+function toEngineCoords(displayRow, displayCol) {
+  return currentSpectatorOrientation() === 'black'
+    ? { r: 7 - displayRow, c: 7 - displayCol }
+    : { r: displayRow, c: displayCol }
+}
+
+function spectatorBackLabel() {
+  if (spectatorMode === 'live') return '← Stop Watching'
+  if (spectatorMode === 'review') return spectatorSource === 'game-over' ? 'Done' : '← Back to History'
+  return spectatorReturnProfileTab === 'journal' ? '← Back to Journal' : '← Back to Profile'
+}
+
+function updateSpectatorBackButton() {
+  const btn = document.getElementById('spectator-back-btn')
+  if (btn) btn.textContent = spectatorBackLabel()
+  const flipBtn = document.getElementById('spectator-flip-btn')
+  if (flipBtn) flipBtn.style.display = spectatorMode === 'live' ? 'none' : ''
+}
+
+window.agsSpectatorFlip = () => {
+  if (spectatorMode === 'live') return
+  spectatorFlipped = !spectatorFlipped
+  renderSpectatorBoard(spectatorLastMatchData, spectatorReplayIndex)
+}
+
 function replayAt(index) {
   if (!spectatorLastMatchData) return
   const moves = spectatorLastMatchData.moves || []
   spectatorReplayIndex = Math.max(0, Math.min(index, moves.length - 1))
   renderSpectatorBoard(spectatorLastMatchData, spectatorReplayIndex)
+  if (spectatorMode === 'review') reviewFeature.peek()?.onReplayPlyChanged(spectatorReplayIndex)
+}
+
+window.agsReviewPrevLesson = () => reviewFeature.peek()?.prevLesson()
+window.agsReviewNextLesson = () => reviewFeature.peek()?.nextLesson()
+window.agsReviewTryFromHere = () => reviewFeature.peek()?.tryFromHere(spectatorReplayIndex)
+// Finish Review (dev-plan §11.2) — reads the takeaway input directly since
+// review.js owns the panel's DOM but not the click wiring (main.js binds all
+// data-click actions).
+window.agsReviewFinish = async () => {
+  const input = document.getElementById('spectator-review-takeaway')
+  await reviewFeature.peek()?.finishReview({ takeaway: input?.value || '' })
 }
 
 function switchToSpectatorScreen(name) {
@@ -5141,13 +5443,23 @@ function setSpectatorReplayControls(visible) {
 // startIndex jumps straight to a specific ply (journal key moments); default
 // is the final position. returnTab re-selects a profile tab on Back so a
 // drill-down from the Journal tab lands back on the Journal tab.
-async function replayMatchData(match, prevScreen = 'profile', { startIndex = -1, returnTab = '' } = {}) {
+// reviewMode/ownerColor/source (dev-plan §5.4, §10) start an owner "Quick
+// Review" session instead of plain replay — existing callers that never pass
+// these keep getting exactly the old replay behavior.
+async function replayMatchData(match, prevScreen = 'profile', {
+  startIndex = -1, returnTab = '', reviewMode = false, ownerColor = '', source = 'history',
+} = {}) {
   if (!match || !Array.isArray(match.moves) || !match.moves.length) return
   await prepareSpectatorAnalysis()
 
   sendEvent('replay_viewed', { source: returnTab || prevScreen, at_ply: startIndex >= 0 })
   spectatorPrevScreen = prevScreen
   spectatorReturnProfileTab = returnTab
+  spectatorMode = reviewMode ? 'review' : 'replay'
+  spectatorSource = source
+  spectatorBaseOrientation = reviewMode && (ownerColor || match.myColor) === 'black' ? 'black' : 'white'
+  spectatorFlipped = false
+  reviewFeature.peek()?.resetReviewSession()
   const lastIndex = match.moves.length - 1
   spectatorReplayIndex = startIndex >= 0 && startIndex <= lastIndex ? startIndex : lastIndex
   const finalGame = buildReplayPosition(match.moves, lastIndex)
@@ -5161,8 +5473,35 @@ async function replayMatchData(match, prevScreen = 'profile', { startIndex = -1,
     startedAt: match.startedAt,
   }
   switchToSpectatorScreen('spectator')
+  updateSpectatorBackButton()
   renderSpectatorBoard(spectatorLastMatchData, spectatorReplayIndex)
   setSpectatorReplayControls(true)
+
+  if (reviewMode) {
+    const module = await reviewFeature.load()
+    // The board already shows the position (§10.6 "show replay immediately
+    // while batch analysis runs"); bail without starting analysis if the
+    // player left review or opened a different match while the lazy chunk
+    // was still loading.
+    if (spectatorMode !== 'review' || spectatorLastMatchData?.moves !== match.moves) return
+    module.startReviewSession({
+      userId: currentUserId,
+      match,
+      source,
+      analyzeMatch: (m, opts) => window.chessBackgroundWorker.analyzeMatch(m, opts),
+      goToPly: replayAt,
+      startRetry: (ply, label) => {
+        reviewFeature.peek()?.resetReviewSession()
+        window.startRetryFromPosition?.(match.moves, ply, match.myColor, { label })
+      },
+      // Goal v2's review-games evidence (dev-plan §13.3) lives in the Journal
+      // record — review mode can be entered without the Journal tab ever
+      // having loaded this session, so load it lazily here rather than
+      // assuming it's already available.
+      onReviewFinished: matchId => journalFeature.load()
+        .then(journalModule => journalModule.applyReviewGoalEvidence?.(currentUserId, matchId)),
+    })
+  }
 }
 
 function replayMatchHistoryAt(index) {
@@ -5171,22 +5510,38 @@ function replayMatchHistoryAt(index) {
 
 window.agsReplayMatchHistory = replayMatchHistoryAt
 window.agsReplayMatchData = replayMatchData
+// Post-game review entry point (dev-plan §10.8) — app.js's reviewGameFromGameOver()
+// calls this with a snapshot of the just-finished match (captured before
+// destroyPeer() runs, since that nulls app.js's own `game`). prevScreen
+// 'home' is what makes the review's Back button read "Done" and land on Home.
+window.agsStartReviewFromGameOver = match => {
+  if (!match || !Array.isArray(match.moves) || !match.moves.length) return
+  return replayMatchData(match, 'home', { reviewMode: true, ownerColor: match.myColor, source: 'game-over' })
+}
+// Journal's next-action module (dev-plan §14.1 priority 2, "ready review
+// from the learning index") needs the M4 private record without statically
+// importing review.js/learning-store.js — same lazy-loading discipline as
+// applyReviewGoalEvidence's use of journalFeature.
+window.agsLoadLearningIndex = userId => reviewFeature.load().then(module => module.loadLearningIndex(userId))
 // Grading seam for src/journal.js: its incremental grader maintains the
 // running position itself and calls this per player ply (the thresholds and
 // prose stay defined in exactly one place). Also used to judge puzzle answers.
 window.agsGradeMoveInPosition = gradeMoveInPosition
 
-function addSpectatorCoordinateLabels(squareEl, r, c) {
-  if (c === 0) {
+// displayRow/displayCol place the label on the correct screen edge; the text
+// itself always names the ENGINE square rendered there, so a flipped board
+// reads correctly for Black's perspective (dev-plan §10.3).
+function addSpectatorCoordinateLabels(squareEl, displayRow, displayCol, engineRow, engineCol) {
+  if (displayCol === 0) {
     const rank = document.createElement('span')
     rank.className = 'coord-label coord-rank'
-    rank.textContent = String(8 - r)
+    rank.textContent = String(8 - engineRow)
     squareEl.appendChild(rank)
   }
-  if (r === 7) {
+  if (displayRow === 7) {
     const file = document.createElement('span')
     file.className = 'coord-label coord-file'
-    file.textContent = 'abcdefgh'[c]
+    file.textContent = 'abcdefgh'[engineCol]
     squareEl.appendChild(file)
   }
 }
@@ -5442,7 +5797,7 @@ async function renderFamilyCoachingTab(userId, matchHistory) {
     set('coaching-strong', combined.strongRate != null ? `${Math.round(combined.strongRate * 100)}%` : '—')
     set('coaching-blunders', String(combined.blunderCount))
     set('coaching-focus', combined.weakestPhase
-      ? combined.weakestPhase[0].toUpperCase() + combined.weakestPhase.slice(1)
+      ? (label => label[0].toUpperCase() + label.slice(1))(stageDisplayLabel(combined.weakestPhase))
       : 'None')
   }
 
@@ -5538,11 +5893,14 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
   boardEl.innerHTML = ''
   const last = gView.moveHistory[gView.moveHistory.length - 1]
   const kingInCheck = (gView.status === 'check' || gView.status === 'checkmate') ? gView.findKing(gView.currentTurn) : null
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
+  // dr/dc are DISPLAY grid position (fixed fill order); r/c are the engine
+  // square actually rendered there under the current orientation (§10.3).
+  for (let dr = 0; dr < 8; dr++) {
+    for (let dc = 0; dc < 8; dc++) {
+      const { r, c } = toEngineCoords(dr, dc)
       const sq = document.createElement('div')
       sq.className = 'square ' + ((r + c) % 2 === 0 ? 'light' : 'dark')
-      addSpectatorCoordinateLabels(sq, r, c)
+      addSpectatorCoordinateLabels(sq, dr, dc, r, c)
       if (last && ((last.fr === r && last.fc === c) || (last.toR === r && last.toC === c))) sq.classList.add('last-move')
       if (kingInCheck?.r === r && kingInCheck?.c === c) sq.classList.add('in-check')
       const piece = gView.board[r][c]
@@ -5564,9 +5922,20 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
     }
   }
 
-  // Move history — all moves, highlighted entry = highlightIdx
+  // Move history — all moves, highlighted entry = highlightIdx. Clickable in
+  // replay/review (dev-plan §10.4); live mode keeps plain non-interactive
+  // spans so a live watcher can never scrub an active game.
   if (histEl) {
     histEl.innerHTML = ''
+    const clickable = spectatorMode !== 'live'
+    const esc = window.escapeHtml || (s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
+    const moveCell = (ply, moveNum, notation, active, played, color) => {
+      if (!notation) return `<span class="move-${color}"></span>`
+      const stateClass = active ? ' move-active' : played ? ' move-played' : ' move-future'
+      if (!clickable) return `<span class="move-${color}${stateClass}">${esc(notation)}</span>`
+      return `<button type="button" class="move-${color}${stateClass}" data-replay-ply="${ply}" `
+        + `aria-label="Move ${moveNum}, ${color === 'white' ? 'White' : 'Black'}, ${esc(notation)}">${esc(notation)}</button>`
+    }
     let scrollTarget = null
     for (let i = 0; i < notations.length; i += 2) {
       const moveNum = Math.floor(i / 2) + 1
@@ -5578,10 +5947,15 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
       row.className = 'move-row spectator-move-row'
       row.innerHTML =
         `<span class="move-num">${moveNum}.</span>` +
-        `<span class="move-white${wActive ? ' move-active' : (i < movesToShow.length ? ' move-played' : ' move-future')}">${wn}</span>` +
-        `<span class="move-black${bActive ? ' move-active' : (i + 1 < movesToShow.length ? ' move-played' : ' move-future')}">${bn}</span>`
+        moveCell(i, moveNum, wn, wActive, i < movesToShow.length, 'white') +
+        moveCell(i + 1, moveNum, bn, bActive, i + 1 < movesToShow.length, 'black')
       histEl.appendChild(row)
       if (wActive || bActive) scrollTarget = row
+    }
+    if (clickable) {
+      histEl.querySelectorAll('[data-replay-ply]').forEach(btn => {
+        btn.addEventListener('click', () => replayAt(Number(btn.dataset.replayPly)))
+      })
     }
     if (scrollTarget) scrollTarget.scrollIntoView({ block: 'nearest' })
   }
@@ -5634,6 +6008,32 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
 
   void renderSpectatorAnalysis(matchData, replayIndex)
 }
+
+// Spectator keyboard navigation (dev-plan §10.4). Guarded to the active
+// screen so it never fires elsewhere, and skipped when focus is already
+// inside an input/textarea/button that consumes the key itself (a move
+// button's own Enter/Space activation, for instance).
+document.addEventListener('keydown', event => {
+  if (!document.getElementById('screen-spectator')?.classList.contains('active')) return
+  if (spectatorMode === 'live') return
+  const target = event.target
+  const consumesKey = target instanceof HTMLElement
+    && ['INPUT', 'TEXTAREA'].includes(target.tagName)
+  if (consumesKey) return
+  const isButtonTarget = target instanceof HTMLElement && target.tagName === 'BUTTON'
+  if (isButtonTarget && [' ', 'Enter'].includes(event.key)) return
+
+  if (event.shiftKey && spectatorMode === 'review' && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    event.preventDefault()
+    if (event.key === 'ArrowLeft') reviewFeature.peek()?.prevLesson()
+    else reviewFeature.peek()?.nextLesson()
+    return
+  }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); replayAt(spectatorReplayIndex - 1) }
+  else if (event.key === 'ArrowRight') { event.preventDefault(); replayAt(spectatorReplayIndex + 1) }
+  else if (event.key === 'Home') { event.preventDefault(); replayAt(0) }
+  else if (event.key === 'End') { event.preventDefault(); replayAt((spectatorLastMatchData?.moves || []).length - 1) }
+})
 
 window.addEventListener('beforeunload', disconnectPresence)
 window.addEventListener('pagehide', pausePresence)

@@ -89,6 +89,10 @@ async function stubCloudSave(page, { journalValue = null } = {}) {
 }
 
 async function openJournalTab(page) {
+  // gotoApp() only waits for #screen-home to be visible, which can render
+  // slightly before main.js finishes its synchronous window.agsX = ...
+  // assignments (observed intermittently, more often on WebKit).
+  await page.waitForFunction(() => typeof window.showScreen === 'function' && typeof window.agsShowProfileTab === 'function', { timeout: 15000 });
   await page.evaluate(() => {
     window.showScreen('profile');
     document.querySelector('[data-profile-tab="journal"]').hidden = false;
@@ -169,6 +173,58 @@ test.describe('My Chess Journal', () => {
     await expect.poll(() => puts.length, { timeout: 10000 }).toBeGreaterThan(1); // attempt persisted
   });
 
+  test('a carried puzzle stays launchable once its game only survives in an older entry (dev-plan §8.3)', async ({ page }) => {
+    await gotoApp(page);
+    // Newest entry carries the puzzle forward but no longer embeds g-blunder's
+    // game (its own window moved past that match); the older entry still
+    // does. embeddedGame() must search record-wide, not just the owning entry.
+    const journalValue = {
+      entries: [
+        {
+          id: 'e-new',
+          createdAt: new Date().toISOString(),
+          window: '24h',
+          record: { wins: 0, losses: 1, draws: 0 },
+          gamesAnalyzed: 1,
+          gamesInWindow: 1,
+          coach: { headline: 'Latest window' },
+          keyMoments: { excellent: [], mistakes: [] },
+          games: {},
+          puzzles: [{
+            id: 'g-blunder:4', matchId: 'g-blunder', ply: 4, kind: 'missed',
+            playedNotation: 'Qxh7', bestNotation: 'Nf3', opponentName: 'Rex',
+            solved: false, attempts: 0,
+          }],
+        },
+        {
+          id: 'e-old',
+          createdAt: new Date(Date.now() - 86400000).toISOString(),
+          window: '24h',
+          record: { wins: 0, losses: 1, draws: 0 },
+          gamesAnalyzed: 1,
+          gamesInWindow: 1,
+          coach: { headline: 'Older window' },
+          keyMoments: { excellent: [], mistakes: [] },
+          games: { 'g-blunder': BLUNDER_GAME },
+          puzzles: [],
+        },
+      ],
+      gradeCache: {},
+      updatedAt: new Date().toISOString(),
+    };
+    await stubCloudSave(page, { journalValue });
+    await openJournalTab(page);
+    await page.evaluate(() => window.agsRenderJournalForTesting('me', [], { isChildSession: false }));
+
+    const puzzleButton = page.locator('.journal-entry.latest .journal-puzzle').first();
+    await expect(puzzleButton).toBeVisible();
+    await puzzleButton.click();
+
+    await expect(page.locator('#screen-game')).toBeVisible();
+    await expect(page.locator('#hint-box')).toBeVisible();
+    await expect(page.locator('#hint-text')).toContainText('find something better');
+  });
+
   test('child sessions reflect with chips, not free text', async ({ page }) => {
     await gotoApp(page);
     await stubCloudSave(page, {
@@ -215,6 +271,538 @@ test.describe('My Chess Journal', () => {
     await page.locator('#btn-journal-generate').click();
     await expect(page.locator('#journal-status')).toContainText('No finished games');
     await expect(page.locator('.journal-entry')).toHaveCount(0);
+  });
+});
+
+test.describe('Global practice queue (VITE_LEARNING_PRACTICE_V2, dev-plan §12)', () => {
+  function queuePuzzle(overrides = {}) {
+    return {
+      id: 'g-blunder:4', matchId: 'g-blunder', ply: 4, kind: 'missed',
+      playedNotation: 'Qxh7', bestNotation: 'Nf3', opponentName: 'Rex',
+      solved: false, attempts: 0,
+      ...overrides,
+    };
+  }
+
+  function recordWithPuzzleInOlderEntry(puzzleOverrides = {}) {
+    return {
+      entries: [
+        {
+          id: 'e-newest', createdAt: new Date().toISOString(), window: '24h',
+          record: { wins: 0, losses: 1, draws: 0 }, gamesAnalyzed: 1, gamesInWindow: 1,
+          coach: { headline: 'Latest window' }, keyMoments: { excellent: [], mistakes: [] },
+          games: {}, puzzles: [],
+        },
+        {
+          id: 'e-older', createdAt: new Date(Date.now() - 86400000).toISOString(), window: '24h',
+          record: { wins: 0, losses: 1, draws: 0 }, gamesAnalyzed: 1, gamesInWindow: 1,
+          coach: { headline: 'Older window' }, keyMoments: { excellent: [], mistakes: [] },
+          games: { 'g-blunder': BLUNDER_GAME }, puzzles: [queuePuzzle(puzzleOverrides)],
+        },
+      ],
+      gradeCache: {},
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async function openQueue(page, journalValue, { isChildSession = false } = {}) {
+    await gotoApp(page);
+    const puts = await stubCloudSave(page, { journalValue });
+    await page.evaluate(() => window.agsSetLearningFlagsForTesting?.({ practiceV2: true }));
+    await openJournalTab(page);
+    await page.evaluate(isChildSession => window.agsRenderJournalForTesting('me', [], { isChildSession }), isChildSession);
+    return puts;
+  }
+
+  test('a puzzle carried in an older entry appears in the global queue', async ({ page }) => {
+    await openQueue(page, recordWithPuzzleInOlderEntry());
+    await expect(page.locator('#journal-practice-queue')).toBeVisible();
+    await expect(page.locator('#journal-practice-queue')).toContainText('Practice due: 1');
+    const row = page.locator('.journal-practice-row').first();
+    await expect(row).toBeVisible();
+    await expect(row).toHaveAttribute('data-entry', 'e-older');
+    await expect(row).not.toHaveClass(/unplayable/);
+  });
+
+  test('starting a queued puzzle reaches the correct position and rejects the original move', async ({ page }) => {
+    test.slow();
+    await openQueue(page, recordWithPuzzleInOlderEntry());
+    await page.locator('.journal-practice-row').first().click();
+    await expect(page.locator('#screen-game')).toBeVisible();
+    await expect(page.locator('#hint-box')).toBeVisible();
+    await expect(page.locator('#hint-text')).toContainText('find something better');
+
+    await page.evaluate(() => window.executeMove(3, 7, 1, 7, 'queen')); // repeats Qxh7??
+    await expect(page.locator('#hint-text')).toContainText('Not quite', { timeout: 20000 });
+  });
+
+  test('a correct first-attempt alternative advances the puzzle to Learning, due in ~3 days', async ({ page }) => {
+    test.slow();
+    const puts = await openQueue(page, recordWithPuzzleInOlderEntry());
+    await page.locator('.journal-practice-row').first().click();
+    await expect(page.locator('#hint-box')).toBeVisible();
+
+    // Nf3 (knight development) instead of the blunder — a genuinely
+    // different, reasonable move the judge should accept.
+    await page.evaluate(() => window.executeMove(7, 6, 5, 5, 'queen'));
+    await expect(page.locator('#hint-text')).toContainText('idea', { timeout: 20000 });
+    await expect.poll(() => puts.length, { timeout: 10000 }).toBeGreaterThan(0);
+
+    const saved = puts[puts.length - 1];
+    const savedPuzzle = saved.entries.flatMap(e => e.puzzles || []).find(p => p.id === 'g-blunder:4');
+    expect(savedPuzzle.stage).toBe('learning');
+    expect(savedPuzzle.attempts).toBe(1);
+    expect(savedPuzzle.lastResult).toBe('correct');
+    const dueAt = new Date(savedPuzzle.dueAt).getTime();
+    const expected = Date.now() + 3 * 86400000;
+    expect(Math.abs(dueAt - expected)).toBeLessThan(5 * 60000); // within 5 minutes
+  });
+
+  test('refresh (re-render) retains the updated due/stage state', async ({ page }) => {
+    test.slow();
+    const puts = await openQueue(page, recordWithPuzzleInOlderEntry());
+    await page.locator('.journal-practice-row').first().click();
+    await page.evaluate(() => window.executeMove(7, 6, 5, 5, 'queen'));
+    await expect(page.locator('#hint-text')).toContainText('idea', { timeout: 20000 });
+    await expect.poll(() => puts.length, { timeout: 10000 }).toBeGreaterThan(0);
+
+    // Re-render from the now-updated in-memory record — same tab, no puzzle
+    // due today, since it just advanced to Learning +3 days.
+    await page.evaluate(() => window.agsShowProfileTab('journal'));
+    await expect(page.locator('#journal-practice-queue')).not.toContainText('Practice due');
+  });
+
+  test('a save failure is visible without blocking the board result', async ({ page }) => {
+    test.slow();
+    const journalValue = recordWithPuzzleInOlderEntry();
+    await gotoApp(page);
+    await page.unroute('**/cloudsave/**');
+    await page.route('**/cloudsave/**', async route => {
+      const isJournal = route.request().url().includes('chess-journal');
+      if (route.request().method() === 'GET') {
+        return isJournal
+          ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ value: journalValue }) })
+          : route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+      }
+      if (isJournal) return route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.evaluate(() => window.agsSetLearningFlagsForTesting?.({ practiceV2: true }));
+    await openJournalTab(page);
+    await page.evaluate(() => window.agsRenderJournalForTesting('me', [], { isChildSession: false }));
+
+    await page.locator('.journal-practice-row').first().click();
+    await page.evaluate(() => window.executeMove(7, 6, 5, 5, 'queen'));
+    // Board result (the judge's own verdict) still shows first...
+    await expect(page.locator('#hint-text')).toContainText('idea', { timeout: 20000 });
+    // ...then the save failure appends visibly, without replacing it.
+    await expect(page.locator('#hint-text')).toContainText('Progress not saved', { timeout: 10000 });
+  });
+
+  test('a drill never records a match-history entry or increments a stat', async ({ page }) => {
+    test.slow();
+    let matchHistoryWrites = 0;
+    let statCalls = 0;
+    await gotoApp(page);
+    await stubCloudSave(page, { journalValue: recordWithPuzzleInOlderEntry() });
+    await page.route('**/basic/**', route => {
+      matchHistoryWrites++;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.route('**/statistic/**', route => {
+      statCalls++;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.evaluate(() => window.agsSetLearningFlagsForTesting?.({ practiceV2: true }));
+    await openJournalTab(page);
+    await page.evaluate(() => window.agsRenderJournalForTesting('me', [], { isChildSession: false }));
+
+    await page.locator('.journal-practice-row').first().click();
+    await page.evaluate(() => window.executeMove(7, 6, 5, 5, 'queen'));
+    await expect(page.locator('#hint-text')).toContainText('idea', { timeout: 20000 });
+    await page.waitForTimeout(300);
+    expect(matchHistoryWrites).toBe(0);
+    expect(statCalls).toBe(0);
+  });
+
+  test('a child session\'s queue contains no purchase UI', async ({ page }) => {
+    await openQueue(page, recordWithPuzzleInOlderEntry(), { isChildSession: true });
+    await expect(page.locator('#journal-practice-queue')).toBeVisible();
+    await expect(page.locator('#journal-practice-queue [data-purchase-ui]')).toHaveCount(0);
+    await expect(page.locator('#journal-practice-queue')).not.toContainText('♛');
+  });
+});
+
+test.describe('Goals v2 (VITE_LEARNING_GOALS_V2, dev-plan §13)', () => {
+  function goalCandidate(overrides = {}) {
+    return {
+      kind: 'castle-early', label: 'Castle by move 10 in 3 applicable games',
+      detail: 'A safe king survives longer — castle before move 10.',
+      status: 'suggested', target: 3, applicable: 0, completed: 0,
+      selectedAt: '', completedAt: '', modelVersion: 'goal-v2', evidenceIds: [],
+      ...overrides,
+    };
+  }
+
+  function activeGoal(overrides = {}) {
+    return {
+      kind: 'castle-early', label: 'Castle by move 10 in 3 applicable games',
+      detail: 'A safe king survives longer — castle before move 10.',
+      status: 'active', target: 3, applicable: 1, completed: 1,
+      selectedAt: new Date().toISOString(), completedAt: '', modelVersion: 'goal-v2', evidenceIds: ['m1'],
+      ...overrides,
+    };
+  }
+
+  function entryWithGoal({ goal = null, goalCandidates = [] } = {}) {
+    return {
+      id: 'e-latest', createdAt: new Date().toISOString(), window: '24h',
+      record: { wins: 1, losses: 0, draws: 0 }, gamesAnalyzed: 1, gamesInWindow: 1,
+      coach: { headline: 'Latest window' }, keyMoments: { excellent: [], mistakes: [] },
+      games: {}, puzzles: [], goal, goalCandidates,
+    };
+  }
+
+  async function renderJournalWithGoal(page, journalValue, { isChildSession = false } = {}) {
+    await gotoApp(page);
+    const puts = await stubCloudSave(page, { journalValue });
+    await page.evaluate(() => window.agsSetLearningFlagsForTesting?.({ goalsV2: true }));
+    await openJournalTab(page);
+    await page.evaluate(isChildSession => window.agsRenderJournalForTesting('me', [], { isChildSession }), isChildSession);
+    return puts;
+  }
+
+  test('suggested candidates show on the latest entry; selecting one activates it', async ({ page }) => {
+    const journalValue = {
+      entries: [entryWithGoal({ goalCandidates: [goalCandidate(), goalCandidate({ kind: 'no-early-resign', label: 'Play it out' })] })],
+      gradeCache: {}, updatedAt: new Date().toISOString(),
+    };
+    const puts = await renderJournalWithGoal(page, journalValue);
+
+    await expect(page.locator('.journal-goal-candidates h4')).toHaveText('Suggested goal');
+    await expect(page.locator('.journal-goal-candidate')).toHaveCount(2);
+
+    await page.locator('.journal-goal-candidate').first().click();
+    await expect(page.locator('.journal-goal')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.journal-goal')).toContainText('Castle by move 10');
+    await expect(page.locator('.journal-goal-candidates')).toHaveCount(0);
+    await expect.poll(() => puts.length, { timeout: 10000 }).toBeGreaterThan(0);
+    const saved = puts[puts.length - 1].entries[0].goal;
+    expect(saved.status).toBe('active');
+    expect(saved.selectedAt).toBeTruthy();
+  });
+
+  test('an active goal shows progress copy and no candidate list (exactly one active goal)', async ({ page }) => {
+    const journalValue = {
+      entries: [entryWithGoal({ goal: activeGoal({ applicable: 2, completed: 1, evidenceIds: ['m1', 'm2'] }) })],
+      gradeCache: {}, updatedAt: new Date().toISOString(),
+    };
+    await renderJournalWithGoal(page, journalValue);
+
+    await expect(page.locator('.journal-goal')).toContainText('Castled by move 10 in 1 of 2');
+    await expect(page.locator('.journal-goal-candidates')).toHaveCount(0);
+  });
+
+  test('an achieved goal shows celebratory copy', async ({ page }) => {
+    const journalValue = {
+      entries: [entryWithGoal({
+        goal: activeGoal({ status: 'achieved', applicable: 3, completed: 3, completedAt: new Date().toISOString(), evidenceIds: ['m1', 'm2', 'm3'] }),
+      })],
+      gradeCache: {}, updatedAt: new Date().toISOString(),
+    };
+    await renderJournalWithGoal(page, journalValue);
+
+    await expect(page.locator('.journal-goal-verdict.achieved')).toContainText('Goal complete');
+    await expect(page.locator('.journal-goal-verdict.achieved')).toContainText('all 3 applicable games');
+  });
+
+  test('a stalled goal (target reached, not fully achieved) never shows a red failure state, offers Keep goal / Choose another', async ({ page }) => {
+    const journalValue = {
+      entries: [entryWithGoal({
+        goal: activeGoal({ applicable: 3, completed: 1, evidenceIds: ['m1', 'm2', 'm3'] }),
+      })],
+      gradeCache: {}, updatedAt: new Date().toISOString(),
+    };
+    const puts = await renderJournalWithGoal(page, journalValue);
+
+    const verdict = page.locator('.journal-goal-verdict');
+    await expect(verdict).toBeVisible();
+    await expect(verdict).not.toHaveClass(/missed/); // dev-plan §13.4: avoid a red failure state
+    await expect(page.locator('[data-journal-action="keep-goal"]')).toBeVisible();
+    await expect(page.locator('[data-journal-action="choose-another-goal"]')).toBeVisible();
+
+    await page.locator('[data-journal-action="choose-another-goal"]').click();
+    await expect(page.locator('.journal-goal-candidates')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.journal-goal-candidates h4')).toHaveText('Choose a new goal');
+
+    // Replacing preserves history — the goal isn't deleted, only re-flagged.
+    await expect.poll(() => puts.length, { timeout: 10000 }).toBeGreaterThan(0);
+    const savedGoal = puts[puts.length - 1].entries[0].goal;
+    expect(savedGoal.status).toBe('replaced');
+    expect(savedGoal.evidenceIds).toEqual(['m1', 'm2', 'm3']);
+    expect(savedGoal.applicable).toBe(3);
+  });
+
+  test('Keep goal resets progress for another round on the same goal', async ({ page }) => {
+    const journalValue = {
+      entries: [entryWithGoal({ goal: activeGoal({ applicable: 3, completed: 1, evidenceIds: ['m1', 'm2', 'm3'] }) })],
+      gradeCache: {}, updatedAt: new Date().toISOString(),
+    };
+    const puts = await renderJournalWithGoal(page, journalValue);
+
+    await page.locator('[data-journal-action="keep-goal"]').click();
+    await expect.poll(() => puts.length, { timeout: 10000 }).toBeGreaterThan(0);
+    const saved = puts[puts.length - 1].entries[0].goal;
+    expect(saved.status).toBe('active');
+    expect(saved.applicable).toBe(0);
+    expect(saved.completed).toBe(0);
+    expect(saved.evidenceIds).toEqual([]);
+    expect(saved.kind).toBe('castle-early'); // same goal, fresh round
+  });
+
+  test('a legacy goal (no status field) still displays correctly with the flag on — no migration needed', async ({ page }) => {
+    const legacyGoal = {
+      kind: 'castle-early', label: 'Castle by move 10 in your next 3 games',
+      detail: 'You castled early in only 1 of 2 applicable games — a safe king survives longer.',
+    };
+    const journalValue = { entries: [entryWithGoal({ goal: legacyGoal })], gradeCache: {}, updatedAt: new Date().toISOString() };
+    await renderJournalWithGoal(page, journalValue);
+
+    await expect(page.locator('.journal-goal')).toContainText('Castle by move 10 in your next 3 games');
+    await expect(page.locator('.journal-goal-candidates')).toHaveCount(0); // legacy goal displays as active
+  });
+
+  test('review-games and practice-positions candidates are absent when their own flags are off', async ({ page }) => {
+    // No M4/M5 flags set — only goalsV2. deriveGoalCandidates must not offer
+    // review-games/practice-positions without their own support.
+    const journalValue = {
+      entries: [entryWithGoal({ goalCandidates: [goalCandidate({ kind: 'review-next-games', label: 'Review your next 3 finished games' })] })],
+      gradeCache: {}, updatedAt: new Date().toISOString(),
+    };
+    await renderJournalWithGoal(page, journalValue);
+    await expect(page.locator('.journal-goal-candidate')).toHaveCount(1);
+    await expect(page.locator('.journal-goal-candidate')).toContainText('Review your next 3 finished games');
+  });
+
+  test('a child session\'s goal candidates have no purchase UI and never call the coach endpoint', async ({ page }) => {
+    let coachCalled = false;
+    const journalValue = { entries: [entryWithGoal({ goalCandidates: [goalCandidate()] })], gradeCache: {}, updatedAt: new Date().toISOString() };
+    await gotoApp(page);
+    await stubCloudSave(page, { journalValue });
+    await page.route('**/coach/report', route => {
+      coachCalled = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{"available":false}' });
+    });
+    await page.evaluate(() => window.agsSetLearningFlagsForTesting?.({ goalsV2: true }));
+    await openJournalTab(page);
+    await page.evaluate(() => window.agsRenderJournalForTesting('me', [], { isChildSession: true }));
+
+    await expect(page.locator('.journal-goal-candidate')).toHaveCount(1);
+    await expect(page.locator('.journal-goal-candidates [data-purchase-ui]')).toHaveCount(0);
+    await page.locator('.journal-goal-candidate').first().click();
+    await page.waitForTimeout(500);
+    expect(coachCalled).toBe(false);
+  });
+});
+
+test.describe('Journal hierarchy (VITE_LEARNING_JOURNAL_LAYOUT_V2, dev-plan §14)', () => {
+  function journalEntry(overrides = {}) {
+    return {
+      id: overrides.id || 'e1',
+      createdAt: overrides.createdAt || new Date().toISOString(),
+      window: '24h',
+      record: { wins: 1, losses: 0, draws: 0 },
+      gamesAnalyzed: 1,
+      gamesInWindow: 1,
+      accuracy: { movesGraded: 10, strongCount: 7, strongRate: 0.7, blunderCount: 1, blunderRate: 0.1, blundersByPhase: {}, weakestPhase: null },
+      coach: { headline: 'Solid game overall.' },
+      keyMoments: { excellent: [], mistakes: [] },
+      games: {},
+      puzzles: [],
+      goal: null,
+      goalCandidates: [],
+      reflection: { didWell: '', tryNext: '', chips: [] },
+      ...overrides,
+    };
+  }
+
+  async function renderWithLayoutFlag(page, journalValue, { flags = {}, isChildSession = false, clubActive = false, journalOpen = null, narrativesRemainingToday = 1 } = {}) {
+    await gotoApp(page);
+    const puts = await stubCloudSave(page, { journalValue });
+    await page.evaluate(flags => window.agsSetLearningFlagsForTesting?.({ journalLayoutV2: true, ...flags }), flags);
+    await openJournalTab(page);
+    await page.evaluate(
+      ({ isChildSession, clubActive, journalOpen, narrativesRemainingToday }) =>
+        window.agsRenderJournalForTesting('me', [], { isChildSession, clubActive, journalOpen, narrativesRemainingToday }),
+      { isChildSession, clubActive, journalOpen, narrativesRemainingToday },
+    );
+    return puts;
+  }
+
+  test('next-action shows due practice ahead of an active goal (priority 1 over 3)', async ({ page }) => {
+    const duePuzzle = {
+      id: 'g1:4', matchId: 'g1', ply: 4, kind: 'missed', playedNotation: 'Qxh7', bestNotation: 'O-O',
+      opponentName: 'Rex', solved: false, attempts: 0, stage: 'learning', dueAt: '2026-07-01T00:00:00.000Z',
+    };
+    const goal = {
+      kind: 'castle-early', label: 'Castle by move 10', detail: '', status: 'active',
+      target: 3, applicable: 1, completed: 1, selectedAt: new Date().toISOString(), completedAt: '', evidenceIds: ['m1'],
+    };
+    const journalValue = { entries: [journalEntry({ puzzles: [duePuzzle], goal, games: { g1: BLUNDER_GAME } })], gradeCache: {}, updatedAt: new Date().toISOString() };
+    await renderWithLayoutFlag(page, journalValue, { flags: { practiceV2: true, goalsV2: true } });
+
+    await expect(page.locator('#journal-next-action')).toBeVisible();
+    await expect(page.locator('#journal-next-action')).toContainText('Practice due: 1');
+    await expect(page.locator('#journal-next-action')).not.toContainText('Castle by move 10');
+  });
+
+  test('next-action falls through to the active goal when nothing is due (priority 3)', async ({ page }) => {
+    const goal = {
+      kind: 'castle-early', label: 'Castle by move 10 in 3 applicable games', detail: '', status: 'active',
+      target: 3, applicable: 1, completed: 1, selectedAt: new Date().toISOString(), completedAt: '', evidenceIds: ['m1'],
+    };
+    const journalValue = { entries: [journalEntry({ goal })], gradeCache: {}, updatedAt: new Date().toISOString() };
+    await renderWithLayoutFlag(page, journalValue, { flags: { goalsV2: true } });
+
+    await expect(page.locator('#journal-next-action')).toContainText('Castle by move 10 in 3 applicable games');
+  });
+
+  test('next-action shows a calm empty state when nothing applies (priority 5)', async ({ page }) => {
+    const journalValue = { entries: [journalEntry()], gradeCache: {}, updatedAt: new Date().toISOString() };
+    await renderWithLayoutFlag(page, journalValue);
+
+    await expect(page.locator('#journal-next-action')).toContainText("You're all caught up");
+  });
+
+  test('a failing learning-index fetch does not block entries or the next-action module (independent module failure)', async ({ page }) => {
+    const journalValue = { entries: [journalEntry()], gradeCache: {}, updatedAt: new Date().toISOString() };
+    await gotoApp(page);
+    await page.unroute('**/cloudsave/**');
+    await page.route('**/cloudsave/**', route => {
+      const url = route.request().url();
+      if (url.includes('chess-journal') && route.request().method() === 'GET') {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ value: journalValue }) });
+      }
+      if (url.includes('chess-learning-index')) {
+        return route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.evaluate(() => window.agsSetLearningFlagsForTesting?.({ journalLayoutV2: true, indexV1: true }));
+    await openJournalTab(page);
+    await page.evaluate(() => window.agsRenderJournalForTesting('me', [], { isChildSession: false }));
+
+    await expect(page.locator('.journal-entry.latest')).toBeVisible();
+    await expect(page.locator('#journal-next-action')).toBeVisible();
+  });
+
+  test('latest entry is expanded; an older entry collapses to date/W-L-D/headline/goal/reflection', async ({ page }) => {
+    const journalValue = {
+      entries: [
+        journalEntry({ id: 'e-latest', createdAt: new Date().toISOString() }),
+        journalEntry({
+          id: 'e-older', createdAt: new Date(Date.now() - 86400000).toISOString(),
+          coach: { headline: 'A tough loss.' },
+          reflection: { didWell: 'Kept fighting until the very end even when down material.', tryNext: '', chips: [] },
+        }),
+      ],
+      gradeCache: {}, updatedAt: new Date().toISOString(),
+    };
+    await renderWithLayoutFlag(page, journalValue);
+
+    const entries = page.locator('.journal-entry');
+    await expect(entries).toHaveCount(2);
+    await expect(entries.nth(0)).toHaveClass(/latest/);
+    await expect(entries.nth(0)).not.toHaveClass(/journal-entry-collapsed/);
+    await expect(entries.nth(1)).toHaveClass(/journal-entry-collapsed/);
+    await expect(entries.nth(1).locator('.journal-entry-collapsed-headline')).toContainText('A tough loss');
+    await expect(entries.nth(1).locator('.journal-entry-collapsed-reflection')).toContainText('Kept fighting');
+
+    // Expand reveals the full entry markup.
+    await entries.nth(1).locator('[data-journal-action="toggle-entry"]').click();
+    await expect(page.locator('.journal-entry').nth(1)).not.toHaveClass(/journal-entry-collapsed/);
+    await expect(page.locator('.journal-entry').nth(1).locator('.journal-coach-headline')).toContainText('A tough loss');
+    await expect(page.locator('.journal-entry').nth(1).locator('[data-journal-action="toggle-entry"]')).toContainText('Collapse');
+  });
+
+  test('the expand toggle is keyboard-accessible and updates aria-expanded', async ({ page }) => {
+    const journalValue = {
+      entries: [journalEntry({ id: 'e-latest' }), journalEntry({ id: 'e-older', createdAt: new Date(Date.now() - 86400000).toISOString() })],
+      gradeCache: {}, updatedAt: new Date().toISOString(),
+    };
+    await renderWithLayoutFlag(page, journalValue);
+
+    const toggle = page.locator('.journal-entry-expand-toggle');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await toggle.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.journal-entry').nth(1)).not.toHaveClass(/journal-entry-collapsed/);
+    await expect(page.locator('.journal-entry').nth(1).locator('[data-journal-action="toggle-entry"]')).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  test('Club free-tier 5-entry limit is unchanged, and locked entries never reach the DOM', async ({ page }) => {
+    const entries = Array.from({ length: 8 }, (_, i) => journalEntry({
+      id: `e${i}`,
+      createdAt: new Date(Date.now() - i * 86400000).toISOString(),
+      coach: { headline: i < 5 ? `Visible entry ${i}` : 'LOCKED_CONTENT_MARKER' },
+    }));
+    const journalValue = { entries, gradeCache: {}, updatedAt: new Date().toISOString() };
+    await renderWithLayoutFlag(page, journalValue, { clubActive: false });
+
+    await expect(page.locator('.journal-entry')).toHaveCount(5);
+    await expect(page.locator('#journal-entries .profile-history-locked')).toContainText('3 more entries');
+    const html = await page.locator('#journal-entries').innerHTML();
+    expect(html).not.toContain('LOCKED_CONTENT_MARKER');
+  });
+
+  test('iPad: five entries (mixed collapsed/expanded) stay inside the internal scroll container', async ({ page }) => {
+    const entries = Array.from({ length: 5 }, (_, i) => journalEntry({ id: `e${i}`, createdAt: new Date(Date.now() - i * 86400000).toISOString() }));
+    const journalValue = { entries, gradeCache: {}, updatedAt: new Date().toISOString() };
+    await renderWithLayoutFlag(page, journalValue);
+    await expect(page.locator('.journal-entry')).toHaveCount(5);
+
+    // What actually matters for the player: the OUTER app screen must not
+    // need to scroll to reach Journal content, and the entries list itself
+    // must be the thing absorbing any extra height (dev-plan §14.5's iPad
+    // scroll-containment check). Exact sub-pixel boundary matching is fragile
+    // under flex layout rounding and isn't the real invariant — five rich
+    // entries plus the next-action module legitimately sit close to
+    // .profile-container's own max-height by design, so this allows a
+    // generous tolerance rather than chasing fractional pixels.
+    const result = await page.evaluate(() => {
+      const screen = document.getElementById('screen-profile');
+      const list = document.getElementById('journal-entries');
+      const container = document.querySelector('.profile-container').getBoundingClientRect();
+      return {
+        viewportHeight: innerHeight,
+        screenOverflow: screen.scrollHeight - screen.clientHeight,
+        entriesListOverflow: list.scrollHeight - list.clientHeight,
+        containerBottom: container.bottom,
+      };
+    });
+    expect(result.screenOverflow).toBeLessThan(20);
+    expect(result.containerBottom).toBeLessThan(result.viewportHeight + 20);
+    // Five rich entries collapsed-to-summary except the latest should
+    // genuinely exceed the 32vh cap, proving #journal-entries is the one
+    // actually scrolling internally rather than everything just fitting by luck.
+    expect(result.entriesListOverflow).toBeGreaterThan(0);
+  });
+
+  test('the flag off keeps the current entry experience — no next-action, no collapsing', async ({ page }) => {
+    const journalValue = {
+      entries: [journalEntry({ id: 'e-latest' }), journalEntry({ id: 'e-older', createdAt: new Date(Date.now() - 86400000).toISOString() })],
+      gradeCache: {}, updatedAt: new Date().toISOString(),
+    };
+    await gotoApp(page);
+    await stubCloudSave(page, { journalValue });
+    // No agsSetLearningFlagsForTesting call at all — flags default false.
+    await openJournalTab(page);
+    await page.evaluate(() => window.agsRenderJournalForTesting('me', [], { isChildSession: false }));
+
+    await expect(page.locator('#journal-next-action')).toBeHidden();
+    await expect(page.locator('.journal-entry')).toHaveCount(2);
+    await expect(page.locator('.journal-entry-collapsed')).toHaveCount(0);
+    await expect(page.locator('#btn-journal-generate')).toHaveText('Write a new entry');
   });
 });
 

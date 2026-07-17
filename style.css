@@ -2162,6 +2162,64 @@ input[type="checkbox"] {
   font-weight: 800;
 }
 
+/* History enrichment (dev-plan §9.2, VITE_LEARNING_HISTORY_V2) — hidden
+   entirely while the flag is off; kept minimal since only the row content
+   above is the improving player's actual destination. */
+.profile-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.profile-history-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.profile-history-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.profile-history-chip.active {
+  background: rgba(255, 198, 93, 0.16);
+  border-color: rgba(255, 198, 93, 0.36);
+  color: #ffd487;
+}
+
+.profile-history-more-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.profile-history-more-filters select {
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 0.74rem;
+}
+
+.profile-history-load-more {
+  width: 100%;
+  margin-top: 10px;
+}
+
 .profile-history-empty {
   padding: 18px;
   border-radius: 10px;
@@ -5831,6 +5889,138 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   color: var(--text-dim);
 }
 
+/* Clickable move notation (dev-plan §10.4) — replay/review only; live mode
+   keeps plain spans, so this only ever styles <button> cells. Resets button
+   chrome so a clicked move reads identically to the old non-interactive span. */
+.spectator-move-row button.move-white,
+.spectator-move-row button.move-black {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.spectator-move-row button.move-white:hover,
+.spectator-move-row button.move-black:hover,
+.spectator-move-row button.move-white:focus-visible,
+.spectator-move-row button.move-black:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+
+.spectator-flip {
+  flex-shrink: 0;
+}
+
+/* Review mode (dev-plan §10.2, VITE_LEARNING_REVIEW_V2) */
+.spectator-review-badge {
+  align-self: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(255, 198, 93, 0.16);
+  border: 1px solid rgba(255, 198, 93, 0.36);
+  color: #ffd487;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.spectator-review-summary {
+  max-width: 520px;
+  text-align: center;
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.spectator-review-progress {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-soft);
+  text-align: center;
+}
+
+.spectator-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+}
+
+/* Finish Review (dev-plan §11.2, VITE_LEARNING_INDEX_V1) */
+.spectator-review-finish-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 16px;
+  max-width: 520px;
+}
+
+.spectator-review-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.spectator-review-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.spectator-review-chip:hover {
+  background: rgba(255, 198, 93, 0.14);
+  border-color: rgba(255, 198, 93, 0.3);
+}
+
+.spectator-review-takeaway-input {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.spectator-review-finish-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.spectator-review-save-note {
+  font-size: 0.76rem;
+  color: var(--text-soft);
+}
+
+/* History row learning badge (dev-plan §11.3) — empty until badge patching
+   fills it in; harmless/invisible when the M4 flag is off. */
+.profile-history-learning-badge {
+  display: block;
+  color: var(--accent-2);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.profile-history-learning-badge:empty {
+  display: none;
+}
+
 .spectator-replay-controls {
   display: flex;
   align-items: center;
@@ -6955,6 +7145,12 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* .profile-panel/.profile-container only bound height via max-height,
+     which doesn't reliably give a flex-chain child a resolvable percentage
+     height to scroll within (dev-plan §14.5's iPad scroll-containment
+     check) — an explicit bound here is what actually makes overflow-y:auto
+     engage, same fix as .profile-match-history's fixed max-height. */
+  max-height: 32vh;
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
@@ -7046,6 +7242,57 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
 .journal-goal-verdict.missed {
   background: rgba(221, 95, 87, 0.1);
   border-color: rgba(221, 95, 87, 0.3);
+}
+
+/* Goals v2 (dev-plan §13, VITE_LEARNING_GOALS_V2) */
+.journal-goal-candidates {
+  margin-top: 10px;
+}
+
+.journal-goal-candidates h4 {
+  margin: 0 0 8px;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.journal-goal-candidate {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  margin-top: 6px;
+  border: 1px dashed rgba(126, 166, 255, 0.35);
+  border-radius: 12px;
+  background: rgba(126, 166, 255, 0.06);
+  color: var(--text-dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.journal-goal-candidate:hover {
+  background: rgba(126, 166, 255, 0.12);
+}
+
+.journal-goal-candidate strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.journal-goal-candidate span {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-soft);
+  font-size: 0.76rem;
+}
+
+.journal-goal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .journal-moments {
@@ -7144,6 +7391,194 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   font-weight: 400;
   letter-spacing: normal;
   text-transform: none;
+}
+
+/* Journal hierarchy — next action + active goal (dev-plan §14.1,
+   VITE_LEARNING_JOURNAL_LAYOUT_V2) */
+.journal-next-action {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 198, 93, 0.3);
+  background: rgba(255, 198, 93, 0.07);
+}
+
+.journal-next-action-body {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.journal-next-action-takeaway {
+  margin: 8px 0 0;
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.journal-active-goal {
+  margin-bottom: 12px;
+}
+
+.journal-active-goal-summary {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: rgba(126, 166, 255, 0.09);
+  border: 1px solid rgba(126, 166, 255, 0.22);
+  color: var(--text-dim);
+  font-size: 0.84rem;
+}
+
+/* Entry collapsing (dev-plan §14.2) */
+.journal-entry-collapsed {
+  padding: 0;
+}
+
+.journal-entry-expand-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  width: 100%;
+  padding: 12px 16px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.journal-entry-expand-toggle:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.journal-entry-collapsed-date {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.journal-entry-collapsed-record,
+.journal-entry-collapsed-headline {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+}
+
+.journal-entry-collapsed-goal,
+.journal-entry-collapsed-reflection {
+  flex-basis: 100%;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+}
+
+.journal-entry-expand-icon {
+  margin-left: auto;
+  color: var(--accent-2);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.journal-entry-collapse-toggle {
+  display: block;
+  margin-bottom: 6px;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  color: var(--accent-2);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Analysis details disclosure (dev-plan §14.3) */
+.journal-entry-stats-details summary {
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.journal-entry-stats-details .journal-entry-stats {
+  margin-top: 6px;
+}
+
+/* Global practice queue (dev-plan §12, VITE_LEARNING_PRACTICE_V2) */
+.journal-practice-queue {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(126, 166, 255, 0.25);
+  background: rgba(126, 166, 255, 0.05);
+}
+
+.journal-practice-queue h4 {
+  margin: 0 0 8px;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.journal-practice-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.journal-practice-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px dashed rgba(126, 166, 255, 0.35);
+  border-radius: 12px;
+  background: rgba(126, 166, 255, 0.06);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.journal-practice-row:hover {
+  background: rgba(126, 166, 255, 0.12);
+}
+
+.journal-practice-row.unplayable {
+  cursor: default;
+  opacity: 0.6;
+  border-style: solid;
+}
+
+.journal-practice-kind {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.journal-practice-unplayable-note {
+  display: block;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  font-style: italic;
+}
+
+.journal-practice-empty {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.82rem;
+}
+
+.journal-puzzles-link a {
+  color: var(--accent-2);
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .journal-reflection {

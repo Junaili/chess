@@ -203,6 +203,22 @@ test('bucketMoveIndexByPhase: splits plies into thirds', async () => {
   assert.equal(bucketMoveIndexByPhase(0, 0), 'opening') // degenerate game
 })
 
+test('stageDisplayLabel: maps stored phase keys to honest early/middle/late copy (dev-plan §8.1)', async () => {
+  const { stageDisplayLabel, bucketMoveIndexByPhase } = await modulePromise
+  assert.equal(stageDisplayLabel('opening'), 'early game')
+  assert.equal(stageDisplayLabel('middlegame'), 'middle game')
+  assert.equal(stageDisplayLabel('endgame'), 'late game')
+  assert.equal(stageDisplayLabel(undefined), 'the game')
+  assert.equal(stageDisplayLabel('nonsense'), 'the game')
+
+  // A six-ply miniature: the third player move (ply 4 of 6) buckets as
+  // 'endgame' under the crude thirds model, but must display as "late game" —
+  // never a semantic chess claim the game never actually reached.
+  const phaseKey = bucketMoveIndexByPhase(4, 6)
+  assert.equal(phaseKey, 'endgame')
+  assert.equal(stageDisplayLabel(phaseKey), 'late game')
+})
+
 test('summarizeCoachingGrades: counts only the subject color and finds the weakest phase', async () => {
   const { summarizeCoachingGrades } = await modulePromise
   const grades = [
