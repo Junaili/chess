@@ -1,5 +1,5 @@
 const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/ai-engine-IuFs8OBK.js","assets/chunk-CMxvf4Kt.js","assets/chess-engine-Bs5OSMiM.js"])))=>i.map(i=>d[i]);
-import{t as e}from"./chunk-CMxvf4Kt.js";import{C as t,w as n}from"./index-B0jOH9uC.js";import{ChessGame as r,t as i}from"./chess-engine-Bs5OSMiM.js";import{createChessWorkerClient as a,prefetchAnalysisWorker as o,serializeGameForWorker as s,t as c}from"./chess-worker-client-Bgyc34mP.js";var l=e((()=>{i(),c(),n();var e={king:`king`,queen:`queen`,rook:`rook`,bishop:`bishop`,knight:`knight`,pawn:`pawn`},l={king:`
+import{t as e}from"./chunk-CMxvf4Kt.js";import{C as t,w as n}from"./index-BC5QZjC6.js";import{ChessGame as r,t as i}from"./chess-engine-Bs5OSMiM.js";import{createChessWorkerClient as a,prefetchAnalysisWorker as o,serializeGameForWorker as s,t as c}from"./chess-worker-client-Bgyc34mP.js";var l=e((()=>{i(),c(),n();var e={king:`king`,queen:`queen`,rook:`rook`,bishop:`bishop`,knight:`knight`,pawn:`pawn`},l={king:`
     <path class="piece-vector-shape" d="M46 7h8v11h11v8H54v11h-8V26H35v-8h11z"/>
     <path class="piece-vector-shape" d="M36 42c0-8 6-13 14-13s14 5 14 13c0 6-3 10-7 14l7 17H36l7-17c-4-4-7-8-7-14z"/>
     <path class="piece-vector-shape" d="M29 73h42l6 12H23z"/>
