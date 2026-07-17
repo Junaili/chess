@@ -53,10 +53,12 @@ func (h *monetizationHandler) stripePriceIDForSKU(sku string) (string, error) {
 	return parsed.Data[0].ID, nil
 }
 
-// createStripeCheckoutSession creates a Checkout Session for sku and returns
-// its hosted URL plus the resulting customer id (for the ledger's
+// createStripeCheckoutSession creates an embedded Checkout Session for sku
+// and returns its client secret (for Stripe.js's initEmbeddedCheckout, mounted
+// inline in the Club screen — see src/club.js's openWebCheckout — rather than
+// a hosted-page redirect) plus the resulting customer id (for the ledger's
 // stripeCustomerId, so /club/web-portal can find it later).
-func (h *monetizationHandler) createStripeCheckoutSession(userID, sku string) (checkoutURL string, customerID string, err error) {
+func (h *monetizationHandler) createStripeCheckoutSession(userID, sku string) (clientSecret string, customerID string, err error) {
 	priceID, err := h.stripePriceIDForSKU(sku)
 	if err != nil {
 		return "", "", err
@@ -72,8 +74,12 @@ func (h *monetizationHandler) createStripeCheckoutSession(userID, sku string) (c
 	form.Set("client_reference_id", userID)
 	form.Set("line_items[0][price]", priceID)
 	form.Set("line_items[0][quantity]", "1")
-	form.Set("success_url", h.webBaseURL+"/?club=success")
-	form.Set("cancel_url", h.webBaseURL+"/?club=cancel")
+	// Embedded mode takes a single return_url (fired only after a completed
+	// payment) instead of hosted mode's success_url/cancel_url pair — there's
+	// no cancel_url equivalent because the widget never navigates away;
+	// cancelling is just the caller unmounting it.
+	form.Set("ui_mode", "embedded")
+	form.Set("return_url", h.webBaseURL+"/?club=success")
 	if mode == "subscription" {
 		// Metadata on the SUBSCRIPTION (not just the session) so invoice.paid
 		// — which references a subscription, not a session — can recover
@@ -93,16 +99,16 @@ func (h *monetizationHandler) createStripeCheckoutSession(userID, sku string) (c
 		return "", "", err
 	}
 	var session struct {
-		URL      string `json:"url"`
-		Customer string `json:"customer"`
+		ClientSecret string `json:"client_secret"`
+		Customer     string `json:"customer"`
 	}
 	if err := json.Unmarshal(raw, &session); err != nil {
 		return "", "", fmt.Errorf("decode checkout session: %w", err)
 	}
-	if session.URL == "" {
-		return "", "", errors.New("stripe returned no checkout url")
+	if session.ClientSecret == "" {
+		return "", "", errors.New("stripe returned no checkout client secret")
 	}
-	return session.URL, session.Customer, nil
+	return session.ClientSecret, session.Customer, nil
 }
 
 // cancelStripeSubscriptionsForCustomer cancels every active subscription for

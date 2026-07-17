@@ -7337,6 +7337,28 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   border-color: rgba(80, 200, 120, 0.32);
 }
 
+.club-checkout-container {
+  margin-top: 8px;
+  padding: 18px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.club-checkout-head {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+
+.club-checkout-loading {
+  margin: 0;
+  padding: 32px 0;
+  text-align: center;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}
+
 .club-legal-note {
   margin-top: 18px;
   padding-top: 14px;

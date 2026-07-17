@@ -110,6 +110,7 @@ export function resetClubStatus() {
   cachedStatus = null
   cachedAt = 0
   try { localStorage.removeItem(CACHE_KEY) } catch {}
+  teardownEmbeddedCheckout()
   const panel = document.getElementById('ags-club-panel')
   if (panel) panel.style.display = 'none'
 }
@@ -122,9 +123,79 @@ async function parseError(response, fallback) {
   return error
 }
 
-// openWebCheckout: creates a Stripe Checkout Session for `sku` and redirects
-// the browser to it. Stripe redirects back to `${WEB_BASE_URL}/?club=success`
-// (or ?club=cancel) — see consumeClubReturnParams() below.
+// ─── Stripe embedded Checkout (web) ────────────────────────────────────────
+// Mounted inline in the Club screen rather than a hosted-page redirect, so
+// the payment form stays inside the app's own layout/chrome instead of
+// navigating to a stripe.com URL. Fine-grained colors/fonts *inside* the
+// Stripe iframe aren't controllable from here — embedded Checkout doesn't
+// support the Appearance API (only Elements/Payment Element does) — those
+// come from the Stripe Dashboard's Settings -> Branding instead.
+let stripeClientPromise = null
+let testStripeClient = null
+
+async function loadStripeClient() {
+  if (testStripeClient) return testStripeClient
+  if (!stripeClientPromise) {
+    stripeClientPromise = import('@stripe/stripe-js').then(async ({ loadStripe }) => {
+      const key = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY
+      if (!key) throw new Error('Stripe is not configured.')
+      const stripe = await loadStripe(key)
+      if (!stripe) throw new Error('Could not load Stripe.')
+      return stripe
+    }).catch(error => {
+      stripeClientPromise = null
+      throw error
+    })
+  }
+  return stripeClientPromise
+}
+
+let activeEmbeddedCheckout = null
+
+// mountEmbeddedCheckout: swaps the plan grid for the embedded Checkout widget
+// and mounts it. Throws (leaving the grid visible) if Stripe can't load.
+async function mountEmbeddedCheckout(clientSecret) {
+  const stripe = await loadStripeClient()
+  teardownEmbeddedCheckout()
+
+  const grid = document.getElementById('club-purchase-grid')
+  const container = document.getElementById('club-checkout-container')
+  const loading = document.getElementById('club-checkout-loading')
+  const mount = document.getElementById('club-checkout-mount')
+  if (grid) grid.style.display = 'none'
+  if (container) container.style.display = ''
+  if (loading) loading.style.display = ''
+  if (mount) mount.innerHTML = ''
+
+  const checkout = await stripe.createEmbeddedCheckoutPage({ clientSecret })
+  activeEmbeddedCheckout = checkout
+  checkout.mount('#club-checkout-mount')
+  if (loading) loading.style.display = 'none'
+}
+
+// teardownEmbeddedCheckout: destroys any mounted widget and restores the plan
+// grid. Called on cancel ("Change plan" / Back), and defensively before
+// mounting a new one or re-rendering the screen from scratch.
+function teardownEmbeddedCheckout() {
+  if (activeEmbeddedCheckout) {
+    activeEmbeddedCheckout.destroy()
+    activeEmbeddedCheckout = null
+  }
+  const grid = document.getElementById('club-purchase-grid')
+  const container = document.getElementById('club-checkout-container')
+  const mount = document.getElementById('club-checkout-mount')
+  if (container) container.style.display = 'none'
+  if (mount) mount.innerHTML = ''
+  if (grid) grid.style.display = ''
+}
+
+if (typeof window !== 'undefined') {
+  window.agsClubCancelCheckout = teardownEmbeddedCheckout
+}
+
+// openWebCheckout: creates an embedded Stripe Checkout Session for `sku` and
+// mounts it inline. On a completed payment, Stripe navigates the browser to
+// `${WEB_BASE_URL}/?club=success` — see consumeClubReturnParams() below.
 export async function openWebCheckout(sku) {
   const res = await extendFetch('/club/web-checkout', {
     method: 'POST',
@@ -132,9 +203,9 @@ export async function openWebCheckout(sku) {
     body: JSON.stringify({ sku }),
   })
   if (!res.ok) throw await parseError(res, 'Could not start checkout. Try again.')
-  const { url } = await res.json()
-  if (!url) throw new Error('Checkout did not return a URL.')
-  window.location.href = url
+  const { clientSecret } = await res.json()
+  if (!clientSecret) throw new Error('Checkout did not return a client secret.')
+  await mountEmbeddedCheckout(clientSecret)
 }
 
 // openManageSubscription: opens the Stripe customer portal (web-billed
@@ -471,6 +542,10 @@ function skuButtonHtml(button) {
 }
 
 function renderClubScreen(status, isChildSession) {
+  // Every (re)render starts from the plan-grid baseline — tears down any
+  // embedded Checkout left over from a previous visit or a native-purchase
+  // re-render triggered while it happened to be mounted.
+  teardownEmbeddedCheckout()
   const ui = deriveClubUI(status, { isChildSession, isNative: isNative(), nativeIAPReady, statusUnreachable })
   const statusLine = document.getElementById('club-status-line')
   const grid = document.getElementById('club-purchase-grid')
@@ -655,5 +730,10 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
   // failure) without a real StoreKit round trip.
   window.agsSimulateNativeTransactionForTesting = (ok, extra = {}) => {
     onNativeTransactionSettled({ ok, ...extra })
+  }
+  // Offline e2e seam: inject a fake Stripe client so embedded-Checkout tests
+  // never load real Stripe.js or hit js.stripe.com.
+  window.agsSetClubStripeForTesting = fakeStripe => {
+    testStripeClient = fakeStripe || null
   }
 }

@@ -804,6 +804,7 @@ const STATIC_ACTIONS = new Set([
   'agsCancelEdit',
   'agsCancelLoginQueue',
   'agsChooseAnalytics',
+  'agsClubCancelCheckout',
   'agsClubManageSubscription',
   'agsClubRestorePurchases',
   'agsCloseAchievements',

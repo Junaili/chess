@@ -55,6 +55,7 @@
     "@capacitor/cli": "^8.4.1",
     "@capacitor/core": "^8.4.1",
     "@capacitor/ios": "^8.4.1",
+    "@stripe/stripe-js": "^9.10.0",
     "capacitor-plugin-cdv-purchase": "^13.17.2",
     "obscenity": "^0.4.6",
     "peerjs": "1.5.5"

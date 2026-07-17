@@ -305,7 +305,7 @@ func (h *monetizationHandler) webCheckout(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	url, customerID, err := h.createStripeCheckoutSession(userID, body.SKU)
+	clientSecret, customerID, err := h.createStripeCheckoutSession(userID, body.SKU)
 	if err != nil {
 		log.Printf("[monetization] web-checkout(%s, %s): %v", userID, body.SKU, err)
 		writeMonetizationError(w, http.StatusBadGateway, "checkout_failed", "Could not start checkout. Try again.")
@@ -322,7 +322,7 @@ func (h *monetizationHandler) webCheckout(w http.ResponseWriter, r *http.Request
 			log.Printf("[monetization] persist stripeCustomerId(%s): %v", userID, err)
 		}
 	}
-	writeMonetizationJSON(w, http.StatusOK, map[string]string{"url": url})
+	writeMonetizationJSON(w, http.StatusOK, map[string]string{"clientSecret": clientSecret})
 }
 
 // ---------------------------------------------------------------------------

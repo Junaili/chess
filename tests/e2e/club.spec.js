@@ -139,29 +139,56 @@ test.describe('Ethan\'s Chess Club', () => {
     await expect(page.locator('#club-status-line')).toContainText('120 🪙');
   });
 
-  test('web checkout: clicking a plan POSTs /club/web-checkout and redirects to the returned URL', async ({ page }) => {
+  // Injects a fake Stripe client via the agsSetClubStripeForTesting seam so
+  // the embedded-Checkout specs never load real Stripe.js or hit
+  // js.stripe.com — mirrors the native-purchase specs' fake store injection.
+  async function stubFakeStripe(page) {
+    await page.evaluate(() => {
+      window.__fakeStripeCalls = { createEmbeddedCheckoutPage: [], mount: [], destroy: 0 };
+      window.agsSetClubStripeForTesting({
+        createEmbeddedCheckoutPage: async ({ clientSecret }) => {
+          window.__fakeStripeCalls.createEmbeddedCheckoutPage.push(clientSecret);
+          return {
+            mount: selector => window.__fakeStripeCalls.mount.push(selector),
+            destroy: () => { window.__fakeStripeCalls.destroy += 1; },
+          };
+        },
+      });
+    });
+  }
+
+  test('web checkout: clicking a plan POSTs /club/web-checkout and mounts embedded Checkout inline', async ({ page }) => {
     await gotoApp(page);
     await stubClubStatus(page, FREE_STATUS);
+    await stubFakeStripe(page);
     let checkoutBody = null;
     await page.route('**/club/web-checkout*', async route => {
       checkoutBody = route.request().postDataJSON();
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ url: 'https://example.com/checkout-mock' }),
+        body: JSON.stringify({ clientSecret: 'cs_test_mock_secret' }),
       });
     });
-    // Intercept the redirect target so the test never leaves the mocked sandbox.
-    await page.route('https://example.com/**', route => route.fulfill({
-      status: 200,
-      contentType: 'text/html',
-      body: '<html><body>mock checkout</body></html>',
-    }));
     await openClub(page);
 
     await page.locator('[data-club-buy="club-individual-monthly"]').click();
-    await page.waitForURL('https://example.com/checkout-mock');
     expect(checkoutBody).toEqual({ sku: 'club-individual-monthly' });
+
+    // The plan grid is replaced inline by the embedded widget — no navigation.
+    await expect(page.locator('#club-purchase-grid')).toBeHidden();
+    await expect(page.locator('#club-checkout-container')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__fakeStripeCalls.createEmbeddedCheckoutPage))
+      .toEqual(['cs_test_mock_secret']);
+    await expect.poll(() => page.evaluate(() => window.__fakeStripeCalls.mount))
+      .toEqual(['#club-checkout-mount']);
+    expect(page.url()).not.toContain('example.com');
+
+    // "Change plan" tears the widget down and restores the grid.
+    await page.locator('.club-checkout-head button').click();
+    await expect(page.locator('#club-checkout-container')).toBeHidden();
+    await expect(page.locator('#club-purchase-grid')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__fakeStripeCalls.destroy)).toBe(1);
   });
 
   test('checkout failure shows an inline message and re-enables the button', async ({ page }) => {
@@ -234,7 +261,7 @@ test.describe('Ethan\'s Chess Club', () => {
     let webCheckoutCalled = false;
     await page.route('**/club/web-checkout*', route => {
       webCheckoutCalled = true;
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ url: 'https://example.com/should-not-be-used' }) });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ clientSecret: 'cs_should_not_be_used' }) });
     });
     await page.evaluate(() => {
       window.orderedProductIds = [];
