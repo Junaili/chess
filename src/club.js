@@ -154,6 +154,10 @@ let activeEmbeddedCheckout = null
 
 // mountEmbeddedCheckout: swaps the plan grid for the embedded Checkout widget
 // and mounts it. Throws (leaving the grid visible) if Stripe can't load.
+// Also hides the header title block and legal note — Stripe's tall form
+// (order summary + expanded payment fields) needs every pixel of vertical
+// room it can get, "Change plan" already gives enough context on its own,
+// and Stripe's own form already shows its own subscription terms text.
 async function mountEmbeddedCheckout(clientSecret) {
   const stripe = await loadStripeClient()
   teardownEmbeddedCheckout()
@@ -162,10 +166,14 @@ async function mountEmbeddedCheckout(clientSecret) {
   const container = document.getElementById('club-checkout-container')
   const loading = document.getElementById('club-checkout-loading')
   const mount = document.getElementById('club-checkout-mount')
+  const headerText = document.getElementById('club-header-text')
+  const legalNote = document.getElementById('club-legal-note')
   if (grid) grid.style.display = 'none'
   if (container) container.style.display = ''
   if (loading) loading.style.display = ''
   if (mount) mount.innerHTML = ''
+  if (headerText) headerText.style.display = 'none'
+  if (legalNote) legalNote.style.display = 'none'
 
   const checkout = await stripe.createEmbeddedCheckoutPage({ clientSecret })
   activeEmbeddedCheckout = checkout
@@ -174,8 +182,9 @@ async function mountEmbeddedCheckout(clientSecret) {
 }
 
 // teardownEmbeddedCheckout: destroys any mounted widget and restores the plan
-// grid. Called on cancel ("Change plan" / Back), and defensively before
-// mounting a new one or re-rendering the screen from scratch.
+// grid (and the header/legal note mountEmbeddedCheckout hid). Called on
+// cancel ("Change plan" / Back), and defensively before mounting a new one
+// or re-rendering the screen from scratch.
 function teardownEmbeddedCheckout() {
   if (activeEmbeddedCheckout) {
     activeEmbeddedCheckout.destroy()
@@ -184,9 +193,13 @@ function teardownEmbeddedCheckout() {
   const grid = document.getElementById('club-purchase-grid')
   const container = document.getElementById('club-checkout-container')
   const mount = document.getElementById('club-checkout-mount')
+  const headerText = document.getElementById('club-header-text')
+  const legalNote = document.getElementById('club-legal-note')
   if (container) container.style.display = 'none'
   if (mount) mount.innerHTML = ''
   if (grid) grid.style.display = ''
+  if (headerText) headerText.style.display = ''
+  if (legalNote) legalNote.style.display = ''
 }
 
 if (typeof window !== 'undefined') {
