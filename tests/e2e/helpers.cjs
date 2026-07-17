@@ -32,6 +32,7 @@ async function gotoApp(page, { offline = true, privacyChoice = false } = {}) {
   }
   await page.goto(APP_PATH);
   await expect(page.locator('#screen-home')).toBeVisible();
+  await expect(page.locator('body')).toHaveAttribute('aria-busy', 'false', { timeout: 20_000 });
 }
 
 // 'e2' -> { r, c } in the engine's row/col coordinates (row 0 = rank 8).

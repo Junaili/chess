@@ -1126,6 +1126,7 @@ export async function renderJournalTab(userId, matchHistory, {
         const selected = b.dataset.journalWindow === state.window
         b.classList.toggle('active', selected)
         b.setAttribute('aria-selected', String(selected))
+        b.tabIndex = selected ? 0 : -1
       })
     })
   })

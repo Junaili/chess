@@ -941,6 +941,17 @@ function runStaticAction(source, event, element) {
     return
   }
 
+  if (action.startsWith('if(event.key===') && action.includes('{')) {
+    const blockPattern = /if\(event\.key==='([^']+)'(?:\|\|event\.key==='([^']+)')?\)\{([^}]*)\}/g
+    for (const match of action.matchAll(blockPattern)) {
+      const [, firstKey, secondKey, blockSource] = match
+      if (event.key === firstKey || event.key === secondKey) {
+        runStaticAction(blockSource, event, element)
+      }
+    }
+    return
+  }
+
   if (action.startsWith('if(event.key===')) {
     const keyPattern = /if\(event\.key==='([^']+)'(?:\|\|event\.key==='([^']+)')?\)\s*([^;]+(?:;|$))/g
     for (const match of action.matchAll(keyPattern)) {
@@ -3215,12 +3226,13 @@ async function initAuth() {
     setSpectatorReplayControls(false)
     const target = spectatorPrevScreen || 'home'
     spectatorPrevScreen = null
-    // Restore the previous screen directly — do NOT call window.showScreen() because that
-    // is app.js's game navigation and has side effects (presence reset, peer teardown triggers).
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'))
+    // Restore through the side-effect-free shell synchronizer. Gameplay's
+    // showScreen() also changes presence and timers, so it remains the fallback.
     const el = document.getElementById('screen-' + target)
-    if (el) {
-      el.classList.add('active')
+    if (el && typeof window.agsSyncScreenState === 'function') {
+      window.agsSyncScreenState(target)
+    } else if (el) {
+      document.querySelectorAll('.screen').forEach(screen => screen.classList.toggle('active', screen === el))
     } else if (typeof window.showScreen === 'function') {
       window.showScreen('home')
     }
@@ -3380,6 +3392,7 @@ function switchLeaderboardView(view) {
     const selected = btn.dataset.lbView === view
     btn.classList.toggle('active', selected)
     btn.setAttribute('aria-selected', String(selected))
+    btn.tabIndex = selected ? 0 : -1
   })
   const listEl = document.getElementById('lb-list')
   if (listEl) listEl.innerHTML = '<p class="lb-empty">Loading…</p>'
@@ -3500,6 +3513,7 @@ function syncLeaderboardOverlayTabs() {
     const selected = btn.dataset.lbOverlayView === leaderboardOverlayView
     btn.classList.toggle('active', selected)
     btn.setAttribute('aria-selected', String(selected))
+    btn.tabIndex = selected ? 0 : -1
   })
 }
 
@@ -3575,8 +3589,11 @@ function showProfileTab(name = 'overview') {
     tab.tabIndex = selected ? 0 : -1
   })
   document.querySelectorAll('[data-profile-panel]').forEach(panel => {
-    panel.classList.toggle('active', panel.dataset.profilePanel === name)
-    if (panel.dataset.profilePanel === name) panel.scrollTop = 0
+    const selected = panel.dataset.profilePanel === name
+    panel.classList.toggle('active', selected)
+    panel.setAttribute('aria-hidden', String(!selected))
+    panel.tabIndex = selected ? 0 : -1
+    if (selected) panel.scrollTop = 0
   })
   if (name === 'journal') void renderPreparedJournalTab()
 }
@@ -3599,6 +3616,7 @@ async function openPublicProfile(userId, displayName = '') {
   const rankEl = document.getElementById('profile-rank')
   const authGate = document.getElementById('profile-auth-gate')
   const statsGrid = document.getElementById('profile-stats-grid')
+  const profileContainer = document.querySelector('#screen-profile .player-profile-container')
   const friendCard = document.getElementById('profile-friend-card')
   const statusEl = document.getElementById('profile-friend-status')
   const addBtn = document.getElementById('profile-add-friend-btn')
@@ -3608,6 +3626,7 @@ async function openPublicProfile(userId, displayName = '') {
   const ratingEl = document.getElementById('profile-rating')
   const kudosEl = document.getElementById('profile-kudos')
   const chessStatsSection = document.getElementById('profile-chess-stats')
+  const chessStatsEmpty = document.getElementById('profile-stats-empty')
 
   const editBtn = document.getElementById('profile-btn-edit-name')
   const editForm = document.getElementById('profile-name-edit-form')
@@ -3618,10 +3637,12 @@ async function openPublicProfile(userId, displayName = '') {
   setProfileTabVisible('account', false)
   setProfileTabVisible('coaching', false)
   setProfileTabVisible('journal', false)
+  profileContainer?.classList.toggle('is-own-profile', !!currentUserId && userId === currentUserId)
   if (nameEl) nameEl.textContent = displayName || userId.slice(0, 8)
   if (editBtn) editBtn.style.display = 'none'
   if (editForm) editForm.style.display = 'none'
   if (accountSafetyCard) accountSafetyCard.style.display = 'none'
+  if (chessStatsEmpty) chessStatsEmpty.style.display = 'none'
 
   if (!currentUserId) {
     profileMatchHistoryRows = []
@@ -4200,12 +4221,15 @@ const OPENING_NAMES = {
 
 function renderChessStats(derived, headToHeadEntry) {
   const section = document.getElementById('profile-chess-stats')
+  const emptyState = document.getElementById('profile-stats-empty')
   if (!section) return
   if (!derived.totalGames) {
     section.style.display = 'none'
+    if (emptyState) emptyState.style.display = 'flex'
     return
   }
   section.style.display = ''
+  if (emptyState) emptyState.style.display = 'none'
 
   const set = (id, text) => {
     const el = document.getElementById(id)
@@ -5425,6 +5449,10 @@ window.agsReviewFinish = async () => {
 }
 
 function switchToSpectatorScreen(name) {
+  if (typeof window.agsSyncScreenState === 'function') {
+    window.agsSyncScreenState(name)
+    return
+  }
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'))
   document.getElementById('screen-' + name)?.classList.add('active')
 }
@@ -5900,6 +5928,9 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
       const { r, c } = toEngineCoords(dr, dc)
       const sq = document.createElement('div')
       sq.className = 'square ' + ((r + c) % 2 === 0 ? 'light' : 'dark')
+      sq.setAttribute('role', 'gridcell')
+      sq.setAttribute('aria-rowindex', String(dr + 1))
+      sq.setAttribute('aria-colindex', String(dc + 1))
       addSpectatorCoordinateLabels(sq, dr, dc, r, c)
       if (last && ((last.fr === r && last.fc === c) || (last.toR === r && last.toC === c))) sq.classList.add('last-move')
       if (kingInCheck?.r === r && kingInCheck?.c === c) sq.classList.add('in-check')
@@ -5918,6 +5949,9 @@ function renderSpectatorBoard(matchData, replayIndex = -1) {
         }
         sq.appendChild(p)
       }
+      const coordinate = `${'abcdefgh'[c]}${8 - r}`
+      const state = kingInCheck?.r === r && kingInCheck?.c === c ? ', in check' : ''
+      sq.setAttribute('aria-label', `${coordinate}, ${piece ? `${piece.color} ${piece.type}` : 'empty'}${state}`)
       boardEl.appendChild(sq)
     }
   }
@@ -6073,7 +6107,15 @@ coinStoreOverlay.bindDismissal()
 // Bound directly (not data-click) so the overlay controller reliably gets the
 // clicked element as its focus-return trigger across engines.
 document.getElementById('lb-view-more')?.addEventListener('click', event => openLeaderboardOverlay(event.currentTarget))
-initAuth()
+void initAuth().catch(error => {
+  console.warn('[auth] initialization failed:', error?.message || error)
+}).finally(() => {
+  document.body.classList.remove('app-loading')
+  document.body.classList.add('app-ready')
+  document.body.setAttribute('aria-busy', 'false')
+  const bootStatus = document.getElementById('app-boot-status')
+  if (bootStatus) window.setTimeout(() => { bootStatus.hidden = true }, 220)
+})
 // Registers the StoreKit approved/verified/finished pipeline at genuine app
 // startup, independent of sign-in — a previously-unfinished transaction must
 // be re-delivered and re-synced with AGS even before hydration completes

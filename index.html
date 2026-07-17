@@ -53,10 +53,17 @@
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body class="app-loading" aria-busy="true">
+  <a class="skip-link" href="#app-main">Skip to main content</a>
+  <div id="app-boot-status" class="app-boot-status" role="status" aria-live="polite">
+    <span aria-hidden="true"></span>
+    <span class="visually-hidden">Preparing the chess table</span>
+  </div>
 
   <!-- ── Connection Banner ──────────────────────────────────────────────── -->
-  <div id="conn-banner" class="conn-banner" style="display:none"></div>
+  <div id="conn-banner" class="conn-banner" role="status" aria-live="polite" aria-atomic="true" style="display:none"></div>
+
+  <main id="app-main" class="app-main" tabindex="-1">
 
   <!-- ── Home Screen ─────────────────────────────────────────────────────── -->
   <div id="screen-home" class="screen active">
@@ -76,7 +83,7 @@
             <p>Start free. Your friends, progress, and match history stay with you.</p>
           </div>
           <button id="ags-signin-btn" class="btn btn-google" data-click="window.agsLogin && window.agsLogin()">
-            <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
+            <svg class="auth-provider-icon" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
               <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
               <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
               <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
@@ -85,7 +92,7 @@
             Continue with Google
           </button>
           <button id="ags-signin-apple" class="btn btn-apple" style="display:none" data-click="window.agsLoginApple && window.agsLoginApple()">
-            <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0">
+            <svg class="auth-provider-icon" aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
               <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-3.038 1.5-.12-1.08.42-2.24 1.05-2.97.71-.84 1.99-1.46 3.16-1.61.02.13.005.27.005.4zM20.5 17.04c-.41.93-.62 1.34-1.15 2.16-.74 1.16-1.79 2.61-3.08 2.62-1.15.01-1.44-.75-3-.74-1.56.01-1.88.75-3.03.74-1.29-.01-2.28-1.31-3.02-2.47-2.07-3.24-2.29-7.04-1.01-9.06.91-1.43 2.34-2.27 3.69-2.27 1.37 0 2.23.75 3.36.75 1.1 0 1.77-.75 3.36-.75 1.2 0 2.47.65 3.38 1.78-2.97 1.63-2.49 5.87.12 7.04z"/>
             </svg>
             Continue with Apple
@@ -143,7 +150,7 @@
             <div id="ags-guest-options" class="guest-options" hidden>
               <label class="auth-field" for="player-name-input">
                 <span>Guest name</span>
-                <input type="text" id="player-name-input" class="name-input" placeholder="How should we call you?" maxlength="20" autocomplete="nickname" />
+                <input type="text" id="player-name-input" class="name-input" placeholder="How should we call you?" maxlength="20" autocomplete="nickname" data-keydown="if(event.key==='Enter'){event.preventDefault();showColorSelect('computer')}" />
               </label>
               <button class="btn btn-secondary" data-click="showColorSelect('computer')">Continue to Game Setup</button>
             </div>
@@ -183,7 +190,7 @@
                 <button class="btn-mini" id="btn-add-friend-expand" data-click="window.agsToggleAddFriend && window.agsToggleAddFriend()">+ Add Friend</button>
                 <button class="btn-mini" id="btn-copy-invite-link" data-click="window.agsCopyInviteLink && window.agsCopyInviteLink()">Share Invite Link</button>
               </div>
-              <div id="ags-invite-share-row" style="margin-top:6px"></div>
+              <div id="ags-invite-share-row" class="share-row-slot"></div>
               <form id="ags-add-friend-form" class="add-friend-form" style="display:none" data-submit="event.preventDefault();window.agsAddFriendByEmail&&window.agsAddFriendByEmail()">
                 <label for="ags-add-friend-email">Add by email</label>
                 <div class="add-friend-controls">
@@ -255,8 +262,8 @@
                 </label>
                 <p id="ags-add-child-message" class="auth-message" aria-live="polite"></p>
                 <div class="friends-add-row">
-                  <button class="btn-mini success" id="btn-add-child-submit" data-click="window.agsCreateChildAccount && window.agsCreateChildAccount()">Create Child Account</button>
-                  <button class="btn-mini" data-click="window.agsToggleAddChild && window.agsToggleAddChild()">Cancel</button>
+                  <button type="button" class="btn-mini success" id="btn-add-child-submit" data-click="window.agsCreateChildAccount && window.agsCreateChildAccount()">Create Child Account</button>
+                  <button type="button" class="btn-mini" data-click="window.agsToggleAddChild && window.agsToggleAddChild()">Cancel</button>
                 </div>
               </form>
               <div id="ags-child-handoff" class="child-handoff" style="display:none" aria-live="polite"></div>
@@ -300,7 +307,7 @@
           <h3 class="lb-heading">Leaderboard</h3>
           <div class="lb-view-toggle" role="tablist" aria-label="Leaderboard time range">
             <button type="button" class="lb-view-btn active" data-lb-view="rating" data-click="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('rating')" role="tab" aria-selected="true">All Time</button>
-            <button type="button" class="lb-view-btn" data-lb-view="weekly" data-click="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('weekly')" role="tab" aria-selected="false">This Week</button>
+            <button type="button" class="lb-view-btn" data-lb-view="weekly" data-click="window.agsSwitchLeaderboardView && window.agsSwitchLeaderboardView('weekly')" role="tab" aria-selected="false" tabindex="-1">This Week</button>
           </div>
           <div class="lb-list" id="lb-list"></div>
           <div id="lb-your-rank" class="lb-your-rank" style="display:none"></div>
@@ -335,7 +342,7 @@
       </header>
       <div class="lb-view-toggle leaderboard-overlay-toggle" role="tablist" aria-label="Leaderboard time range">
         <button type="button" class="lb-view-btn active" data-lb-overlay-view="rating" data-click="window.agsSwitchLeaderboardOverlayView && window.agsSwitchLeaderboardOverlayView('rating')" role="tab" aria-selected="true">All Time</button>
-        <button type="button" class="lb-view-btn" data-lb-overlay-view="weekly" data-click="window.agsSwitchLeaderboardOverlayView && window.agsSwitchLeaderboardOverlayView('weekly')" role="tab" aria-selected="false">This Week</button>
+        <button type="button" class="lb-view-btn" data-lb-overlay-view="weekly" data-click="window.agsSwitchLeaderboardOverlayView && window.agsSwitchLeaderboardOverlayView('weekly')" role="tab" aria-selected="false" tabindex="-1">This Week</button>
       </div>
       <div id="leaderboard-overlay-list" class="offline-friends-list lb-overlay-list"></div>
     </section>
@@ -343,21 +350,25 @@
 
   <!-- ── Public Profile Screen ─────────────────────────────────────────────── -->
   <div id="screen-profile" class="screen">
-    <div class="profile-container">
+    <div class="profile-container player-profile-container">
       <div class="profile-header">
-        <div>
-          <p class="auth-eyebrow">Player Profile</p>
-          <div class="profile-name-row">
-            <h2 id="profile-display-name">Player</h2>
-            <button class="btn-edit-name" id="profile-btn-edit-name" style="display:none" title="Edit display name" aria-label="Edit display name" data-click="window.agsProfileEditName && window.agsProfileEditName()">✏</button>
-          </div>
-          <div id="profile-name-edit-form" style="display:none;margin-top:8px">
-            <input type="text" id="profile-name-edit-input" class="name-edit-input" maxlength="48" placeholder="New display name" data-keydown="if(event.key==='Enter') window.agsProfileSaveName && window.agsProfileSaveName(); if(event.key==='Escape') window.agsProfileCancelEdit && window.agsProfileCancelEdit()" />
-            <div class="name-edit-actions" style="margin-top:8px">
-              <button class="btn btn-primary" id="profile-btn-save-name" data-click="window.agsProfileSaveName && window.agsProfileSaveName()">Save</button>
-              <button class="btn btn-secondary" data-click="window.agsProfileCancelEdit && window.agsProfileCancelEdit()">Cancel</button>
+        <div class="profile-identity">
+          <span class="profile-avatar" data-static-piece data-piece-type="king" data-piece-color="black" aria-hidden="true"></span>
+          <div class="profile-identity-copy">
+            <p class="auth-eyebrow">Player Profile</p>
+            <div class="profile-name-row">
+              <h2 id="profile-display-name">Player</h2>
+              <button class="btn-edit-name" id="profile-btn-edit-name" style="display:none" title="Edit display name" aria-label="Edit display name" data-click="window.agsProfileEditName && window.agsProfileEditName()">✏</button>
             </div>
-            <p id="profile-name-edit-message" class="auth-message" aria-live="polite"></p>
+            <p class="profile-subtitle">Performance, match history, and player details.</p>
+            <div id="profile-name-edit-form" class="profile-name-edit-form" style="display:none">
+              <input type="text" id="profile-name-edit-input" class="name-edit-input" maxlength="48" placeholder="New display name" data-keydown="if(event.key==='Enter') window.agsProfileSaveName && window.agsProfileSaveName(); if(event.key==='Escape') window.agsProfileCancelEdit && window.agsProfileCancelEdit()" />
+              <div class="name-edit-actions profile-name-edit-actions">
+                <button class="btn btn-primary" id="profile-btn-save-name" data-click="window.agsProfileSaveName && window.agsProfileSaveName()">Save</button>
+                <button class="btn btn-secondary" data-click="window.agsProfileCancelEdit && window.agsProfileCancelEdit()">Cancel</button>
+              </div>
+              <p id="profile-name-edit-message" class="auth-message" aria-live="polite"></p>
+            </div>
           </div>
         </div>
         <button class="btn-mini" data-click="showScreen('home')">Back</button>
@@ -376,43 +387,68 @@
         </div>
       </div>
       <div class="profile-tabs" role="tablist" aria-label="Profile sections">
-        <button type="button" class="profile-tab active" data-profile-tab="overview" data-click="window.agsShowProfileTab && window.agsShowProfileTab('overview')" role="tab">Overview</button>
-        <button type="button" class="profile-tab" data-profile-tab="stats" data-click="window.agsShowProfileTab && window.agsShowProfileTab('stats')" role="tab">Chess Stats</button>
-        <button type="button" class="profile-tab" data-profile-tab="history" data-click="window.agsShowProfileTab && window.agsShowProfileTab('history')" role="tab">History</button>
-        <button type="button" class="profile-tab" data-profile-tab="journal" data-click="window.agsShowProfileTab && window.agsShowProfileTab('journal')" role="tab" hidden>Journal</button>
-        <button type="button" class="profile-tab" data-profile-tab="coaching" data-click="window.agsShowProfileTab && window.agsShowProfileTab('coaching')" role="tab" hidden>Coaching</button>
-        <button type="button" class="profile-tab" data-profile-tab="account" data-click="window.agsShowProfileTab && window.agsShowProfileTab('account')" role="tab">Account</button>
+        <button type="button" id="profile-tab-overview" class="profile-tab active" data-profile-tab="overview" data-click="window.agsShowProfileTab && window.agsShowProfileTab('overview')" role="tab" aria-selected="true" aria-controls="profile-panel-overview">Overview</button>
+        <button type="button" id="profile-tab-stats" class="profile-tab" data-profile-tab="stats" data-click="window.agsShowProfileTab && window.agsShowProfileTab('stats')" role="tab" aria-selected="false" aria-controls="profile-panel-stats" tabindex="-1">Chess Stats</button>
+        <button type="button" id="profile-tab-history" class="profile-tab" data-profile-tab="history" data-click="window.agsShowProfileTab && window.agsShowProfileTab('history')" role="tab" aria-selected="false" aria-controls="profile-panel-history" tabindex="-1">History</button>
+        <button type="button" id="profile-tab-journal" class="profile-tab" data-profile-tab="journal" data-click="window.agsShowProfileTab && window.agsShowProfileTab('journal')" role="tab" aria-selected="false" aria-controls="profile-panel-journal" tabindex="-1" hidden>Journal</button>
+        <button type="button" id="profile-tab-coaching" class="profile-tab" data-profile-tab="coaching" data-click="window.agsShowProfileTab && window.agsShowProfileTab('coaching')" role="tab" aria-selected="false" aria-controls="profile-panel-coaching" tabindex="-1" hidden>Coaching</button>
+        <button type="button" id="profile-tab-account" class="profile-tab" data-profile-tab="account" data-click="window.agsShowProfileTab && window.agsShowProfileTab('account')" role="tab" aria-selected="false" aria-controls="profile-panel-account" tabindex="-1">Account</button>
       </div>
       <div class="profile-panels">
-      <div class="profile-panel active" data-profile-panel="overview">
-      <div id="profile-stats-grid" class="profile-stats-grid">
-        <div class="profile-stat">
-          <span>Wins</span>
-          <strong id="profile-wins">—</strong>
+      <div id="profile-panel-overview" class="profile-panel active" data-profile-panel="overview" role="tabpanel" aria-labelledby="profile-tab-overview" tabindex="0">
+      <div class="profile-panel-heading">
+        <div>
+          <p class="profile-section-eyebrow">At a glance</p>
+          <h3>Performance snapshot</h3>
         </div>
-        <div class="profile-stat">
-          <span>Losses</span>
-          <strong id="profile-losses">—</strong>
-        </div>
-        <div class="profile-stat">
-          <span>Leaderboard</span>
-          <strong id="profile-rank">—</strong>
-        </div>
-        <div class="profile-stat">
-          <span title="Elo-style rating: starts at 1200. Beating a higher-rated opponent gains more, losing to a lower-rated opponent costs more — up to about ±32 points per online match, scaled by the rating gap between you and your opponent.">Elo Style Rating</span>
-          <strong id="profile-rating">—</strong>
-        </div>
-        <div class="profile-stat">
-          <span title="High Fives received from opponents after a match">🙌 High Fives</span>
-          <strong id="profile-kudos">—</strong>
-        </div>
+        <p>Rating, record, and community recognition in one clear view.</p>
       </div>
-      <div id="profile-friend-card" class="profile-friend-card">
-        <p id="profile-friend-status" class="auth-message"></p>
-        <button class="btn btn-primary" id="profile-add-friend-btn" data-click="window.agsProfileAddFriend && window.agsProfileAddFriend()">Add Friend</button>
+      <div class="profile-overview-layout">
+        <div id="profile-stats-grid" class="profile-stats-grid profile-overview-stats">
+          <div class="profile-stat profile-stat--rating">
+            <span class="term-help" tabindex="0" aria-describedby="profile-rating-help">Rating <span class="term-help-icon" aria-hidden="true">?</span></span>
+            <span id="profile-rating-help" class="term-tooltip" role="tooltip">Starts at 1200. Results are weighted by the rating gap between opponents.</span>
+            <strong id="profile-rating">—</strong>
+            <small>Current playing strength</small>
+          </div>
+          <div class="profile-stat profile-stat--rank">
+            <span>Leaderboard</span>
+            <strong id="profile-rank">—</strong>
+            <small>All-time position</small>
+          </div>
+          <div class="profile-stat profile-stat--record">
+            <span>Wins</span>
+            <strong id="profile-wins">—</strong>
+          </div>
+          <div class="profile-stat profile-stat--record">
+            <span>Losses</span>
+            <strong id="profile-losses">—</strong>
+          </div>
+          <div class="profile-stat profile-stat--kudos">
+            <span class="term-help" tabindex="0" aria-describedby="profile-kudos-help">High Fives <span class="term-help-icon" aria-hidden="true">?</span></span>
+            <span id="profile-kudos-help" class="term-tooltip" role="tooltip">High Fives received from opponents after a match.</span>
+            <strong id="profile-kudos">—</strong>
+            <small>Received from opponents</small>
+          </div>
+        </div>
+        <aside id="profile-friend-card" class="profile-friend-card" aria-label="Player connection">
+          <div>
+            <span class="profile-friend-label">Connection</span>
+            <p id="profile-friend-status" class="auth-message"></p>
+          </div>
+          <button class="btn btn-primary" id="profile-add-friend-btn" data-click="window.agsProfileAddFriend && window.agsProfileAddFriend()">Add Friend</button>
+        </aside>
       </div>
       </div>
-      <div class="profile-panel" data-profile-panel="stats">
+      <div id="profile-panel-stats" class="profile-panel" data-profile-panel="stats" role="tabpanel" aria-labelledby="profile-tab-stats" aria-hidden="true" tabindex="-1">
+      <div id="profile-stats-empty" class="profile-empty-state" style="display:none">
+        <span class="profile-empty-icon" data-static-piece data-piece-type="knight" data-piece-color="black" aria-hidden="true"></span>
+        <div>
+          <strong>Your chess story starts with game one</strong>
+          <p>Complete a game to unlock color, opponent, and advanced performance breakdowns.</p>
+        </div>
+        <button type="button" class="btn btn-primary" data-click="showScreen('home')">Play a Game</button>
+      </div>
       <section id="profile-chess-stats" class="profile-history-card" style="display:none">
         <div class="profile-history-head">
           <h3>Chess Stats</h3>
@@ -446,7 +482,7 @@
         <div id="profile-advanced-stats" class="profile-stats-grid"></div>
       </section>
       </div>
-      <div class="profile-panel" data-profile-panel="account">
+      <div id="profile-panel-account" class="profile-panel" data-profile-panel="account" role="tabpanel" aria-labelledby="profile-tab-account" aria-hidden="true" tabindex="-1">
       <section id="profile-account-safety" class="profile-account-safety" style="display:none">
         <div class="profile-history-head">
           <h3>Account &amp; Safety</h3>
@@ -464,7 +500,7 @@
         </div>
       </section>
       </div>
-      <div class="profile-panel" data-profile-panel="history">
+      <div id="profile-panel-history" class="profile-panel" data-profile-panel="history" role="tabpanel" aria-labelledby="profile-tab-history" aria-hidden="true" tabindex="-1">
       <section class="profile-history-card">
         <div class="profile-history-head">
           <h3>Match History</h3>
@@ -504,7 +540,7 @@
       <!-- ── My Chess Journal (owner-only): self-reflection + coach report +
            practice loop. Rendered by src/journal.js; reflections live in the
            player's PRIVATE CloudSave record. ── -->
-      <div class="profile-panel" data-profile-panel="journal">
+      <div id="profile-panel-journal" class="profile-panel" data-profile-panel="journal" role="tabpanel" aria-labelledby="profile-tab-journal" aria-hidden="true" tabindex="-1">
       <section class="profile-history-card journal-card">
         <div class="profile-history-head">
           <h3>My Chess Journal</h3>
@@ -514,8 +550,8 @@
         <div class="journal-controls">
           <div class="lb-view-toggle journal-window-toggle" role="tablist" aria-label="Journal time range">
             <button type="button" class="lb-view-btn active" data-journal-window="24h" role="tab" aria-selected="true">Last 24h</button>
-            <button type="button" class="lb-view-btn" data-journal-window="7d" role="tab" aria-selected="false">7 days</button>
-            <button type="button" class="lb-view-btn" data-journal-window="since-last" role="tab" aria-selected="false">Since last entry</button>
+            <button type="button" class="lb-view-btn" data-journal-window="7d" role="tab" aria-selected="false" tabindex="-1">7 days</button>
+            <button type="button" class="lb-view-btn" data-journal-window="since-last" role="tab" aria-selected="false" tabindex="-1">Since last entry</button>
           </div>
           <button type="button" id="btn-journal-generate" class="btn btn-primary">Write a new entry</button>
         </div>
@@ -532,7 +568,7 @@
         <div id="journal-entries" class="journal-entries"></div>
       </section>
       </div>
-      <div class="profile-panel" data-profile-panel="coaching">
+      <div id="profile-panel-coaching" class="profile-panel" data-profile-panel="coaching" role="tabpanel" aria-labelledby="profile-tab-coaching" aria-hidden="true" tabindex="-1">
       <section class="profile-history-card">
         <div class="profile-history-head">
           <h3>Coaching Insights</h3>
@@ -585,14 +621,14 @@
       </div>
       <p id="gus-offline-note" class="auth-message" style="display:none">Gus’s table is closed right now — check back soon.</p>
       <div class="gus-profile-tabs" role="tablist" aria-label="Gambit Gus details">
-        <button type="button" class="profile-tab active" data-gus-tab="overview">Overview</button>
-        <button type="button" class="profile-tab" data-gus-tab="journal">Journal</button>
-        <button type="button" class="profile-tab" data-gus-tab="training">Training</button>
-        <button type="button" class="profile-tab" data-gus-tab="matches">Matches</button>
+        <button type="button" id="gus-tab-overview" class="profile-tab active" data-gus-tab="overview" role="tab" aria-selected="true" aria-controls="gus-panel-overview">Overview</button>
+        <button type="button" id="gus-tab-journal" class="profile-tab" data-gus-tab="journal" role="tab" aria-selected="false" aria-controls="gus-panel-journal" tabindex="-1">Journal</button>
+        <button type="button" id="gus-tab-training" class="profile-tab" data-gus-tab="training" role="tab" aria-selected="false" aria-controls="gus-panel-training" tabindex="-1">Training</button>
+        <button type="button" id="gus-tab-matches" class="profile-tab" data-gus-tab="matches" role="tab" aria-selected="false" aria-controls="gus-panel-matches" tabindex="-1">Matches</button>
       </div>
 
       <div class="gus-profile-panels">
-        <section class="gus-profile-panel active" data-gus-panel="overview">
+        <section id="gus-panel-overview" class="gus-profile-panel active" data-gus-panel="overview" role="tabpanel" aria-labelledby="gus-tab-overview" tabindex="0">
           <div class="gus-overview-grid">
             <div class="gus-profile-card gus-personality-card">
               <h3>How Gus plays</h3>
@@ -617,7 +653,7 @@
           </section>
         </section>
 
-        <section class="gus-profile-panel" data-gus-panel="journal">
+        <section id="gus-panel-journal" class="gus-profile-panel" data-gus-panel="journal" role="tabpanel" aria-labelledby="gus-tab-journal" aria-hidden="true" tabindex="-1">
           <div class="profile-history-head">
             <h3>Gus’s Training Journal</h3>
             <span>evidence-labeled training notes</span>
@@ -625,7 +661,7 @@
           <div id="gus-journal-list" class="gus-journal-list"></div>
         </section>
 
-        <section class="gus-profile-panel" data-gus-panel="training">
+        <section id="gus-panel-training" class="gus-profile-panel" data-gus-panel="training" role="tabpanel" aria-labelledby="gus-tab-training" aria-hidden="true" tabindex="-1">
           <div class="gus-profile-card">
             <div class="profile-history-head">
               <h3>How Gus Trains</h3>
@@ -651,7 +687,7 @@
           </div>
         </section>
 
-        <section class="gus-profile-panel" data-gus-panel="matches">
+        <section id="gus-panel-matches" class="gus-profile-panel" data-gus-panel="matches" role="tabpanel" aria-labelledby="gus-tab-matches" aria-hidden="true" tabindex="-1">
           <div class="profile-history-head">
             <h3>Recent Matches</h3>
             <span id="gus-match-count"></span>
@@ -750,7 +786,7 @@
       <div id="invite-landing-divider-default" class="auth-divider invite-divider"><span>already have an account?</span></div>
       <div id="invite-landing-signin-default" class="invite-signin-row">
         <button class="btn btn-google invite-google" data-click="window.agsLogin && window.agsLogin()">
-          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
+          <svg class="auth-provider-icon" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
             <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
             <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
@@ -759,7 +795,7 @@
           Sign in with Google
         </button>
         <button id="invite-default-apple" class="btn btn-apple" style="display:none" data-click="window.agsLoginApple && window.agsLoginApple()">
-          <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0">
+          <svg class="auth-provider-icon" aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
             <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-3.038 1.5-.12-1.08.42-2.24 1.05-2.97.71-.84 1.99-1.46 3.16-1.61.02.13.005.27.005.4zM20.5 17.04c-.41.93-.62 1.34-1.15 2.16-.74 1.16-1.79 2.61-3.08 2.62-1.15.01-1.44-.75-3-.74-1.56.01-1.88.75-3.03.74-1.29-.01-2.28-1.31-3.02-2.47-2.07-3.24-2.29-7.04-1.01-9.06.91-1.43 2.34-2.27 3.69-2.27 1.37 0 2.23.75 3.36.75 1.1 0 1.77-.75 3.36-.75 1.2 0 2.47.65 3.38 1.78-2.97 1.63-2.49 5.87.12 7.04z"/>
           </svg>
           Sign in with Apple
@@ -774,7 +810,7 @@
            chat and match activity are attributable to a signed-in player. -->
       <div id="invite-landing-actions-live" class="invite-landing-actions" style="display:none">
         <button class="btn btn-google invite-google" data-click="window.agsLogin && window.agsLogin()">
-          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
+          <svg class="auth-provider-icon" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
             <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
             <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
@@ -783,7 +819,7 @@
           Sign in with Google
         </button>
         <button id="invite-live-apple" class="btn btn-apple" style="display:none" data-click="window.agsLoginApple && window.agsLoginApple()">
-          <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0">
+          <svg class="auth-provider-icon" aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
             <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-3.038 1.5-.12-1.08.42-2.24 1.05-2.97.71-.84 1.99-1.46 3.16-1.61.02.13.005.27.005.4zM20.5 17.04c-.41.93-.62 1.34-1.15 2.16-.74 1.16-1.79 2.61-3.08 2.62-1.15.01-1.44-.75-3-.74-1.56.01-1.88.75-3.03.74-1.29-.01-2.28-1.31-3.02-2.47-2.07-3.24-2.29-7.04-1.01-9.06.91-1.43 2.34-2.27 3.69-2.27 1.37 0 2.23.75 3.36.75 1.1 0 1.77-.75 3.36-.75 1.2 0 2.47.65 3.38 1.78-2.97 1.63-2.49 5.87.12 7.04z"/>
           </svg>
           Sign in with Apple
@@ -806,12 +842,12 @@
       <div class="auth-form">
         <label class="auth-field" for="ags-login-identifier">
           <span>Username or email</span>
-          <input type="text" id="ags-login-identifier" class="name-input" placeholder="you@example.com" autocomplete="username" />
+          <input type="text" id="ags-login-identifier" class="name-input" placeholder="you@example.com" autocomplete="username" data-keydown="if(event.key==='Enter'){event.preventDefault();window.agsPasswordLogin&&window.agsPasswordLogin()}" />
         </label>
         <div class="auth-field">
           <label for="ags-login-password">Password</label>
           <div class="password-input-wrap">
-            <input type="password" id="ags-login-password" class="name-input" placeholder="Your password" autocomplete="current-password" />
+            <input type="password" id="ags-login-password" class="name-input" placeholder="Your password" autocomplete="current-password" data-keydown="if(event.key==='Enter'){event.preventDefault();window.agsPasswordLogin&&window.agsPasswordLogin()}" />
             <button type="button" class="password-visibility-toggle" data-password-toggle aria-controls="ags-login-password" aria-pressed="false" aria-label="Show password">Show</button>
           </div>
         </div>
@@ -836,7 +872,7 @@
       <div class="auth-form">
         <label class="auth-field" for="ags-forgot-email">
           <span>Email address</span>
-          <input type="email" id="ags-forgot-email" class="name-input" placeholder="you@example.com" autocomplete="email" required />
+          <input type="email" id="ags-forgot-email" class="name-input" placeholder="you@example.com" autocomplete="email" required data-keydown="if(event.key==='Enter'){event.preventDefault();window.agsRequestPasswordReset&&window.agsRequestPasswordReset()}" />
         </label>
         <div class="auth-form-actions">
           <button class="btn btn-primary" id="ags-forgot-submit" data-click="window.agsRequestPasswordReset && window.agsRequestPasswordReset()">Send Reset Code</button>
@@ -845,12 +881,12 @@
           <p class="auth-helper">Check your email, then enter the verification code and a new password below.</p>
           <label class="auth-field" for="ags-reset-code">
             <span>Verification code</span>
-            <input type="text" id="ags-reset-code" class="name-input" placeholder="Enter the code" autocomplete="one-time-code" />
+            <input type="text" id="ags-reset-code" class="name-input" placeholder="Enter the code" autocomplete="one-time-code" data-keydown="if(event.key==='Enter'){event.preventDefault();window.agsCompletePasswordReset&&window.agsCompletePasswordReset()}" />
           </label>
           <div class="auth-field">
             <label for="ags-reset-password">New password</label>
             <div class="password-input-wrap">
-              <input type="password" id="ags-reset-password" class="name-input" placeholder="Choose a new password" autocomplete="new-password" minlength="8" />
+              <input type="password" id="ags-reset-password" class="name-input" placeholder="Choose a new password" autocomplete="new-password" minlength="8" data-keydown="if(event.key==='Enter'){event.preventDefault();window.agsCompletePasswordReset&&window.agsCompletePasswordReset()}" />
               <button type="button" class="password-visibility-toggle" data-password-toggle aria-controls="ags-reset-password" aria-pressed="false" aria-label="Show password">Show</button>
             </div>
           </div>
@@ -876,20 +912,20 @@
              cutoff, and is validated before anything else is looked at. -->
         <label class="auth-field" for="ags-register-birth-year">
           <span>Year you were born</span>
-          <input type="text" id="ags-register-birth-year" class="name-input" placeholder="YYYY" inputmode="numeric" maxlength="4" autocomplete="bday-year" />
+          <input type="text" id="ags-register-birth-year" class="name-input" placeholder="YYYY" inputmode="numeric" maxlength="4" autocomplete="bday-year" data-keydown="if(event.key==='Enter'){event.preventDefault();window.agsRegister&&window.agsRegister()}" />
         </label>
         <label class="auth-field" for="ags-register-email">
           <span>Email address</span>
-          <input type="email" id="ags-register-email" class="name-input" placeholder="you@example.com" autocomplete="email" />
+          <input type="email" id="ags-register-email" class="name-input" placeholder="you@example.com" autocomplete="email" data-keydown="if(event.key==='Enter'){event.preventDefault();window.agsRegister&&window.agsRegister()}" />
         </label>
         <label class="auth-field" for="ags-register-display-name">
           <span>Display name</span>
-          <input type="text" id="ags-register-display-name" class="name-input" placeholder="What friends will see" maxlength="48" autocomplete="nickname" />
+          <input type="text" id="ags-register-display-name" class="name-input" placeholder="What friends will see" maxlength="48" autocomplete="nickname" data-keydown="if(event.key==='Enter'){event.preventDefault();window.agsRegister&&window.agsRegister()}" />
         </label>
         <div class="auth-field">
           <label for="ags-register-password">Password</label>
           <div class="password-input-wrap">
-            <input type="password" id="ags-register-password" class="name-input" placeholder="Choose a secure password" autocomplete="new-password" />
+            <input type="password" id="ags-register-password" class="name-input" placeholder="Choose a secure password" autocomplete="new-password" data-keydown="if(event.key==='Enter'){event.preventDefault();window.agsRegister&&window.agsRegister()}" />
             <button type="button" class="password-visibility-toggle" data-password-toggle aria-controls="ags-register-password" aria-pressed="false" aria-label="Show password">Show</button>
           </div>
           <small>Use a password you don't use elsewhere.</small>
@@ -1005,7 +1041,12 @@
   <!-- ── Color Select ────────────────────────────────────────────────────── -->
   <div id="screen-color-select" class="screen">
     <div class="color-select-container">
+      <div class="setup-progress" data-step="1" aria-label="Game setup, step 1 of 3">
+        <div class="setup-progress-meta"><span>Game setup</span><span>1 of 3</span></div>
+        <div class="setup-progress-track" aria-hidden="true"><span></span></div>
+      </div>
       <h2>Choose Your Color</h2>
+      <p class="setup-supporting">Choose which side of the board you want to play.</p>
       <div class="color-options">
         <button class="color-btn white-btn" data-click="selectColor('white')">
           <span class="piece-icon white" data-static-piece data-piece-type="king" data-piece-color="white" aria-hidden="true"></span>
@@ -1023,6 +1064,10 @@
   <!-- ── Piece Color Select ────────────────────────────────────────────── -->
   <div id="screen-piece-color" class="screen">
     <div class="piece-color-container">
+      <div class="setup-progress" data-step="2" aria-label="Game setup, step 2 of 3">
+        <div class="setup-progress-meta"><span>Game setup</span><span>2 of 3</span></div>
+        <div class="setup-progress-track" aria-hidden="true"><span></span></div>
+      </div>
       <h2>Choose Your Piece Color</h2>
       <p class="piece-color-sub" id="piece-color-sub"></p>
       <div class="piece-color-options" id="piece-color-options"></div>
@@ -1033,7 +1078,12 @@
   <!-- ── Difficulty ──────────────────────────────────────────────────────── -->
   <div id="screen-difficulty" class="screen">
     <div class="difficulty-container">
+      <div class="setup-progress" data-step="3" aria-label="Game setup, step 3 of 3">
+        <div class="setup-progress-meta"><span>Game setup</span><span>3 of 3</span></div>
+        <div class="setup-progress-track" aria-hidden="true"><span></span></div>
+      </div>
       <h2>Choose Difficulty</h2>
+      <p class="setup-supporting">You can start another game at a different level any time.</p>
       <div class="difficulty-options">
         <button class="diff-btn easy" data-click="startVsComputer('easy')">
           <span>Easy</span>
@@ -1067,7 +1117,7 @@
         <div class="captured-pieces" id="captured-by-white" hidden></div>
         <div class="board-container">
           <div class="board-wrapper">
-            <div id="chess-board" class="chess-board"></div>
+            <div id="chess-board" class="chess-board" role="grid" aria-label="Chess board"></div>
           </div>
         </div>
         <div class="match-player-strip you-strip" id="you-player-strip">
@@ -1102,11 +1152,11 @@
 
       <aside class="game-sidebar right" aria-label="Match information and controls">
         <div class="match-tabs" role="tablist" aria-label="Match panel">
-          <button type="button" class="match-tab active" data-match-tab="moves" data-click="showMatchTab('moves')" role="tab">Moves</button>
-          <button type="button" class="match-tab" data-match-tab="chat" data-click="showMatchTab('chat')" role="tab" id="match-chat-tab">Chat</button>
-          <button type="button" class="match-tab" data-match-tab="more" data-click="showMatchTab('more')" role="tab">More</button>
+          <button type="button" id="match-tab-moves" class="match-tab active" data-match-tab="moves" data-click="showMatchTab('moves')" role="tab" aria-selected="true" aria-controls="match-panel-moves">Moves</button>
+          <button type="button" class="match-tab" data-match-tab="chat" data-click="showMatchTab('chat')" role="tab" id="match-chat-tab" aria-selected="false" aria-controls="match-panel-chat" tabindex="-1">Chat</button>
+          <button type="button" id="match-tab-more" class="match-tab" data-match-tab="more" data-click="showMatchTab('more')" role="tab" aria-selected="false" aria-controls="match-panel-more" tabindex="-1">More</button>
         </div>
-        <div class="match-panel active" data-match-panel="moves">
+        <div id="match-panel-moves" class="match-panel active" data-match-panel="moves" role="tabpanel" aria-labelledby="match-tab-moves" tabindex="0">
           <div class="move-history">
             <div class="match-panel-heading">
               <h3>Moves</h3>
@@ -1115,7 +1165,7 @@
             <div id="move-list"></div>
           </div>
         </div>
-        <div class="match-panel" data-match-panel="chat">
+        <div id="match-panel-chat" class="match-panel" data-match-panel="chat" role="tabpanel" aria-labelledby="match-chat-tab" aria-hidden="true" tabindex="-1">
           <div class="online-chat" id="online-chat" style="display:none">
             <div class="online-chat-header">
               <h3>Match Chat</h3>
@@ -1123,6 +1173,7 @@
             </div>
             <div class="online-chat-messages" id="online-chat-messages"></div>
             <div class="online-chat-compose">
+              <label class="visually-hidden" for="online-chat-input">Message your opponent</label>
               <input type="text" id="online-chat-input" class="online-chat-input" placeholder="Message your opponent" maxlength="280" data-keydown="handleChatInputKeydown(event)" disabled />
               <button class="btn btn-primary btn-chat-send" id="btn-chat-send" data-click="sendChatMessage()" disabled>Send</button>
             </div>
@@ -1138,7 +1189,7 @@
           </div>
           <p class="match-panel-empty" id="match-chat-unavailable">Chat is available in online games.</p>
         </div>
-        <div class="match-panel match-more-panel" data-match-panel="more">
+        <div id="match-panel-more" class="match-panel match-more-panel" data-match-panel="more" role="tabpanel" aria-labelledby="match-tab-more" aria-hidden="true" tabindex="-1">
           <button class="btn btn-hint" id="btn-hint" data-click="showHint()">Get Hint</button>
           <!-- Coach Mode (vs computer only): after each of your moves the engine
                checks it, and offers a take-back on a real blunder — feedback at
@@ -1184,11 +1235,11 @@
           <button class="btn btn-secondary" data-click="shareInviteLink()">📤 Share…</button>
           <button class="btn btn-secondary" data-click="showContactsForInvite()">👤 Send to Contact</button>
         </div>
-        <div id="waiting-share-row" style="margin-top:4px"></div>
+        <div id="waiting-share-row" class="share-row-slot compact"></div>
       </div>
 
       <div id="waiting-spinner" class="waiting-spinner" style="display:none"></div>
-      <button class="btn btn-back" style="margin-top:8px" id="btn-waiting-cancel" data-click="cancelWaiting()">← Cancel</button>
+      <button class="btn btn-back waiting-cancel" id="btn-waiting-cancel" data-click="cancelWaiting()">← Cancel</button>
     </div>
   </div>
 
@@ -1196,10 +1247,11 @@
   <div id="screen-contacts" class="screen">
     <div class="contacts-container">
       <h2>Send Invite</h2>
-      <div class="contacts-list" id="contacts-list"></div>
+      <div class="contacts-list" id="contacts-list" role="list"></div>
       <button class="btn btn-add" data-click="showAddContact()">+ Add Contact</button>
       <div class="add-contact-form" id="add-contact-form" style="display:none">
-        <input type="text" id="contact-input" placeholder="Phone number or email" autocomplete="off" />
+        <label class="visually-hidden" for="contact-input">Phone number or email</label>
+        <input type="text" id="contact-input" placeholder="Phone number or email" autocomplete="off" data-keydown="if(event.key==='Enter'){event.preventDefault();addContact()}" />
         <button class="btn btn-primary" data-click="addContact()">Add</button>
         <button class="btn btn-secondary" data-click="hideAddContact()">Cancel</button>
       </div>
@@ -1226,7 +1278,7 @@
       <p id="spectator-review-summary" class="spectator-review-summary" style="display:none"></p>
       <div id="spectator-review-progress" class="spectator-review-progress" style="display:none"></div>
       <div class="spectator-body">
-        <div id="spectator-board" class="chess-board spectator-board"></div>
+        <div id="spectator-board" class="chess-board spectator-board" role="grid" aria-label="Spectator chess board"></div>
         <div class="spectator-sidebar">
           <div class="spectator-history-header">
             <span class="spectator-history-col white-dot">#</span>
@@ -1253,6 +1305,7 @@
            until an owner review session finishes analysis with the flag on. -->
       <div id="spectator-review-finish-panel" class="spectator-review-finish-panel" style="display:none">
         <div id="spectator-review-chips" class="spectator-review-chips"></div>
+        <label class="visually-hidden" for="spectator-review-takeaway">One thing to remember</label>
         <input type="text" id="spectator-review-takeaway" class="spectator-review-takeaway-input" maxlength="120" placeholder="One thing to remember (optional)" />
         <div class="spectator-review-finish-row">
           <button type="button" class="btn-mini success" id="spectator-review-finish-btn" data-click="window.agsReviewFinish && window.agsReviewFinish()">Finish review</button>
@@ -1271,17 +1324,19 @@
     </div>
   </div>
 
+  </main>
+
   <!-- ── Pawn Promotion Modal ────────────────────────────────────────────── -->
-  <div id="promotion-modal" class="modal">
+  <div id="promotion-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="promotion-title">
     <div class="modal-content">
-      <h3>Promote Pawn</h3>
+      <h3 id="promotion-title">Promote Pawn</h3>
       <p>Choose the piece to promote to:</p>
       <div class="promotion-options" id="promotion-options"></div>
     </div>
   </div>
 
   <!-- ── Game Over Modal ─────────────────────────────────────────────────── -->
-  <div id="game-over-modal" class="modal">
+  <div id="game-over-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="game-over-title" aria-describedby="game-over-message">
     <div class="modal-content">
       <h2 id="game-over-title">Game Over</h2>
       <p id="game-over-message"></p>
@@ -1323,7 +1378,7 @@
       </div>
       <p id="match-safety-message" class="auth-message" aria-live="polite"></p>
       <div class="modal-buttons">
-        <button type="button" class="btn btn-secondary" data-click="closeModal('match-safety-modal')">Close</button>
+        <button type="button" class="btn btn-secondary" data-modal-dismiss data-click="closeModal('match-safety-modal')">Close</button>
       </div>
     </div>
   </div>
@@ -1349,7 +1404,7 @@
       <p id="report-player-message" class="auth-message" aria-live="polite"></p>
       <div class="modal-buttons">
         <button type="button" class="btn btn-primary" id="btn-submit-player-report" data-click="submitSafetyReport()" disabled>Submit Report</button>
-        <button type="button" class="btn btn-secondary" data-click="closeSafetyReport()">Cancel</button>
+        <button type="button" class="btn btn-secondary" data-modal-dismiss data-click="closeSafetyReport()">Cancel</button>
       </div>
     </div>
   </div>
@@ -1360,34 +1415,34 @@
       <h2 id="delete-account-title">Delete Account</h2>
       <p>Permanently deleting your account removes access to your profile, friends, stats, achievements, and match history. This cannot be undone.</p>
       <p id="delete-account-club-notices" class="auth-message error" style="display: none;" aria-live="polite"></p>
-      <label class="safety-field">
+      <label class="safety-field" for="delete-account-confirmation">
         <span>Type <strong>DELETE</strong> to confirm</span>
-        <input id="delete-account-confirmation" type="text" autocomplete="off" autocapitalize="characters" data-input="window.agsUpdateDeleteConfirmation && window.agsUpdateDeleteConfirmation()" disabled />
+        <input id="delete-account-confirmation" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="delete-account-club-notices delete-account-message" data-input="window.agsUpdateDeleteConfirmation && window.agsUpdateDeleteConfirmation()" disabled />
       </label>
       <p id="delete-account-message" class="auth-message" aria-live="polite"></p>
       <div class="modal-buttons">
         <button type="button" class="btn btn-danger" id="delete-account-submit" data-click="window.agsConfirmDeleteAccount && window.agsConfirmDeleteAccount()" disabled>Delete My Account</button>
-        <button type="button" class="btn btn-secondary" data-click="window.agsCloseDeleteAccount && window.agsCloseDeleteAccount()">Cancel</button>
+        <button type="button" class="btn btn-secondary" data-modal-dismiss data-click="window.agsCloseDeleteAccount && window.agsCloseDeleteAccount()">Cancel</button>
       </div>
     </div>
   </div>
 
   <!-- ── Achievements Modal ──────────────────────────────────────────────────── -->
-  <div id="achievements-modal" class="modal">
+  <div id="achievements-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="achievements-title">
     <div class="modal-content achievements-modal-content">
-      <h2>🏆 Achievements</h2>
+      <h2 id="achievements-title">🏆 Achievements</h2>
       <div id="achievements-grid" class="achievements-grid"></div>
       <div class="modal-buttons">
-        <button class="btn btn-secondary" data-click="window.agsCloseAchievements && window.agsCloseAchievements()">Close</button>
+        <button class="btn btn-secondary" data-modal-dismiss data-click="window.agsCloseAchievements && window.agsCloseAchievements()">Close</button>
       </div>
     </div>
   </div>
 
   <!-- ── Login Queue Overlay ─────────────────────────────────────────────────── -->
-  <div id="login-queue-overlay" class="login-queue-overlay" role="dialog" aria-modal="true" aria-live="polite" style="display:none">
+  <div id="login-queue-overlay" class="login-queue-overlay" role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="login-queue-title" style="display:none">
     <div class="login-queue-card">
       <div class="login-queue-spinner" aria-hidden="true"></div>
-      <h2 class="login-queue-title">You're in line</h2>
+      <h2 id="login-queue-title" class="login-queue-title">You're in line</h2>
       <p class="login-queue-sub">Our servers are busy right now. We'll sign you in automatically the moment it's your turn — no need to retry.</p>
       <div class="login-queue-stats">
         <div class="lq-stat">
@@ -1399,42 +1454,42 @@
           <span class="lq-stat-label">Est. wait</span>
         </div>
       </div>
-      <button class="btn btn-secondary" id="login-queue-cancel" data-click="window.agsCancelLoginQueue && window.agsCancelLoginQueue()">Leave queue</button>
+      <button type="button" class="btn btn-secondary" id="login-queue-cancel" data-modal-dismiss data-click="window.agsCancelLoginQueue && window.agsCancelLoginQueue()">Leave queue</button>
     </div>
   </div>
 
   <!-- ── Achievement Unlock Toasts ───────────────────────────────────────────── -->
-  <div id="achievement-toasts" class="achievement-toasts"></div>
+  <div id="achievement-toasts" class="achievement-toasts" role="status" aria-live="polite" aria-relevant="additions"></div>
 
   <!-- ── Rematch Notification ───────────────────────────────────────────────── -->
-  <div id="rematch-notification" class="rematch-notification" style="display:none">
-    <p class="vcn-title">🔄 Rematch</p>
-    <p class="vcn-sub">Your opponent wants a rematch!</p>
+  <div id="rematch-notification" class="rematch-notification" role="alertdialog" aria-labelledby="rematch-notification-title" aria-describedby="rematch-notification-copy" style="display:none">
+    <p class="vcn-title" id="rematch-notification-title">🔄 Rematch</p>
+    <p class="vcn-sub" id="rematch-notification-copy">Your opponent wants a rematch!</p>
     <div class="vcn-buttons">
-      <button class="btn btn-primary" data-click="acceptRematch()">Accept</button>
-      <button class="btn btn-secondary" data-click="declineRematch()">Decline</button>
+      <button type="button" class="btn btn-primary" data-click="acceptRematch()">Accept</button>
+      <button type="button" class="btn btn-secondary" data-click="declineRematch()">Decline</button>
     </div>
   </div>
 
   <!-- ── Friend Match Invite Notification ───────────────────────────────────── -->
-  <div id="friend-match-invite-notification" class="video-call-notification" style="display:none">
-    <p class="vcn-title">Match Invite</p>
+  <div id="friend-match-invite-notification" class="video-call-notification" role="alertdialog" aria-labelledby="friend-match-invite-title" aria-describedby="friend-match-invite-name friend-match-invite-detail" style="display:none">
+    <p class="vcn-title" id="friend-match-invite-title">Match Invite</p>
     <p class="vcn-sub" id="friend-match-invite-name">A friend invited you to play</p>
     <p class="vcn-sub muted" id="friend-match-invite-detail">Accept to join the match now.</p>
     <div class="vcn-buttons">
-      <button class="btn btn-primary" data-click="acceptFriendMatchInvite()">Accept</button>
-      <button class="btn btn-secondary" data-click="declineFriendMatchInvite()">Decline</button>
+      <button type="button" class="btn btn-primary" data-click="acceptFriendMatchInvite()">Accept</button>
+      <button type="button" class="btn btn-secondary" data-click="declineFriendMatchInvite()">Decline</button>
     </div>
   </div>
 
   <!-- ── Family Online Nudge ─────────────────────────────────────────────────── -->
-  <div id="family-online-notification" class="video-call-notification" style="display:none">
-    <p class="vcn-title">👨‍👩‍👧 Family Time</p>
+  <div id="family-online-notification" class="video-call-notification" role="alertdialog" aria-labelledby="family-online-title" aria-describedby="family-online-name family-online-copy" style="display:none">
+    <p class="vcn-title" id="family-online-title">👨‍👩‍👧 Family Time</p>
     <p class="vcn-sub" id="family-online-name">A family member is online</p>
-    <p class="vcn-sub muted">Up for a game together?</p>
+    <p class="vcn-sub muted" id="family-online-copy">Up for a game together?</p>
     <div class="vcn-buttons">
-      <button class="btn btn-primary" data-click="window.agsPlayFamilyNudge && window.agsPlayFamilyNudge()">Play Now</button>
-      <button class="btn btn-secondary" data-click="window.agsDismissFamilyNudge && window.agsDismissFamilyNudge()">Not Now</button>
+      <button type="button" class="btn btn-primary" data-click="window.agsPlayFamilyNudge && window.agsPlayFamilyNudge()">Play Now</button>
+      <button type="button" class="btn btn-secondary" data-click="window.agsDismissFamilyNudge && window.agsDismissFamilyNudge()">Not Now</button>
     </div>
   </div>
 
@@ -1474,12 +1529,12 @@
   </div>
 
   <!-- ── Incoming Call Notification ─────────────────────────────────────────── -->
-  <div id="video-call-notification" class="video-call-notification">
-    <p class="vcn-title">📹 Video Chat</p>
-    <p class="vcn-sub">Your opponent wants to video chat</p>
+  <div id="video-call-notification" class="video-call-notification" role="alertdialog" aria-labelledby="video-call-notification-title" aria-describedby="video-call-notification-copy">
+    <p class="vcn-title" id="video-call-notification-title">📹 Video Chat</p>
+    <p class="vcn-sub" id="video-call-notification-copy">Your opponent wants to video chat</p>
     <div class="vcn-buttons">
-      <button class="btn btn-primary" data-click="acceptVideoCall()">Accept</button>
-      <button class="btn btn-secondary" data-click="declineVideoCall()">Decline</button>
+      <button type="button" class="btn btn-primary" data-click="acceptVideoCall()">Accept</button>
+      <button type="button" class="btn btn-secondary" data-click="declineVideoCall()">Decline</button>
     </div>
   </div>
 
@@ -1529,7 +1584,7 @@
       <p id="privacy-choice-status" class="auth-message" aria-live="polite"></p>
       <div class="modal-buttons">
         <button type="button" class="btn btn-primary" data-click="window.agsSavePrivacyChoices && window.agsSavePrivacyChoices()">Save Choice</button>
-        <button type="button" class="btn btn-secondary" data-click="window.agsClosePrivacyChoices && window.agsClosePrivacyChoices()">Cancel</button>
+        <button type="button" class="btn btn-secondary" data-modal-dismiss data-click="window.agsClosePrivacyChoices && window.agsClosePrivacyChoices()">Cancel</button>
       </div>
     </div>
   </div>

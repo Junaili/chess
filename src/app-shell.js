@@ -18,6 +18,8 @@ const SHELL_PIECES = {
 
 let homeIdleTimer = null
 let homeIdleShown = false
+let activeScreenName = ''
+let screenFocusFrame = 0
 
 export function cancelShellHomeIdlePrompt() {
   clearTimeout(homeIdleTimer)
@@ -50,9 +52,40 @@ export function hydrateShellPieceIcons(root = document) {
   })
 }
 
+export function syncScreenState(name, { focus = true } = {}) {
+  const target = document.getElementById(`screen-${name}`)
+  if (!target) return null
+
+  const changed = activeScreenName !== name
+  document.querySelectorAll('.screen').forEach(screen => {
+    const selected = screen === target
+    screen.classList.toggle('active', selected)
+    screen.setAttribute('aria-hidden', String(!selected))
+    screen.toggleAttribute('inert', !selected)
+  })
+  activeScreenName = name
+  document.body.dataset.screen = name
+
+  if (changed && focus) {
+    const focusBeforeTransition = document.activeElement
+    cancelAnimationFrame(screenFocusFrame)
+    screenFocusFrame = requestAnimationFrame(() => {
+      if (document.activeElement !== focusBeforeTransition && target.contains(document.activeElement)) return
+      const heading = target.querySelector('h1, h2')
+      const focusTarget = heading || document.getElementById('app-main')
+      if (!focusTarget) return
+      if (focusTarget === heading && !heading.hasAttribute('tabindex')) {
+        heading.tabIndex = -1
+        heading.dataset.screenFocusTarget = 'true'
+      }
+      focusTarget.focus({ preventScroll: true })
+    })
+  }
+  return target
+}
+
 export function showScreen(name) {
-  document.querySelectorAll('.screen').forEach(screen => screen.classList.remove('active'))
-  document.getElementById(`screen-${name}`)?.classList.add('active')
+  syncScreenState(name)
 
   clearTimeout(homeIdleTimer)
   homeIdleTimer = null
@@ -78,6 +111,151 @@ export function showScreen(name) {
   }, 30_000)
 }
 
+function initializeTabKeyboardNavigation() {
+  document.addEventListener('keydown', event => {
+    const current = event.target.closest?.('[role="tab"]')
+    if (!current) return
+    const tablist = current.closest('[role="tablist"]')
+    if (!tablist) return
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+
+    const tabs = [...tablist.querySelectorAll('[role="tab"]')]
+      .filter(tab => !tab.hidden && !tab.disabled && tab.getAttribute('aria-hidden') !== 'true')
+    if (tabs.length < 2) return
+
+    const currentIndex = Math.max(0, tabs.indexOf(current))
+    let nextIndex = currentIndex
+    if (event.key === 'Home') nextIndex = 0
+    if (event.key === 'End') nextIndex = tabs.length - 1
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length
+    if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length
+    event.preventDefault()
+    tabs[nextIndex].focus()
+    tabs[nextIndex].click()
+  })
+}
+
+function initializeLiveRegions() {
+  document.querySelectorAll('.auth-message, .online-chat-notice').forEach(message => {
+    if (!message.hasAttribute('aria-live')) message.setAttribute('aria-live', 'polite')
+    if (!message.hasAttribute('aria-atomic')) message.setAttribute('aria-atomic', 'true')
+  })
+}
+
+function initializeModalAccessibility() {
+  const modals = [...document.querySelectorAll('.modal, .login-queue-overlay')]
+  const triggers = new WeakMap()
+  let activeModal = null
+  let lastInteractionTarget = null
+
+  const isVisible = element => window.getComputedStyle(element).display !== 'none'
+  const focusableElements = modal => [...modal.querySelectorAll(
+    'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+  )].filter(element => !element.hidden && element.getClientRects().length)
+
+  const setBackgroundInert = inert => {
+    const main = document.getElementById('app-main')
+    const privacyButton = document.getElementById('privacy-center-button')
+    if (main) main.inert = inert
+    if (privacyButton) privacyButton.inert = inert
+  }
+
+  // iOS/WebKit does not consistently focus a button after a pointer tap. Keep
+  // the actual interaction target so dialogs can still return focus correctly.
+  document.addEventListener('click', event => {
+    const target = event.target.closest?.('button, a[href], [role="button"], [data-click]')
+    if (target && !target.closest('.modal, .login-queue-overlay')) lastInteractionTarget = target
+  }, true)
+
+  const activate = modal => {
+    if (activeModal === modal) return
+    activeModal = modal
+    const focusedElement = document.activeElement
+    const trigger = focusedElement &&
+      focusedElement !== document.body &&
+      !modal.contains(focusedElement)
+      ? focusedElement
+      : lastInteractionTarget
+    if (trigger?.isConnected) triggers.set(modal, trigger)
+    modal.setAttribute('aria-hidden', 'false')
+    document.body.classList.add('modal-open')
+    setBackgroundInert(true)
+    requestAnimationFrame(() => {
+      if (activeModal !== modal || !isVisible(modal)) return
+      const heading = modal.querySelector('h2, h3')
+      const focusTarget = modal.querySelector('[autofocus]') || heading || focusableElements(modal)[0]
+      if (!focusTarget) return
+      if (focusTarget === heading && !heading.hasAttribute('tabindex')) heading.tabIndex = -1
+      focusTarget.focus({ preventScroll: true })
+    })
+  }
+
+  const deactivate = modal => {
+    modal.setAttribute('aria-hidden', 'true')
+    if (activeModal !== modal) return
+    const nextModal = [...modals].reverse().find(candidate => candidate !== modal && isVisible(candidate)) || null
+    activeModal = null
+    if (nextModal) {
+      activate(nextModal)
+      return
+    }
+    document.body.classList.remove('modal-open')
+    setBackgroundInert(false)
+    const trigger = triggers.get(modal)
+    if (!trigger?.isConnected) return
+
+    const restoreFocus = () => trigger.focus({ preventScroll: true })
+    restoreFocus()
+    requestAnimationFrame(() => {
+      if (document.activeElement !== trigger) restoreFocus()
+    })
+  }
+
+  const sync = modal => {
+    if (isVisible(modal)) activate(modal)
+    else deactivate(modal)
+  }
+
+  modals.forEach(modal => {
+    modal.setAttribute('aria-hidden', String(!isVisible(modal)))
+    new MutationObserver(() => sync(modal)).observe(modal, {
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden'],
+    })
+  })
+
+  document.addEventListener('keydown', event => {
+    if (!activeModal || !isVisible(activeModal)) return
+    if (document.body.classList.contains('legal-reader-open') ||
+        document.body.classList.contains('offline-friends-open')) return
+
+    if (event.key === 'Escape') {
+      const dismiss = activeModal.querySelector('[data-modal-dismiss]')
+      if (!dismiss) return
+      event.preventDefault()
+      dismiss.click()
+      return
+    }
+    if (event.key !== 'Tab') return
+
+    const focusable = focusableElements(activeModal)
+    if (!focusable.length) {
+      event.preventDefault()
+      activeModal.querySelector('h2, h3')?.focus()
+      return
+    }
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && (document.activeElement === first || !activeModal.contains(document.activeElement))) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && (document.activeElement === last || !activeModal.contains(document.activeElement))) {
+      event.preventDefault()
+      first.focus()
+    }
+  })
+}
+
 export function setPlayerFromAGS(name) {
   localStorage.setItem('chess_player_name', name)
   const input = document.getElementById('player-name-input')
@@ -94,8 +272,14 @@ Object.assign(window, {
   setPlayerFromAGS,
   renderChessPieceSVG: renderShellPiece,
   setChessPieceGraphic: setShellPieceGraphic,
+  agsSyncScreenState: syncScreenState,
   escapeHtml,
   cancelShellHomeIdlePrompt,
 })
 
 hydrateShellPieceIcons()
+initializeTabKeyboardNavigation()
+initializeLiveRegions()
+initializeModalAccessibility()
+const initialScreen = document.querySelector('.screen.active')?.id.replace(/^screen-/, '') || 'home'
+syncScreenState(initialScreen, { focus: false })

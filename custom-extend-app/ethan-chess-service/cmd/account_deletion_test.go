@@ -48,7 +48,7 @@ func (f *deletionRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 		if status == 0 {
 			status = http.StatusOK
 		}
-	case req.URL.Host == "ags.test" && strings.Contains(req.URL.Path, "/gdpr/s2s/"):
+	case req.URL.Host == "ags.test" && strings.Contains(req.URL.Path, "/gdpr/admin/"):
 		status = http.StatusNoContent
 	default:
 		status = http.StatusNotFound
@@ -134,7 +134,7 @@ func TestDeletionStopsBeforeGDPRWhenAppleRevocationFails(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	for _, call := range transport.calls {
-		if strings.Contains(call, "/gdpr/s2s/") {
+		if strings.Contains(call, "/gdpr/admin/") {
 			t.Fatalf("GDPR deletion must not run after Apple revocation failure: %v", transport.calls)
 		}
 	}
@@ -159,13 +159,35 @@ func TestDeletionRevokesAppleBeforeSubmittingGDPR(t *testing.T) {
 		if strings.Contains(call, "apple.test/auth/revoke") {
 			revokeIndex = index
 		}
-		if strings.Contains(call, "/gdpr/s2s/") {
+		if strings.Contains(call, "/gdpr/admin/") {
 			gdprIndex = index
 		}
 	}
 	if revokeIndex < 0 || gdprIndex < 0 || revokeIndex >= gdprIndex {
 		t.Fatalf("expected Apple revoke before GDPR deletion, calls = %v", transport.calls)
 	}
+}
+
+func TestDeletionUsesAdminGDPRForGameUser(t *testing.T) {
+	transport := &deletionRoundTripper{}
+	handler := testDeletionHandler(t, transport)
+	recorder := httptest.NewRecorder()
+
+	handler.deleteAccount(recorder, authenticatedDeletionRequest(
+		http.MethodPost,
+		"/account/deletion",
+		`{"confirmation":"DELETE"}`,
+	))
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	for _, call := range transport.calls {
+		if strings.Contains(call, "/gdpr/admin/namespaces/chess/users/player-123/deletions") {
+			return
+		}
+	}
+	t.Fatalf("expected admin GDPR deletion request, calls = %v", transport.calls)
 }
 
 func TestAppleClientSecretUsesES256Shape(t *testing.T) {

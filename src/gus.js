@@ -129,9 +129,13 @@ export function showGusTab(name = 'overview') {
     const selected = tab.dataset.gusTab === active
     tab.classList.toggle('active', selected)
     tab.setAttribute('aria-selected', selected ? 'true' : 'false')
+    tab.tabIndex = selected ? 0 : -1
   })
   document.querySelectorAll('[data-gus-panel]').forEach(panel => {
-    panel.classList.toggle('active', panel.dataset.gusPanel === active)
+    const selected = panel.dataset.gusPanel === active
+    panel.classList.toggle('active', selected)
+    panel.setAttribute('aria-hidden', selected ? 'false' : 'true')
+    panel.tabIndex = selected ? 0 : -1
   })
 }
 

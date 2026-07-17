@@ -40,6 +40,30 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#screen-home')).toBeVisible();
   });
 
+  test('screen transitions expose one active view and clear setup progress', async ({ page }) => {
+    await gotoApp(page);
+    await openGuestColorSelect(page);
+
+    await expect(page.locator('#screen-color-select')).toHaveAttribute('aria-hidden', 'false');
+    await expect(page.locator('#screen-home')).toHaveAttribute('aria-hidden', 'true');
+    await expect(page.locator('#screen-home')).toHaveAttribute('inert', '');
+    await expect(page.locator('#screen-color-select .setup-progress')).toHaveAttribute(
+      'aria-label',
+      'Game setup, step 1 of 3',
+    );
+
+    await page.locator('#screen-color-select .color-btn.white-btn').click();
+    await expect(page.locator('#screen-piece-color .setup-progress')).toHaveAttribute(
+      'aria-label',
+      'Game setup, step 2 of 3',
+    );
+    await page.locator('#piece-color-options > *').first().click();
+    await expect(page.locator('#screen-difficulty .setup-progress')).toHaveAttribute(
+      'aria-label',
+      'Game setup, step 3 of 3',
+    );
+  });
+
   test('login screen opens and returns home', async ({ page }) => {
     await gotoApp(page);
     await page.locator('#ags-auth-actions .auth-login-link').click();
@@ -283,6 +307,62 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.locator('#chess-board .piece')).toHaveCount(32);
   });
 
+  test('board supports roving keyboard navigation with spoken square labels', async ({ page }) => {
+    await gotoApp(page);
+    await page.evaluate(() => {
+      window.showColorSelect('computer');
+      window.selectColor('white');
+      window.selectPieceColor('#fffdf5');
+      window.startVsComputer('easy');
+    });
+
+    const squares = page.locator('#chess-board [role="gridcell"]');
+    await expect(squares).toHaveCount(64);
+    await expect(squares.first()).toHaveAttribute('tabindex', '0');
+    await expect(squares.nth(1)).toHaveAttribute('tabindex', '-1');
+    await expect(squares.first()).toHaveAttribute('aria-label', /a8, black rook/i);
+
+    await squares.first().focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(squares.nth(1)).toBeFocused();
+    await expect(squares.first()).toHaveAttribute('tabindex', '-1');
+    await expect(squares.nth(1)).toHaveAttribute('tabindex', '0');
+  });
+
+  test('tab arrows switch linked profile panels', async ({ page }) => {
+    await gotoApp(page);
+    await page.evaluate(() => {
+      window.showScreen('profile');
+      window.agsShowProfileTab('overview');
+    });
+
+    const overview = page.locator('#profile-tab-overview');
+    const stats = page.locator('#profile-tab-stats');
+    await overview.focus();
+    await page.keyboard.press('ArrowRight');
+
+    await expect(stats).toBeFocused();
+    await expect(stats).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('#profile-panel-stats')).toHaveAttribute('aria-hidden', 'false');
+    await expect(page.locator('#profile-panel-overview')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  test('dismissible modals trap focus and restore it to their trigger', async ({ page }) => {
+    await gotoApp(page);
+    const trigger = page.locator('#privacy-center-button');
+    await trigger.click();
+
+    const modal = page.locator('#privacy-center-modal');
+    await expect(modal).toBeVisible();
+    await expect(page.locator('#app-main')).toHaveAttribute('inert', '');
+    await expect(page.locator('#privacy-center-title')).toBeFocused();
+
+    await page.keyboard.press('Escape');
+    await expect(modal).toBeHidden();
+    await expect(trigger).toBeFocused();
+    await expect(page.locator('#app-main')).not.toHaveAttribute('inert', '');
+  });
+
   test('match layout fits the viewport without clipping or page scrolling', async ({ page }) => {
     await gotoApp(page);
     await page.evaluate(() => {
@@ -496,6 +576,122 @@ test.describe('UI smoke (signed out)', () => {
       expect(geometry.panel.top).toBeGreaterThanOrEqual(geometry.container.top);
       expect(geometry.panel.bottom).toBeLessThanOrEqual(geometry.container.bottom);
     }
+  });
+
+  test('profile uses the available viewport and preserves metric hierarchy', async ({ page }) => {
+    await gotoApp(page);
+    await page.evaluate(() => {
+      window.showScreen('profile');
+      document.querySelector('.player-profile-container').classList.add('is-own-profile');
+      document.getElementById('profile-display-name').textContent = 'Layout Player';
+      document.getElementById('profile-rating').textContent = '1486';
+      document.getElementById('profile-rank').textContent = '#12';
+      document.getElementById('profile-wins').textContent = '42';
+      document.getElementById('profile-losses').textContent = '18';
+      document.getElementById('profile-kudos').textContent = '87';
+    });
+
+    const geometry = await page.evaluate(() => {
+      const screen = document.getElementById('screen-profile');
+      const container = document.querySelector('.player-profile-container').getBoundingClientRect();
+      const grid = document.getElementById('profile-stats-grid');
+      const rating = document.querySelector('.profile-stat--rating').getBoundingClientRect();
+      const wins = document.querySelector('.profile-stat--record').getBoundingClientRect();
+      return {
+        viewport: { width: innerWidth, height: innerHeight },
+        screen: { scrollHeight: screen.scrollHeight, clientHeight: screen.clientHeight },
+        container: {
+          top: container.top,
+          right: container.right,
+          bottom: container.bottom,
+          left: container.left,
+          width: container.width,
+          height: container.height,
+        },
+        columns: getComputedStyle(grid).gridTemplateColumns.split(/\s+/).length,
+        ratingWidth: rating.width,
+        winsWidth: wins.width,
+      };
+    });
+
+    expect(geometry.container.width).toBeGreaterThan(900);
+    expect(geometry.container.height).toBeGreaterThan(geometry.viewport.height * 0.82);
+    expect(geometry.columns).toBe(4);
+    expect(geometry.ratingWidth).toBeGreaterThan(geometry.winsWidth * 1.8);
+    expect(geometry.screen.scrollHeight).toBeLessThanOrEqual(geometry.screen.clientHeight);
+    expect(geometry.container.top).toBeGreaterThanOrEqual(0);
+    expect(geometry.container.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.container.right).toBeLessThanOrEqual(geometry.viewport.width);
+    expect(geometry.container.bottom).toBeLessThanOrEqual(geometry.viewport.height);
+  });
+
+  test('phone profile uses two-column supporting metrics without horizontal clipping', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'Chromium covers the explicit phone viewport; WebKit runs the iPad layout.');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await gotoApp(page);
+    await page.evaluate(() => {
+      window.showScreen('profile');
+      document.querySelector('.player-profile-container').classList.add('is-own-profile');
+      document.getElementById('profile-display-name').textContent = 'Layout Player';
+      document.getElementById('profile-rating').textContent = '1486';
+      document.getElementById('profile-rank').textContent = '#12';
+      document.getElementById('profile-wins').textContent = '42';
+      document.getElementById('profile-losses').textContent = '18';
+      document.getElementById('profile-kudos').textContent = '87';
+    });
+
+    const geometry = await page.evaluate(() => {
+      const screen = document.getElementById('screen-profile');
+      const container = document.querySelector('.player-profile-container').getBoundingClientRect();
+      const panel = document.getElementById('profile-panel-overview').getBoundingClientRect();
+      const grid = document.getElementById('profile-stats-grid');
+      const rating = document.querySelector('.profile-stat--rating').getBoundingClientRect();
+      const wins = document.querySelector('.profile-stat--record').getBoundingClientRect();
+      const cardBounds = [...grid.children].map(card => {
+        const rect = card.getBoundingClientRect();
+        return { left: rect.left, right: rect.right };
+      });
+      return {
+        viewport: { width: innerWidth, height: innerHeight },
+        screen: { scrollHeight: screen.scrollHeight, clientHeight: screen.clientHeight },
+        container: { top: container.top, right: container.right, bottom: container.bottom, left: container.left },
+        panel: { left: panel.left, right: panel.right },
+        columns: getComputedStyle(grid).gridTemplateColumns.split(/\s+/).length,
+        ratingWidth: rating.width,
+        winsWidth: wins.width,
+        cardBounds,
+      };
+    });
+
+    expect(geometry.columns).toBe(2);
+    expect(geometry.ratingWidth).toBeGreaterThan(geometry.winsWidth * 1.8);
+    expect(geometry.screen.scrollHeight).toBeLessThanOrEqual(geometry.screen.clientHeight);
+    expect(geometry.container.top).toBeGreaterThanOrEqual(0);
+    expect(geometry.container.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.container.right).toBeLessThanOrEqual(geometry.viewport.width);
+    expect(geometry.container.bottom).toBeLessThanOrEqual(geometry.viewport.height);
+    for (const card of geometry.cardBounds) {
+      expect(card.left).toBeGreaterThanOrEqual(geometry.panel.left);
+      expect(card.right).toBeLessThanOrEqual(geometry.panel.right);
+    }
+  });
+
+  test('a player with no completed games gets a useful Chess Stats empty state', async ({ page }) => {
+    await gotoApp(page);
+    await page.waitForFunction(() => (
+      typeof window.agsOpenProfile === 'function'
+      && typeof window.agsSetCurrentUserIdForTesting === 'function'
+    ));
+    await page.evaluate(async () => {
+      window.agsSetCurrentUserIdForTesting('new-player');
+      await window.agsOpenProfile('new-player', 'New Player');
+      window.agsShowProfileTab('stats');
+    });
+
+    await expect(page.locator('#profile-stats-empty')).toBeVisible();
+    await expect(page.locator('#profile-stats-empty')).toContainText('starts with game one');
+    await expect(page.locator('#profile-stats-empty').getByRole('button', { name: 'Play a Game' })).toBeVisible();
+    await expect(page.locator('#profile-chess-stats')).toBeHidden();
   });
 
   test('friends show online count, offline overlay, and profile links', async ({ page }) => {

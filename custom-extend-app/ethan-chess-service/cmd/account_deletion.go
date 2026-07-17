@@ -397,7 +397,10 @@ func (h *accountDeletionHandler) submitAGSDeletion(userID string) error {
 		return err
 	}
 	endpoint := fmt.Sprintf(
-		"%s/gdpr/s2s/namespaces/%s/users/%s/deletions",
+		// The S2S deletion endpoint only accepts publisher user IDs. Players
+		// authenticated in this game have game-namespace IDs, so use the admin
+		// endpoint that accepts those IDs instead.
+		"%s/gdpr/admin/namespaces/%s/users/%s/deletions",
 		h.agsBaseURL,
 		url.PathEscape(h.namespace),
 		url.PathEscape(userID),

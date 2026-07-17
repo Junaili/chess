@@ -324,9 +324,15 @@ function updateVideoChatAvailability() {
 // ─── Screen management ────────────────────────────────────────────────────────
 
 function showScreen(name) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  const el = document.getElementById('screen-' + name);
-  if (el) el.classList.add('active');
+  if (typeof window.agsSyncScreenState === 'function') {
+    window.agsSyncScreenState(name);
+  } else {
+    document.querySelectorAll('.screen').forEach(s => {
+      const selected = s.id === 'screen-' + name;
+      s.classList.toggle('active', selected);
+      s.setAttribute('aria-hidden', String(!selected));
+    });
+  }
   clearTimeout(homeIdleTimer);
   homeIdleTimer = null;
   if (name === 'home') {
@@ -636,6 +642,8 @@ function playAgainFromGameOver() {
 
 function initBoard() {
   const boardEl = document.getElementById('chess-board');
+  const previousFocus = boardEl.querySelector('.square[tabindex="0"]');
+  const previousFocusKey = previousFocus ? `${previousFocus.dataset.r}:${previousFocus.dataset.c}` : '';
   boardEl.innerHTML = '';
   delete boardEl.dataset.arrowKey;
   const flipped = boardFlipped;
@@ -646,17 +654,50 @@ function initBoard() {
       const r = flipped ? 7 - ri : ri;
       const c = flipped ? 7 - ci : ci;
 
-      const sq = document.createElement('div');
+      const sq = document.createElement('button');
+      sq.type = 'button';
       sq.className = 'square ' + ((r + c) % 2 === 0 ? 'light' : 'dark');
       sq.dataset.r = r;
       sq.dataset.c = c;
+      sq.setAttribute('role', 'gridcell');
+      sq.setAttribute('aria-rowindex', String(ri + 1));
+      sq.setAttribute('aria-colindex', String(ci + 1));
+      sq.tabIndex = previousFocusKey
+        ? (previousFocusKey === `${r}:${c}` ? 0 : -1)
+        : (ri === 0 && ci === 0 ? 0 : -1);
       addCoordinateLabels(sq, r, c, ri, ci);
-      sq.addEventListener('click', () => onSquareClick(r, c));
+      sq.addEventListener('click', () => {
+        boardEl.querySelector('.square[tabindex="0"]')?.setAttribute('tabindex', '-1');
+        sq.tabIndex = 0;
+        onSquareClick(r, c);
+      });
+      sq.addEventListener('keydown', event => moveBoardFocus(event, sq));
       sq.addEventListener('dragover', e => e.preventDefault());
       sq.addEventListener('drop', e => onDrop(e, r, c));
       boardEl.appendChild(sq);
     }
   }
+}
+
+function moveBoardFocus(event, currentSquare) {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+  const boardEl = currentSquare.closest('.chess-board');
+  const squares = [...boardEl.querySelectorAll('.square')];
+  const index = squares.indexOf(currentSquare);
+  if (index < 0) return;
+
+  let nextIndex = index;
+  if (event.key === 'ArrowLeft') nextIndex = Math.max(0, index - 1);
+  if (event.key === 'ArrowRight') nextIndex = Math.min(63, index + 1);
+  if (event.key === 'ArrowUp') nextIndex = Math.max(0, index - 8);
+  if (event.key === 'ArrowDown') nextIndex = Math.min(63, index + 8);
+  if (event.key === 'Home') nextIndex = Math.floor(index / 8) * 8;
+  if (event.key === 'End') nextIndex = Math.floor(index / 8) * 8 + 7;
+  event.preventDefault();
+  if (nextIndex === index) return;
+  currentSquare.tabIndex = -1;
+  squares[nextIndex].tabIndex = 0;
+  squares[nextIndex].focus();
 }
 
 function renderBoard() {
@@ -720,6 +761,23 @@ function renderBoard() {
       pieceEl.remove();
       sq._pieceElement = null;
     }
+
+    const coordinate = game.toAlgebraic(r, c);
+    const squareContents = piece
+      ? `${piece.color} ${PIECE_LABELS[piece.type]}`
+      : 'empty';
+    const state = [
+      isSelected ? 'selected' : '',
+      isValid ? 'legal move' : '',
+      isLastFrom ? 'last move from here' : '',
+      isLastTo ? 'last move to here' : '',
+      isInCheck ? 'in check' : '',
+    ].filter(Boolean);
+    sq.setAttribute('aria-label', `${coordinate}, ${squareContents}${state.length ? `, ${state.join(', ')}` : ''}`);
+    sq.setAttribute('aria-selected', String(isSelected));
+    const boardInteractive = isPlayerTurn() && !aiThinking && !pendingPromotion && !connectionLost &&
+      !isGameOverStatus(game.status);
+    sq.setAttribute('aria-disabled', String(!boardInteractive));
   }
 
   renderLastMoveArrow(boardEl, flipped);
@@ -1246,9 +1304,13 @@ function showMatchTab(name) {
     const selected = tab.dataset.matchTab === name;
     tab.classList.toggle('active', selected);
     tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
   });
   document.querySelectorAll('[data-match-panel]').forEach(panel => {
-    panel.classList.toggle('active', panel.dataset.matchPanel === name);
+    const selected = panel.dataset.matchPanel === name;
+    panel.classList.toggle('active', selected);
+    panel.setAttribute('aria-hidden', String(!selected));
+    panel.tabIndex = selected ? 0 : -1;
   });
 }
 
@@ -4600,17 +4662,23 @@ function renderContacts(inviteMode = false) {
 
   list.innerHTML = '';
   if (contacts.length === 0) {
-    list.innerHTML = '<p class="no-contacts">No contacts yet. Add one below!</p>';
+    list.innerHTML = `<div class="empty-state compact">
+      <strong>No contacts saved yet</strong>
+      <span>Add an email or phone number, then send invitations without retyping it.</span>
+    </div>`;
     return;
   }
   for (const contact of contacts) {
     const item = document.createElement('div');
     item.className = 'contact-item';
+    item.setAttribute('role', 'listitem');
     const initials = contact.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2);
 
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = 'btn btn-invite';
     btn.textContent = inviteMode ? 'Send' : 'Invite';
+    btn.setAttribute('aria-label', `${btn.textContent} ${contact.name}`);
     btn.addEventListener('click', () => {
       if (inviteMode && currentInviteLink) {
         sendInviteToContact(contact.name, contact.address, currentInviteLink);
@@ -4618,12 +4686,14 @@ function renderContacts(inviteMode = false) {
     });
 
     const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
     removeBtn.className = 'btn btn-remove';
     removeBtn.textContent = '✕';
+    removeBtn.setAttribute('aria-label', `Remove ${contact.name}`);
     removeBtn.addEventListener('click', () => removeContact(contact.address));
 
     item.innerHTML = `
-      <div class="contact-avatar">${escapeHtml(initials)}</div>
+      <div class="contact-avatar" aria-hidden="true">${escapeHtml(initials)}</div>
       <div class="contact-info">
         <div class="contact-name">${escapeHtml(contact.name)}</div>
         <div class="contact-addr">${escapeHtml(contact.address)}</div>
