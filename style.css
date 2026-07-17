@@ -7337,18 +7337,41 @@ body.privacy-choice-pending .screen.active:not(#screen-game) {
   border-color: rgba(80, 200, 120, 0.32);
 }
 
+/* Stripe's embedded Checkout content is tall (order summary + expanded
+   payment fields) and doesn't stretch past its own natural form width, so
+   without a cap here the card floats in a much wider parent, leaving dead
+   space on both sides. Capping width to roughly that natural width AND
+   making this container a flex child that scrolls internally (rather than
+   letting the whole .profile-container scroll, which would carry the
+   Membership header and Change-plan button off-screen too) keeps the
+   header pinned and only the payment form itself scrolling. */
 .club-checkout-container {
   margin-top: 8px;
   padding: 18px 16px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.1);
+  max-width: 480px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .club-checkout-head {
   display: flex;
   justify-content: flex-start;
   margin-bottom: 12px;
+  flex: 0 0 auto;
+}
+
+#club-checkout-mount {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .club-checkout-loading {
