@@ -1,6 +1,6 @@
 # Ethan's Chess
 
-A browser chess game — vanilla HTML, CSS, and JavaScript, integrated with [AccelByte Gaming Services (AGS)](https://docs.accelbyte.io/) for auth, social, and live-ops — that has grown into a small family-friendly online chess platform: friends and matchmaking, a parent-managed family/COPPA mode, achievements, a self-reflection coaching journal, player safety tooling, and an iOS app via Capacitor. A companion Go service (`custom-extend-app/`) deployed on AGS Extend backs the server-side pieces (email, parent-authorized child accounts, Sign in with Apple account deletion, GDPR deletion, and a self-learning matchmaking bot).
+A browser chess game — vanilla HTML, CSS, and JavaScript, integrated with [AccelByte Gaming Services (AGS)](https://docs.accelbyte.io/) for auth, social, and live-ops — that has grown into a small family-friendly online chess platform: friends and matchmaking, a parent-managed family/COPPA mode, achievements, a self-reflection coaching journal with a spaced-practice loop, a paid membership club with cosmetics and gifting, player safety tooling, and an iOS app via Capacitor. A companion Go service (`custom-extend-app/`) deployed on AGS Extend backs the server-side pieces (email, parent-authorized child accounts, Sign in with Apple account deletion, GDPR deletion, Stripe billing for the club, and a self-learning matchmaking bot).
 
 This project is intended to serve as a practical reference for integrating a browser-based game with AGS using the TypeScript Web SDK.
 
@@ -13,6 +13,7 @@ This project is intended to serve as a practical reference for integrating a bro
 - **Guest Play** — try a game against the computer without creating an account
 - **Move Hints** — on-demand hint, or post-move AI feedback
 - **Live Spectating** — watch a friend's match in real time; replay moves after it ends
+- **Quick Review** — a lesson-driven post-match walkthrough that surfaces a player's key mistakes, punished moments, and swings, with a takeaway and an optional retry at each moment
 
 **Account & Social**
 - **Sign in with Google, Apple, or email/password** — plus account creation, password reset, and display-name moderation
@@ -22,7 +23,10 @@ This project is intended to serve as a practical reference for integrating a bro
 - **Family accounts** — COPPA-compliant parent-managed child accounts: age gate, no stored email for children, restricted friending, analytics forced off
 - **Global Leaderboard** — ranked by wins, with Elo-style rating tracked per player
 - **Achievements** — unlocked via AGS Achievements as players hit milestones
-- **My Chess Journal** — post-game self-reflection, an AI coach report on weak phases/openings, and a puzzle practice loop generated from the player's own games
+- **My Chess Journal** — post-game self-reflection, an AI coach report on weak phases/openings, and a puzzle practice loop generated from the player's own games; a companion Match History tab shows earned badges and progress, with practice/review reminders (in-app card + optional native iOS notifications) that gradually roll out per player
+- **Ethan's Chess Club** — an optional paid membership (Stripe Checkout on web, Apple In-App Purchase on iOS) that unlocks cosmetics and perks; entitlements are time-boxed on renewal since AGS has no native recurring-subscription primitive
+- **Ethan Coins & Cosmetics** — an AGS-native coin store for board/piece cosmetics, purchased and owned directly against AGS Platform (no custom backend in the purchase path)
+- **High Fives** — send a teammate-style kudos to an opponent after a match
 - **Player Safety** — report/block, content moderation on chat and display names, and an in-app privacy center with opt-in analytics consent
 
 ---
@@ -36,11 +40,14 @@ chess-ethan/
 ├── app.js                    # Chess UI, game flow, online multiplayer, video chat
 ├── chess-engine.js           # Chess logic (moves, rules, board state)
 ├── ai-engine.js               # Minimax AI with piece-square tables
+├── analysis-worker.js        # Web Worker running the AI/analysis engine off the main thread
 ├── vite.config.js            # Dev server (HTTPS + reverse proxy to AGS)
 ├── capacitor.config.json     # iOS app shell config
 ├── src/
 │   ├── main.js                # App bootstrap; wires every screen and AGS call together
+│   ├── app-shell.js           # Minimal launch shell (nav + two chess icons) rendered before auth
 │   ├── ags-client.js          # AGS SDK initialisation
+│   ├── chess-worker-client.js # Serializes game state to/from analysis-worker.js
 │   │
 │   │   # Auth & session
 │   ├── auth.js                 # Google/Apple/email login, registration, password reset
@@ -53,14 +60,39 @@ chess-ethan/
 │   ├── stats.js                 # Win/loss stats (Social Stats) + CloudSave match history
 │   ├── match-stats.mjs          # Elo rating math, per-match aggregation (pure functions)
 │   ├── match-resume.mjs         # Resuming an in-progress match after reload
+│   ├── matchmaking-recovery.mjs # Clock-skew-tolerant session/ticket recovery (pure)
 │   ├── leaderboard.js           # Global leaderboard (LeaderboardDataV3Api)
 │   ├── achievements.js          # AGS Achievements unlock + display
 │   ├── friends.js               # Friend requests, list, lookup (Lobby + IAM)
+│   ├── friend-feedback.mjs      # Copy/messaging for friend flows (pure)
 │   ├── presence.js              # Online presence (Lobby WebSocket)
 │   ├── chat.mjs                 # AGS Chat JSON-RPC WebSocket transport
 │   ├── spectator.js             # Live match publishing/watching via CloudSave
 │   ├── matchmaking.js           # Random matchmaking (MatchTicketsApi + GameSessionApi)
 │   ├── gus.js / gus-data.mjs    # "Play with Gus" cold-start bot profile + challenge flow
+│   ├── kudos.js / kudos-contract.mjs   # "High Five" sends between opponents after a match
+│   │
+│   │   # History, Journal, Review & practice reminders
+│   ├── journal.js                        # Journal UI flow: reflection, coach report, puzzles
+│   ├── journal-data.mjs                  # Grading/puzzle-generation logic (pure)
+│   ├── history-view.mjs                  # Pure view-model helpers for the Match History list/pagination
+│   ├── review.js                         # Lazy-loaded "Quick Review" session orchestration
+│   ├── review-data.mjs                   # Pure lesson-selection/copy for review mode
+│   ├── practice-data.mjs                 # Spaced-practice queue derivation (pure)
+│   ├── learning-contract.mjs             # Pure contract for the private "chess-learning-index" record
+│   ├── learning-store.js                 # CloudSave read/write for chess-learning-index
+│   ├── learning-events.mjs               # Pub/sub seam Journal/Review publish save events on
+│   ├── learning-flags.mjs                # Feature-flag + percentage-rollout gating
+│   ├── learning-notification-data.mjs    # Pure candidate derivation + copy catalog
+│   ├── learning-notification-policy.mjs  # Fatigue policy: caps, cooldowns, quiet hours, backoff
+│   ├── learning-notification-ledger.mjs  # Sent/seen/ignored notification bookkeeping (pure)
+│   ├── learning-notification-preferences.mjs  # Per-user notification settings storage
+│   ├── learning-notifications.js         # In-app home card + Account-tab settings + opt-in prompt
+│   ├── native-learning-notifications.mjs # Capacitor local-notifications adapter for native iOS reminders
+│   │
+│   │   # Club, cosmetics & monetization
+│   ├── club.js / club-contract.mjs           # Ethan's Chess Club: Stripe (web) + Apple IAP (native) status/purchase
+│   ├── coin-store.js / coin-store-contract.mjs   # Ethan Coins cosmetics store (direct-to-AGS-Platform purchases)
 │   │
 │   │   # Family (COPPA)
 │   ├── family.js                # Parent-managed child accounts, family membership
@@ -68,14 +100,14 @@ chess-ethan/
 │   ├── family-feedback.mjs      # Copy/messaging for family flows (pure)
 │   │
 │   │   # Safety & moderation
-│   ├── safety.js                 # Report/block a player (Lobby + Extend)
+│   ├── safety.js                 # Report (Reporting) + block (Lobby) a player, via Extend on iOS
 │   ├── safety-payloads.mjs       # Report payload shaping (pure)
 │   ├── content-moderation.mjs    # Chat/display-name filtering client-side pass
-│   ├── friend-feedback.mjs       # Copy/messaging for friend flows (pure)
 │   │
-│   │   # Journal & coaching
-│   ├── journal.js                # Journal UI flow: reflection, coach report, puzzles
-│   ├── journal-data.mjs          # Grading/puzzle-generation logic (pure)
+│   │   # Networking resilience
+│   ├── network.mjs               # Fetch timeout wrapper
+│   ├── http-retry.mjs            # Retry-once-after-token-refresh helper
+│   ├── realtime-delivery.mjs     # Lobby personal-chat invite retry/backoff, payload-size guards
 │   │
 │   │   # Privacy, telemetry, legal
 │   ├── privacy-preferences.mjs   # Analytics consent storage (pure)
@@ -93,13 +125,15 @@ chess-ethan/
 ├── custom-extend-app/ethan-chess-service/   # Go backend on AGS Extend — see below
 ├── peerjs-bot-spike/                        # Prototype: Node peer that speaks the P2P protocol
 ├── legal-documents/                         # Source docs + manifest for AGS Legal provisioning
-├── scripts/                                  # Legal page generation, AGS Legal provisioning, iOS test runner
+├── scripts/                                  # Legal page generation, AGS Legal provisioning, iOS test runner, perf budget check
 ├── tests/                                    # Unit (node:test) + Playwright e2e/live suites — see TESTING.md
 ├── ios/                                      # Capacitor-generated native iOS project
 ├── appstore-screenshots/                     # App Store listing assets
 ├── .env.example                              # Environment variable template
 └── .env.production                           # Production env vars (committed; no secrets)
 ```
+
+Most of the History/Journal/Review/notification stack is lazy-loaded and additive: a player who never opens Review or History never pays for or triggers any of it. The practice/review reminder pieces (`learning-notification-*.mjs/js`, `native-learning-notifications.mjs`) ship dark — gated behind `VITE_LEARNING_NOTIFICATIONS_V1` / `VITE_LEARNING_NATIVE_REMINDERS_V1` plus a per-user rollout percentage in `learning-flags.mjs` — so they exist in the bundle with zero behavior change until explicitly dialed on.
 
 `.mjs` files are pure logic (no AGS SDK calls, no DOM) with matching unit tests in `tests/unit/`; `.js` files wire that logic to AGS and the UI.
 
@@ -192,6 +226,7 @@ Friends, chat, family accounts, and other social features additionally require t
 - Sign in with Apple token revocation on account deletion
 - GDPR/native account deletion
 - Referral-triggered achievement unlocks
+- Stripe billing for Ethan's Chess Club (checkout sessions, webhooks, customer portal) and coin-gifting between players (`cmd/monetization_stripe.go`)
 - A self-learning matchmaking bot ("Gus"), trained on a daily loop and served from an AMS dedicated server (`cmd/bot-ds`)
 
 See `custom-extend-app/ethan-chess-service/.env.example` for required configuration (an AGS server-side IAM client, Apple credentials, CORS/invite-host allowlists) and its `Makefile` for build/deploy targets. The frontend talks to it through `src/extend-client.js`.
@@ -212,11 +247,14 @@ This section explains what AGS does in this game and how each service was integr
 | Leaderboard | Leaderboard | Global win rankings |
 | Matchmaking | Matchmaking v2 | Queues players and pairs them, including the AMS-backed bot |
 | Match Chat | Chat | Session/private topics, history, filtering, and mute enforcement |
-| Friends & Presence | Lobby | Friend list, online status, and player report/block |
+| Friends & Presence | Lobby | Friend list, online status, and player block |
+| Player Reporting | Reporting | Report reasons/tickets for chat and player reports |
 | Achievements | Achievements | Milestone unlocks |
 | Legal | Legal | Versioned Privacy Policy / Terms / Community Standards acceptance |
 | Analytics | Game Telemetry | Gameplay and funnel event tracking, gated on opt-in consent |
 | Live Spectating | CloudSave | Publishes live board state for watchers |
+| Cosmetics Store | Platform (Store/Wallet/Entitlements) | Ethan Coins wallet, item catalog, ownership, and direct-to-AGS purchase orders |
+| Club Membership | Platform (IAP) + Extend | Apple IAP receipt validation and Stripe-billed web checkout, both landing as time-boxed entitlements |
 
 ---
 
@@ -574,10 +612,12 @@ npm run ios:build   # builds the web bundle and syncs it into ios/App
 ## Testing
 
 ```bash
-npm run test:unit   # node:test — pure logic in src/*.mjs
-npm run test:e2e    # Playwright — offline/mocked AGS, chromium + webkit-ipad
-npm run test:live   # Playwright — live AGS namespace, requires .env.test (see .env.test.example)
-npm run test        # unit + e2e
+npm run test:unit     # node:test — pure logic in src/*.mjs
+npm run test:e2e      # Playwright — offline/mocked AGS, chromium + webkit-ipad
+npm run test:live     # Playwright — live AGS namespace, requires .env.test (see .env.test.example)
+npm run test          # unit + e2e
+npm run perf:budget   # fails the build if the launch bundle exceeds its size/weight budget
+npm run test:precommit  # unit + build + perf budget + e2e + live — the full pre-commit gate
 ```
 
 See `TESTING.md` for the full breakdown of what each suite covers and the pre-commit gate.
@@ -674,9 +714,12 @@ Add `https://yourusername.github.io/your-repo/` to **AGS Admin Portal → IAM �
 
 - Vanilla JavaScript (no frameworks) on the frontend, Go on the backend (AGS Extend)
 - [Vite](https://vitejs.dev/) — dev server and build tool
-- [Capacitor](https://capacitorjs.com/) — iOS app shell
+- [Capacitor](https://capacitorjs.com/) — iOS app shell, plus `@capacitor/local-notifications` (practice reminders), `@capacitor-community/apple-sign-in`, `capacitor-plugin-cdv-purchase` (Club Apple IAP)
 - [PeerJS](https://peerjs.com/) — WebRTC peer-to-peer chess moves and video
-- [AccelByte Gaming Services SDK](https://docs.accelbyte.io/) — auth, stats, leaderboard, matchmaking, chat, CloudSave, friends, achievements, legal, game telemetry
+- [AccelByte Gaming Services SDK](https://docs.accelbyte.io/) — auth, stats, leaderboard, matchmaking, chat, CloudSave, friends, reporting, achievements, legal, game telemetry
+- [Stripe.js](https://stripe.com/docs/js) — embedded Checkout for Ethan's Chess Club web billing
+- [obscenity](https://github.com/jo3-l/obscenity) — client-side profanity pre-filter for chat/display names
+- Web Worker (`analysis-worker.js`) — runs the minimax AI/analysis off the main thread
 - [Playwright](https://playwright.dev/) + `node:test` — e2e and unit testing
 - Web Audio API — sound effects
 - WebRTC `getUserMedia` — video chat
