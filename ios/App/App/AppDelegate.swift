@@ -151,6 +151,11 @@ public class VideoCallAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 class EthanBridgeViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         super.capacitorDidLoad()
+        // This is a game surface, so an incidental two-finger gesture should
+        // never magnify the entire WKWebView and move the board off-screen.
+        webView?.scrollView.minimumZoomScale = 1
+        webView?.scrollView.maximumZoomScale = 1
+        webView?.scrollView.pinchGestureRecognizer?.isEnabled = false
         bridge?.registerPluginInstance(VideoCallAudioPlugin())
     }
 }
