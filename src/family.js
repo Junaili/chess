@@ -9,7 +9,6 @@ import { UsersV4Api } from '@accelbyte/sdk-iam'
 import { PublicPlayerRecordApi } from '@accelbyte/sdk-cloudsave'
 import { sdk } from './ags-client.js'
 import { refreshSession } from './auth.js'
-import { extendFetch } from './extend-client.js'
 import { withRefreshRetry } from './http-retry.mjs'
 import { resolveDisplayNames, cacheDisplayName } from './leaderboard.js'
 import { fetchPresenceMap } from './presence.js'
@@ -19,16 +18,19 @@ import { fetchWithTimeout } from './network.mjs'
 
 const CONFIGURATION_CODE = 'chess-family'
 
-// Group's "not in any group" response is a 404, and the Group service's
-// response behavior is not consistent across browser origins. Keep the
-// production web and native builds behind the narrow, player-token Extend
-// proxy; dev/e2e stays on Vite's same-origin /group proxy.
-function usesExtendGroupProxy() {
-  return !import.meta.env.DEV && !!import.meta.env.VITE_EXTEND_EMAIL_URL
-}
-
+// Group is called directly with the player's own token on every platform —
+// the same raw-fetch pattern legal.js uses for the Agreement service. The
+// Extend /family/group proxy this file used in production until 2026-07-18
+// existed because the Group service used to omit Access-Control-Allow-Origin
+// on its actual responses (only the preflight carried it), so a browser could
+// never read a Group reply cross-origin. Live-verified fixed 2026-07-18:
+// real responses — including the 404/73034 "not in any group" case that
+// originally broke — now carry the CORS headers for allowed origins. Native
+// iOS was never affected (CapacitorHttp routes fetch through native HTTP,
+// which has no CORS). isNotInGroupResponse below always handled the raw
+// 404/73034 shape, since dev/e2e always ran against the direct endpoints.
 export function familyTransportAvailable() {
-  return import.meta.env.DEV ? !!getConfig().baseURL : usesExtendGroupProxy()
+  return !!getConfig().baseURL
 }
 
 function getConfig() {
@@ -39,16 +41,6 @@ function getConfig() {
 async function groupFetch(method, path, body) {
   const { baseURL, namespace } = getConfig()
   const resolvedPath = path.replace('{ns}', encodeURIComponent(namespace))
-  if (usesExtendGroupProxy()) {
-    const resp = await extendFetch(`/family/group/${resolvedPath}`, {
-      method,
-      headers: body ? { 'Content-Type': 'application/json' } : {},
-      body: body ? JSON.stringify(body) : undefined,
-    })
-    let data = null
-    try { data = await resp.json() } catch {}
-    return { status: resp.status, data }
-  }
   const doRequest = () => {
     const accessToken = sdk.getToken()?.accessToken
     const headers = {

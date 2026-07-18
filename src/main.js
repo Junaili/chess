@@ -558,7 +558,11 @@ const removeFamilyMember = async (...args) => (await familyFeature.load()).remov
 const leaveFamily = async (...args) => (await familyFeature.load()).leaveFamily(...args)
 const recordParentalConsent = async (...args) => (await familyFeature.load()).recordParentalConsent(...args)
 function familyTransportAvailable() {
-  return !!import.meta.env.DEV || !!import.meta.env.VITE_EXTEND_EMAIL_URL
+  // Family talks to AGS Group directly with the player's token on every
+  // platform (the Extend proxy was retired 2026-07-18 after the Group CORS
+  // fix was live-verified), so the transport exists wherever AGS itself is
+  // configured — which is every real build.
+  return true
 }
 
 if (import.meta.env.DEV) {
@@ -5360,11 +5364,10 @@ async function refreshFamilyUI(showLoading = true) {
 function renderFamilyPanel(loggedIn) {
   const panel = document.getElementById('ags-family-panel')
   if (!panel) return
-  // Hidden entirely where the Group transport can't work: no transport at
-  // build time (familyTransportAvailable), or the deployed Extend service
-  // doesn't have the /family/group proxy yet (transportMissing) — no
-  // half-working panel either way.
-  const transportReady = familyTransportAvailable() && !familyState.transportMissing
+  // Hidden entirely where the Group transport can't work — no half-working
+  // panel. (Always available since the direct-Group migration; kept as a
+  // gate so a future transport constraint has one obvious switch.)
+  const transportReady = familyTransportAvailable()
   panel.style.display = loggedIn && transportReady ? '' : 'none'
   if (!loggedIn || !transportReady) return
 
