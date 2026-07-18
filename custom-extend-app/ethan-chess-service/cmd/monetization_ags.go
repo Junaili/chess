@@ -1,14 +1,12 @@
 package main
 
-// AGS Platform admin calls: item catalog (SKU -> itemId), entitlements,
-// and the Ethan Coins (ETHC) wallet. Field names for write bodies (grant/credit/debit) are
+// AGS Platform admin calls: entitlements, fulfillment, and the Ethan Coins
+// (ETHC) wallet. Field names for write bodies (fulfillment/credit/debit) are
 // taken verbatim from the live OpenAPI spec (justice-platform-service
-// 6.13.0). Read response field names (items, entitlements) were not
-// available from the schema tool for GET operations, so this file decodes
-// the standard AGS Platform admin-list envelope {"data":[...]} with the
-// conventional per-item fields (id/sku/status/startDate/endDate) — verify
-// against a live /club/status call per the M4 acceptance checklist and fix
-// here only if they differ.
+// 6.13.0). Entitlements are granted through the fulfillment API and queried
+// by SKU, so this file needs no SKU -> itemId catalog mapping at all (the
+// item catalog cache that used to live here — and its live-debugged
+// itemId-vs-id parse trap — was deleted when grants moved to fulfillment).
 
 import (
 	"bytes"
@@ -19,106 +17,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 )
-
-// ---------------------------------------------------------------------------
-// Item catalog cache: club-*/cos-* SKU -> AGS itemId
-// ---------------------------------------------------------------------------
-
-const itemCatalogTTL = 30 * time.Minute
-
-type itemCatalogCache struct {
-	h  *monetizationHandler
-	mu sync.RWMutex
-
-	byNamespace map[string]string // sku -> itemId, populated lazily
-	loadedAt    time.Time
-}
-
-func newItemCatalogCache(h *monetizationHandler) *itemCatalogCache {
-	return &itemCatalogCache{h: h, byNamespace: map[string]string{}}
-}
-
-// Note the field name: the platform items APIs return `itemId`, NOT `id`
-// (live-verified 2026-07-14 — parsing `id` silently yields empty itemIds,
-// which then made every SKU lookup "succeed" with an empty string and every
-// downstream grant/entitlement query fail).
-type agsItemsResponse struct {
-	Data []struct {
-		ID  string `json:"itemId"`
-		SKU string `json:"sku"`
-	} `json:"data"`
-}
-
-// itemID resolves a SKU to its AGS itemId, refreshing the whole /club and
-// /cosmetics category tree at most once per itemCatalogTTL. There are only a
-// dozen items total, so a single query per category is cheap.
-func (c *itemCatalogCache) itemID(sku string) (string, error) {
-	c.mu.RLock()
-	stale := time.Since(c.loadedAt) > itemCatalogTTL
-	id, ok := c.byNamespace[sku]
-	c.mu.RUnlock()
-	if ok && !stale {
-		return id, nil
-	}
-
-	fresh := map[string]string{}
-	for _, category := range []string{"/club", "/cosmetics"} {
-		items, err := c.h.queryItemsByCategory(category)
-		if err != nil {
-			return "", fmt.Errorf("load item catalog %s: %w", category, err)
-		}
-		for _, item := range items.Data {
-			// Both guards matter: an empty itemId in the map would make the
-			// lookup below "succeed" with "" and break every downstream call
-			// that embeds the id in a URL or grant body.
-			if item.SKU != "" && item.ID != "" {
-				fresh[item.SKU] = item.ID
-			}
-		}
-	}
-
-	c.mu.Lock()
-	c.byNamespace = fresh
-	c.loadedAt = time.Now()
-	c.mu.Unlock()
-
-	id, ok = fresh[sku]
-	if !ok {
-		return "", fmt.Errorf("sku %q not found in store", sku)
-	}
-	return id, nil
-}
-
-func (h *monetizationHandler) queryItemsByCategory(categoryPath string) (agsItemsResponse, error) {
-	token, err := h.clientCredentialsToken()
-	if err != nil {
-		return agsItemsResponse{}, err
-	}
-	endpoint := fmt.Sprintf("%s/platform/admin/namespaces/%s/items/byCriteria?categoryPath=%s&includeSubCategoryItem=true&limit=100",
-		h.agsBaseURL, url.PathEscape(h.namespace), url.QueryEscape(categoryPath))
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
-	if err != nil {
-		return agsItemsResponse{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return agsItemsResponse{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return agsItemsResponse{}, fmt.Errorf("query items %s returned %d", categoryPath, resp.StatusCode)
-	}
-	var out agsItemsResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
-		return agsItemsResponse{}, fmt.Errorf("decode items %s: %w", categoryPath, err)
-	}
-	return out, nil
-}
 
 // ---------------------------------------------------------------------------
 // Entitlements
@@ -173,57 +73,64 @@ func (h *monetizationHandler) activeClubEntitlements(userID string) ([]clubEntit
 	return h.activeClubStatus(userID, all)
 }
 
-// activeClubEntitlementsFiltered queries the user's active entitlements for
-// each sku. This is the sole club-standing source for ALL SKUs: lifetime ones
-// have no window, monthly ones carry an endDate equal to the billing period
-// end (granted per paid Stripe invoice; synced by AGS for Apple IAP). AGS's
-// activeOnly filter drops expired/revoked windows on its own.
+// activeClubEntitlementsFiltered queries the user's active entitlements once
+// and keeps the rows whose response `sku` is in the requested set. This is
+// the sole club-standing source for ALL SKUs: lifetime ones have no window,
+// monthly ones carry an endDate equal to the billing period end (granted per
+// paid Stripe invoice; synced by AGS for Apple IAP). AGS's activeOnly filter
+// drops expired/revoked windows on its own. One query replaces the previous
+// per-SKU loop (4 round-trips per /club/status), and filtering on the
+// response's own sku field removes the need to resolve SKU -> itemId first.
 func (h *monetizationHandler) activeClubEntitlementsFiltered(userID string, skus []string) ([]clubEntitlement, error) {
 	token, err := h.clientCredentialsToken()
 	if err != nil {
 		return nil, err
 	}
-	var out []clubEntitlement
+	wanted := make(map[string]struct{}, len(skus))
 	for _, sku := range skus {
-		itemID, err := h.items.itemID(sku)
-		if err != nil {
-			// A SKU missing from the store (M1 not yet done, or a typo) must
-			// not fail the whole status call for every other SKU.
+		wanted[sku] = struct{}{}
+	}
+	endpoint := fmt.Sprintf("%s/platform/admin/namespaces/%s/users/%s/entitlements?activeOnly=true&limit=100",
+		h.agsBaseURL, url.PathEscape(h.namespace), url.PathEscape(userID))
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		// Same convention as the wallet summary: a user with no entitlement
+		// records yet is "none", not an error.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		return nil, fmt.Errorf("query entitlements for %s returned %d", userID, resp.StatusCode)
+	}
+	var parsed agsEntitlementsResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 256<<10)).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("decode entitlements for %s: %w", userID, err)
+	}
+	var out []clubEntitlement
+	for _, e := range parsed.Data {
+		if _, ok := wanted[e.Sku]; !ok {
 			continue
 		}
-		endpoint := fmt.Sprintf("%s/platform/admin/namespaces/%s/users/%s/entitlements?itemId=%s&activeOnly=true&limit=10",
-			h.agsBaseURL, url.PathEscape(h.namespace), url.PathEscape(userID), url.QueryEscape(itemID))
-		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
-		if err != nil {
-			return nil, err
+		origin := ""
+		switch strings.ToUpper(e.Origin) {
+		case "IOS":
+			origin = "apple"
+		case "OTHER", "SYSTEM", "":
+			origin = "stripe"
 		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := h.httpClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		var parsed agsEntitlementsResponse
-		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 256<<10)).Decode(&parsed)
-		status := resp.StatusCode
-		resp.Body.Close()
-		if status != http.StatusOK {
-			continue // no active entitlement for this SKU
-		}
-		if decodeErr != nil {
-			return nil, fmt.Errorf("decode entitlements for %s: %w", sku, decodeErr)
-		}
-		for _, e := range parsed.Data {
-			origin := ""
-			switch strings.ToUpper(e.Origin) {
-			case "IOS":
-				origin = "apple"
-			case "OTHER", "SYSTEM", "":
-				origin = "stripe"
-			}
-			out = append(out, clubEntitlement{
-				ID: e.ID, SKU: sku, Status: e.Status, StartDate: e.StartDate, EndDate: e.EndDate, Origin: origin,
-			})
-		}
+		out = append(out, clubEntitlement{
+			ID: e.ID, SKU: e.Sku, Status: e.Status, StartDate: e.StartDate, EndDate: e.EndDate, Origin: origin,
+		})
 	}
 	return out, nil
 }
@@ -276,45 +183,52 @@ func (h *monetizationHandler) revokeClubEntitlements(userID, sku string) error {
 	return nil
 }
 
-type grantEntitlementRequest struct {
-	ItemID        string     `json:"itemId"`
-	ItemNamespace string     `json:"itemNamespace"`
-	Quantity      int        `json:"quantity"`
-	Source        string     `json:"source"`
-	Origin        string     `json:"origin,omitempty"`
-	StartDate     *time.Time `json:"startDate,omitempty"`
-	EndDate       *time.Time `json:"endDate,omitempty"`
+// fulfillmentRequest is the Platform fulfillment API's request body
+// (FulfillmentRequest, justice-platform-service 6.13.0 — schema confirmed via
+// the AGS CLI's bundled spec). Fulfilling by itemSku is what lets this file
+// skip SKU -> itemId resolution entirely.
+type fulfillmentRequest struct {
+	ItemSKU   string     `json:"itemSku"`
+	Quantity  int        `json:"quantity"`
+	Source    string     `json:"source"`
+	Origin    string     `json:"origin,omitempty"`
+	StartDate *time.Time `json:"startDate,omitempty"`
+	EndDate   *time.Time `json:"endDate,omitempty"`
 }
 
-// grantClubEntitlement grants one unit of sku to userID. endDate is nil for
+// grantClubEntitlement fulfills one unit of sku to userID via
+// POST /platform/admin/.../users/{userId}/fulfillment. endDate is nil for
 // lifetime SKUs; for monthly SKUs it MUST be the billing period end exactly —
 // reconcileDecisions re-derives the period coin txKey from the entitlement's
 // endDate, so any offset between this value and the webhook's txKeyPeriod
 // argument would double-credit the period's coins.
+//
+// NOTE: fulfillment grants whatever the item defines. Today the Club items
+// are plain DURABLE items, so this grants exactly the entitlement (same
+// behavior as the direct entitlement-grant call it replaced). If the store
+// items are later reconfigured as bundles containing an ETHC currency
+// reward, this same call would also deposit the period's coins — at that
+// point the explicit creditUserWallet calls in the webhook/reconcile paths
+// (and their ledger txKeys) must be removed in the same change, or every
+// period would double-credit.
 func (h *monetizationHandler) grantClubEntitlement(userID, sku, source, origin string, endDate *time.Time) error {
-	itemID, err := h.items.itemID(sku)
-	if err != nil {
-		return err
-	}
 	token, err := h.clientCredentialsToken()
 	if err != nil {
 		return err
 	}
 	start := time.Now().UTC()
-	body := []grantEntitlementRequest{{
-		ItemID:        itemID,
-		ItemNamespace: h.namespace,
-		Quantity:      1,
-		Source:        source,
-		Origin:        origin,
-		StartDate:     &start,
-		EndDate:       endDate,
-	}}
-	raw, err := json.Marshal(body)
+	raw, err := json.Marshal(fulfillmentRequest{
+		ItemSKU:   sku,
+		Quantity:  1,
+		Source:    source,
+		Origin:    origin,
+		StartDate: &start,
+		EndDate:   endDate,
+	})
 	if err != nil {
 		return err
 	}
-	endpoint := fmt.Sprintf("%s/platform/admin/namespaces/%s/users/%s/entitlements",
+	endpoint := fmt.Sprintf("%s/platform/admin/namespaces/%s/users/%s/fulfillment",
 		h.agsBaseURL, url.PathEscape(h.namespace), url.PathEscape(userID))
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
@@ -329,7 +243,7 @@ func (h *monetizationHandler) grantClubEntitlement(userID, sku, source, origin s
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("grant entitlement %s for %s returned %d", sku, userID, resp.StatusCode)
+		return fmt.Errorf("fulfill %s for %s returned %d", sku, userID, resp.StatusCode)
 	}
 	return nil
 }

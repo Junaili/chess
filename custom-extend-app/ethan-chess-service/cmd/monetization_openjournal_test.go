@@ -248,17 +248,6 @@ func (f *gateRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 		f.ledgerAt = time.Now().UTC().Format(time.RFC3339Nano)
 		return jsonResponse(200, `{}`), nil
 
-	case strings.Contains(req.URL.Path, "/items/byCriteria"):
-		if strings.Contains(req.URL.RawQuery, "%2Fclub") || strings.Contains(req.URL.RawQuery, "/club") {
-			return jsonResponse(200, `{"data":[
-				{"itemId":"item-individual-monthly","sku":"club-individual-monthly"},
-				{"itemId":"item-individual-lifetime","sku":"club-individual-lifetime"},
-				{"itemId":"item-family-monthly","sku":"club-family-monthly"},
-				{"itemId":"item-family-lifetime","sku":"club-family-lifetime"}
-			]}`), nil
-		}
-		return jsonResponse(200, `{"data":[]}`), nil
-
 	case strings.Contains(req.URL.Path, "/entitlements"):
 		if f.entitlements == "" {
 			return &http.Response{StatusCode: 404, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: req}, nil

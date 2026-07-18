@@ -80,7 +80,6 @@ type monetizationHandler struct {
 	httpClient *http.Client
 	now        func() time.Time
 
-	items   *itemCatalogCache
 	roles   *familyRolesCache
 	journal *openJournalConfigCache
 }
@@ -98,7 +97,6 @@ func newMonetizationHandlerFromEnv() *monetizationHandler {
 		httpClient:          &http.Client{Timeout: 15 * time.Second},
 		now:                 time.Now,
 	}
-	h.items = newItemCatalogCache(h)
 	h.roles = newFamilyRolesCache(h)
 	h.journal = newOpenJournalConfigCache(h)
 	return h

@@ -109,25 +109,14 @@ func (f *stripeWebhookRoundTripper) RoundTrip(req *http.Request) (*http.Response
 			return jsonResponse(200, `{"data":[]}`), nil
 		}
 		return jsonResponse(200, f.activeEntitlements), nil
-	case strings.Contains(req.URL.Path, "/items/byCriteria"):
-		// Field name is `itemId` — matching the REAL platform API shape, not
-		// `id` (the fake previously used `id` and hid a prod-breaking parse
-		// bug; see agsItemsResponse's comment).
-		if strings.Contains(req.URL.RawQuery, "%2Fclub") || strings.Contains(req.URL.RawQuery, "/club") {
-			return jsonResponse(200, `{"data":[
-				{"itemId":"item-individual-monthly","sku":"club-individual-monthly"},
-				{"itemId":"item-individual-lifetime","sku":"club-individual-lifetime"},
-				{"itemId":"item-family-monthly","sku":"club-family-monthly"},
-				{"itemId":"item-family-lifetime","sku":"club-family-lifetime"}
-			]}`), nil
-		}
-		return jsonResponse(200, `{"data":[]}`), nil
-	case strings.Contains(req.URL.Path, "/entitlements") && req.Method == http.MethodPost:
+	case strings.HasSuffix(req.URL.Path, "/fulfillment") && req.Method == http.MethodPost:
+		// Grants go through the Platform fulfillment API (by itemSku) — there
+		// is no items/byCriteria catalog lookup anymore.
 		f.entitlements++
 		if f.entitlementStatus != 0 {
 			return jsonResponse(f.entitlementStatus, `{"errorCode":40121}`), nil
 		}
-		return jsonResponse(201, `{}`), nil
+		return jsonResponse(200, `{}`), nil
 	case strings.Contains(req.URL.Path, "/wallets/") && strings.HasSuffix(req.URL.Path, "/credit"):
 		f.credits++
 		return jsonResponse(200, `{}`), nil

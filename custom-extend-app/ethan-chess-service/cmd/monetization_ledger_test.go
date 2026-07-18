@@ -127,7 +127,6 @@ func testMonetizationHandler(transport http.RoundTripper) *monetizationHandler {
 		httpClient:   &http.Client{Transport: transport},
 		now:          func() time.Time { return time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC) },
 	}
-	h.items = newItemCatalogCache(h)
 	h.roles = newFamilyRolesCache(h)
 	h.journal = newOpenJournalConfigCache(h)
 	return h
