@@ -12,6 +12,7 @@ import {
 } from './review-data.mjs'
 import { computeMatchFingerprint, trimTakeaway, reviewBadge as computeReviewBadge, ANALYSIS_VERSION } from './learning-contract.mjs'
 import { loadLearningIndex as fetchLearningIndex, upsertReview, resetLearningCache } from './learning-store.js'
+import { emitLearningStateChanged } from './learning-events.mjs'
 
 // session also carries userId/movesGraded/analyzedAt once analysis
 // completes — everything M4's persistence needs (dev-plan §6.2's review shape).
@@ -249,6 +250,7 @@ export async function finishReview({ takeaway } = {}) {
       takeaway: trimTakeaway(takeaway),
     })
     if (saveNote) saveNote.textContent = 'Saved'
+    emitLearningStateChanged('review_finished')
     // Goal v2 evidence (dev-plan §13.3) — best-effort and fire-and-forget;
     // a goal-progress hiccup must never affect the Finish Review UX itself.
     Promise.resolve(session.onReviewFinished?.(session.match.id))

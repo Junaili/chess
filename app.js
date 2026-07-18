@@ -616,6 +616,7 @@ function startGame() {
   if (isOnline) refreshMatchChatFriendGate();
 
   showScreen('game');
+  window.agsCancelPendingLearningReminder?.();
   renderBoard();
   updateStatus();
   startMatchClocks();
@@ -2208,6 +2209,7 @@ async function attemptResume(record) {
   setPlayerInfo(playerColor, getCurrentPlayerDisplayName(), record.myUserId);
   setPlayerInfo(playerColor === 'white' ? 'black' : 'white', record.opponentName, record.opponentUserId);
   showScreen('game');
+  window.agsCancelPendingLearningReminder?.();
   renderBoard();
   updateChatAvailability();
 

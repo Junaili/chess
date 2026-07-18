@@ -27,6 +27,7 @@ import {
 } from './journal-data.mjs'
 import { buildPracticeQueue, applyPuzzleAttempt } from './practice-data.mjs'
 import { journalVisibleEntries, narrativeHint } from './club-contract.mjs'
+import { emitLearningStateChanged } from './learning-events.mjs'
 import { ChessGame } from '../chess-engine.js'
 
 const JOURNAL_KEY = 'chess-journal'
@@ -120,6 +121,32 @@ async function saveJournalRecord(userId, record) {
   // Keep memory consistent with what was persisted (entry caps, slimmed
   // embedded games, pruned cache).
   return normalizeJournalRecord(value)
+}
+
+// getLearningNotificationInputs: the same raw signals renderNextAction()
+// below already derives (notification dev-plan §13.4/§14 "expose a
+// lightweight notification snapshot read") — kept read-only so the
+// notification orchestrator (reached only through
+// window.agsLoadLearningNotificationInputs, never a static import) builds
+// its snapshot from exactly what Journal itself already computes, never a
+// second, possibly-diverging derivation. Safe to call even if the Journal
+// tab was never opened this session — fetches its own copy in that case.
+export async function getLearningNotificationInputs(userId) {
+  const sameUserLoaded = state.userId === userId && state.record
+  const record = sameUserLoaded ? state.record : await fetchJournalRecord(userId)
+  const matchHistory = sameUserLoaded && state.matchHistory ? state.matchHistory : await fetchMatchHistory(userId)
+  const practiceV2 = !!window.agsLearningFlags?.().practiceV2
+  const practiceQueue = practiceV2 ? buildPracticeQueue(record.entries, { now: new Date() }) : null
+  const lastEntry = record.entries[0] || null
+  const newMatches = filterMatchesByWindow(matchHistory, 'since-last', { sinceIso: lastEntry?.createdAt })
+  return {
+    matchHistory,
+    playableDueCount: practiceQueue?.playableDueCount || 0,
+    nextPlayableDueAt: practiceQueue?.nextPlayableDueAt || null,
+    activeGoal: normalizeGoalForDisplay(lastEntry?.goal),
+    replayableNewMatchCount: newMatches.length,
+    oldestNewMatchAt: newMatches.reduce((min, m) => (!min || (m.endedAt && m.endedAt < min) ? m.endedAt : min), null),
+  }
 }
 
 // ─── Incremental grading ──────────────────────────────────────────────────────
@@ -254,6 +281,7 @@ async function generateJournal() {
     setStatus('Saving…')
     state.record = await saveJournalRecord(state.userId, state.record)
     if (isStale()) return
+    emitLearningStateChanged('journal_generated')
 
     // Process badges: reward the habits that cause improvement. Unlocks no-op
     // gracefully until the codes are provisioned in the AGS Admin Portal.
@@ -393,7 +421,11 @@ async function judgePuzzleMove(before, move) {
         state.record.entries[0].goal = applyGoalEvidence(latestGoal, [{ id: activePuzzle.puzzleId, applicable: true, completed: true }])
       }
       saveJournalRecord(state.userId, state.record)
-        .then(saved => { state.record = saved; renderPracticeQueue() })
+        .then(saved => {
+          state.record = saved
+          renderPracticeQueue()
+          emitLearningStateChanged('practice_attempted')
+        })
         .catch(e => {
           console.warn('[journal] puzzle save:', e?.message || e)
           // Failure to save must not alter the board result already shown —
@@ -624,6 +656,7 @@ async function persistGoalChange(entry, mutator, eventName, eventPayload = {}) {
   try {
     state.record = await saveJournalRecord(state.userId, state.record)
     sendEvent(eventName, eventPayload)
+    emitLearningStateChanged('goal_changed')
   } catch (error) {
     console.warn('[journal] goal save:', error?.message || error)
     setStatus('Could not save your goal — try again.')

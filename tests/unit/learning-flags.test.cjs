@@ -17,6 +17,8 @@ test('resolveLearningFlags: empty env defaults every flag to false', async () =>
     practiceV2: false,
     goalsV2: false,
     journalLayoutV2: false,
+    notificationsV1: false,
+    nativeRemindersV1: false,
   })
 })
 
@@ -82,4 +84,56 @@ test('resolveLearningFlags: unknown override keys do not leak into the result', 
   const { resolveLearningFlags, LEARNING_FLAG_KEYS } = await flagsPromise
   const flags = resolveLearningFlags({}, { notARealFlag: true })
   assert.deepEqual(Object.keys(flags).sort(), [...LEARNING_FLAG_KEYS].sort())
+})
+
+// ─── Rollout percentage gating (N4) ────────────────────────────────────────
+
+test('resolveLearningRolloutPercents: missing/invalid env defaults to 100 (full rollout)', async () => {
+  const { resolveLearningRolloutPercents } = await flagsPromise
+  assert.deepEqual(resolveLearningRolloutPercents({}), { notificationsV1: 100, nativeRemindersV1: 100 })
+  assert.deepEqual(
+    resolveLearningRolloutPercents({ VITE_LEARNING_NOTIFICATIONS_ROLLOUT_PCT: 'not-a-number' }),
+    { notificationsV1: 100, nativeRemindersV1: 100 },
+  )
+})
+
+test('resolveLearningRolloutPercents: clamps out-of-range values into 0..100', async () => {
+  const { resolveLearningRolloutPercents } = await flagsPromise
+  assert.equal(resolveLearningRolloutPercents({ VITE_LEARNING_NOTIFICATIONS_ROLLOUT_PCT: '-20' }).notificationsV1, 0)
+  assert.equal(resolveLearningRolloutPercents({ VITE_LEARNING_NOTIFICATIONS_ROLLOUT_PCT: '150' }).notificationsV1, 100)
+  assert.equal(resolveLearningRolloutPercents({ VITE_LEARNING_NATIVE_REMINDERS_ROLLOUT_PCT: '10' }).nativeRemindersV1, 10)
+})
+
+test('isInRolloutPercent: 100 always true, 0 always false, regardless of userId', async () => {
+  const { isInRolloutPercent } = await flagsPromise
+  for (const userId of ['user-a', 'user-b', '', null, undefined]) {
+    assert.equal(isInRolloutPercent(userId, 100), true)
+    assert.equal(isInRolloutPercent(userId, 0), false)
+  }
+})
+
+test('isInRolloutPercent: deterministic — same userId+percent always agrees with itself', async () => {
+  const { isInRolloutPercent } = await flagsPromise
+  for (const userId of ['user-1', 'user-2', 'user-3', 'user-4', 'user-5']) {
+    const first = isInRolloutPercent(userId, 50)
+    for (let i = 0; i < 5; i++) assert.equal(isInRolloutPercent(userId, 50), first)
+  }
+})
+
+test('isInRolloutPercent: roughly the requested share of a large user population is included', async () => {
+  const { isInRolloutPercent } = await flagsPromise
+  const total = 2000
+  const included = Array.from({ length: total }, (_, i) => `user-${i}`)
+    .filter(userId => isInRolloutPercent(userId, 10)).length
+  const share = included / total
+  assert.ok(share > 0.05 && share < 0.15, `expected ~10% inclusion, got ${(share * 100).toFixed(1)}%`)
+})
+
+test('isInRolloutPercent: a user included at a lower percent stays included as the percent rises (monotonic)', async () => {
+  const { isInRolloutPercent } = await flagsPromise
+  for (let i = 0; i < 200; i++) {
+    const userId = `user-${i}`
+    if (isInRolloutPercent(userId, 10)) assert.equal(isInRolloutPercent(userId, 50), true)
+    if (isInRolloutPercent(userId, 50)) assert.equal(isInRolloutPercent(userId, 100), true)
+  }
 })

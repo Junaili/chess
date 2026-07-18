@@ -17,7 +17,8 @@ import {
 } from './content-moderation.mjs'
 import { getReportTicketId, getSafetyError } from './safety-payloads.mjs'
 import { validateDeletionConfirmation } from './account-deletion-contract.mjs'
-import { resolveLearningFlags } from './learning-flags.mjs'
+import { resolveLearningFlags, resolveLearningRolloutPercents, isInRolloutPercent } from './learning-flags.mjs'
+import { emitLearningStateChanged } from './learning-events.mjs'
 import { historyRowView, filterHistory, historyFilterCounts, pageHistory, HISTORY_PAGE_SIZE } from './history-view.mjs'
 import './app-shell.js'
 
@@ -32,6 +33,17 @@ function getLearningFlags() {
 // app.js is a plain script (no import.meta.env), so the game-over "Review
 // game" button (dev-plan §10.8) reads the flag through this accessor.
 window.agsLearningFlags = getLearningFlags
+
+// Staged rollout gating for the notification system only (notification
+// dev-plan §17 N4) — `flagKey` must be 'notificationsV1' or 'nativeRemindersV1'.
+// The boolean flag is the master switch; the rollout percentage (default 100,
+// i.e. no additional restriction) further limits exposure per signed-in user
+// without a new build per stage. No other learning flag is percent-gated.
+function isLearningNotificationFeatureEnabled(flagKey, userId) {
+  if (!getLearningFlags()[flagKey]) return false
+  const percents = resolveLearningRolloutPercents(import.meta.env)
+  return isInRolloutPercent(userId, percents[flagKey])
+}
 
 function createFeatureLoader(label, importer) {
   let loadedModule = null
@@ -61,6 +73,7 @@ const matchmakingFeature = createFeatureLoader('Matchmaking', () => import('./ma
 const gusFeature = createFeatureLoader('Gambit Gus', () => import('./gus.js'))
 const journalFeature = createFeatureLoader('Journal', () => import('./journal.js'))
 const reviewFeature = createFeatureLoader('Game Review', () => import('./review.js'))
+const learningNotificationsFeature = createFeatureLoader('Learning Notifications', () => import('./learning-notifications.js'))
 const clubFeature = createFeatureLoader('Chess Club', () => import('./club.js'))
 const coinStoreFeature = createFeatureLoader('Coin Store', () => import('./coin-store.js'))
 const kudosFeature = createFeatureLoader('High Five', () => import('./kudos.js'))
@@ -1718,6 +1731,20 @@ async function hydrateAuthenticatedUser(profile) {
   // Loads + applies equipped cosmetics (board theme, piece set, flair) —
   // fire-and-forget, same reasoning as Gus/Club above.
   void initCosmetics(currentUserId)
+  // Chess-improvement notification home card (notification dev-plan N1) —
+  // fire-and-forget, same reasoning as Gus/Club/Cosmetics above. isChild here
+  // reflects only the DOB-based signal available at hydrate time; the
+  // family-role signal (which only resolves once family state loads) is
+  // re-applied from refreshFamilyState below.
+  if (isLearningNotificationFeatureEnabled('notificationsV1', hydratedUserId)) {
+    void learningNotificationsFeature.load()
+      .then(module => module.initLearningNotifications({
+        userId: hydratedUserId,
+        isChild: isProtectedChildSession(),
+        nativeRemindersEnabled: isLearningNotificationFeatureEnabled('nativeRemindersV1', hydratedUserId),
+      }))
+      .catch(error => console.warn('[learning-notifications] init failed:', error?.message || error))
+  }
   // Returning from a Stripe checkout redirect (?club=success|cancel).
   consumeClubReturnParams()
   // Do not load gameplay for every signed-in launch. The resume bridge is
@@ -2279,6 +2306,8 @@ async function initAuth() {
     clearUnlockedCache()
     resetGusPanel()
     resetJournalState()
+    learningNotificationsFeature.peek()?.resetLearningNotifications()
+    emitLearningStateChanged('logged_out')
     resetProfileHistoryState('', [])
     resetClubStatus()
     resetCosmetics()
@@ -3163,6 +3192,7 @@ async function initAuth() {
   window.agsRecordMatchHistory = async match => {
     if (!currentUserId) return
     await recordMatchHistory({ ...match, playerUserId: currentUserId })
+    emitLearningStateChanged('match_saved')
   }
 
   window.agsPublishLiveMove = async () => {
@@ -3598,6 +3628,10 @@ function showProfileTab(name = 'overview') {
   })
   if (name === 'journal') void renderPreparedJournalTab()
   if (name === 'history') window.requestAnimationFrame(refreshProfileHistoryPageSize)
+  if (name === 'account' && currentUserId && activeProfileUser?.userId === currentUserId
+    && isLearningNotificationFeatureEnabled('notificationsV1', currentUserId)) {
+    void learningNotificationsFeature.load().then(module => module.renderSettingsPanel())
+  }
 }
 
 function setProfileTabVisible(name, visible) {
@@ -5233,6 +5267,26 @@ function isProtectedChildSession() {
   return isChildSession({ profile: currentProfile, familyRole: myFamilyRole() })
 }
 
+// isActiveExperience: true while any blocking/immersive flow owns the
+// screen — a learning nudge must never interrupt these (notification
+// dev-plan §10.6). Composed from each flow's own existing DOM/state signal
+// rather than a tracked boolean, since none is unified elsewhere in the app.
+function isActiveExperience() {
+  if (document.getElementById('screen-game')?.classList.contains('active')) return true
+  if (document.getElementById('screen-waiting')?.classList.contains('active')) return true
+  if (document.getElementById('screen-legal')?.classList.contains('active')) return true
+  const rematch = document.getElementById('rematch-notification')
+  if (rematch && rematch.style.display && rematch.style.display !== 'none') return true
+  const call = document.getElementById('video-chat-panel')
+  if (call && call.dataset.callState && call.dataset.callState !== 'idle') return true
+  const safetyModal = document.getElementById('match-safety-modal')
+  if (safetyModal && safetyModal.style.display && safetyModal.style.display !== 'none') return true
+  const deleteModal = document.getElementById('delete-account-modal')
+  if (deleteModal && deleteModal.style.display && deleteModal.style.display !== 'none') return true
+  return false
+}
+window.agsIsActiveExperience = isActiveExperience
+
 // Idempotent — runs after hydration and after every family refresh, because
 // the role-based signal only becomes known once the family state loads.
 function applyChildSessionRestrictions() {
@@ -5280,6 +5334,15 @@ async function refreshFamilyUI(showLoading = true) {
   // Re-render with the now-accurate child flag (cached status, no extra
   // network call — same reasoning as applyChildSessionRestrictions above).
   void initClubPanel(isProtectedChildSession())
+  if (currentUserId && isLearningNotificationFeatureEnabled('notificationsV1', currentUserId)) {
+    void learningNotificationsFeature.load()
+      .then(module => module.initLearningNotifications({
+        userId: currentUserId,
+        isChild: isProtectedChildSession(),
+        nativeRemindersEnabled: isLearningNotificationFeatureEnabled('nativeRemindersV1', currentUserId),
+      }))
+      .catch(() => {})
+  }
 }
 
 function renderFamilyPanel(loggedIn) {
@@ -5665,6 +5728,21 @@ window.agsStartReviewFromGameOver = match => {
 // importing review.js/learning-store.js — same lazy-loading discipline as
 // applyReviewGoalEvidence's use of journalFeature.
 window.agsLoadLearningIndex = userId => reviewFeature.load().then(module => module.loadLearningIndex(userId))
+// Same lazy-loading discipline, for the notification orchestrator's
+// review_unfinished eligibility check (notification dev-plan §7.3) — reuses
+// review.js's own reviewBadge() rather than re-deriving fingerprint/replayable
+// logic a second time.
+window.agsLoadReviewBadge = (record, match) => reviewFeature.load().then(module => module.reviewBadge(record, match))
+// Same lazy-loading discipline, for the notification orchestrator's snapshot
+// (notification dev-plan §13.4) — journal.js owns practice/goal/recap inputs
+// exactly as src/journal.js's own renderNextAction() computes them.
+window.agsLoadLearningNotificationInputs = userId => journalFeature.load().then(module => module.getLearningNotificationInputs(userId))
+// app.js calls this the moment a game screen shows (dev-plan §10.6/§14.1
+// "Game starts: Cancel pending native learning reminder") — a plain global
+// since app.js is a classic script, not an ES module.
+window.agsCancelPendingLearningReminder = () => {
+  learningNotificationsFeature.peek()?.cancelPendingNativeReminder()
+}
 // Grading seam for src/journal.js: its incremental grader maintains the
 // running position itself and calls this per player ply (the thresholds and
 // prose stay defined in exactly one place). Also used to judge puzzle answers.
@@ -6198,6 +6276,9 @@ async function restoreRealtimeAfterResume() {
     // cache TTL inside fetchClubStatus is exactly the "when cache older
     // than 1h" rule, so a recent cache stays untouched.
     if (currentUserId) void initClubPanel(isProtectedChildSession())
+    // Learning-notification reconciliation after resume (notification
+    // dev-plan §14.1 "App resume/visible → After refreshIfStale() settles").
+    if (currentUserId) learningNotificationsFeature.peek()?.scheduleReconcile()
   }
 }
 

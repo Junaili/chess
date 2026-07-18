@@ -132,6 +132,8 @@
               <p id="name-edit-message" class="auth-message" aria-live="polite"></p>
             </div>
           </div>
+          <div id="learning-next-step" class="learning-next-step-card" style="display:none" role="status" aria-live="polite"></div>
+          <div id="learning-reminder-soft-prompt" class="learning-soft-prompt-card" style="display:none" role="status" aria-live="polite"></div>
           <div id="ags-member-play-actions" class="menu-buttons">
             <button class="btn btn-primary" data-click="showColorSelect('computer')">Single Player</button>
             <button class="btn btn-matchmake" id="btn-play-random" style="display:none" data-click="startRandomMatchmaking()">Find a Chess Buddy</button>
@@ -499,6 +501,7 @@
           <button type="button" class="btn btn-danger" data-click="window.agsOpenDeleteAccount && window.agsOpenDeleteAccount()">Delete Account</button>
         </div>
       </section>
+      <section id="learning-notification-settings" class="learning-notification-settings"></section>
       </div>
       <div id="profile-panel-history" class="profile-panel" data-profile-panel="history" role="tabpanel" aria-labelledby="profile-tab-history" aria-hidden="true" tabindex="-1">
       <section class="profile-history-card">

@@ -121,6 +121,12 @@ export function buildPracticeQueue(entries, { now = new Date() } = {}) {
   const active = all.filter(i => i.stage !== 'mastered')
   const dueCount = active.filter(i => i.dueAt <= nowIso).length
   const sortedActive = sortPracticeQueue(active, nowIso)
+  // playableDueCount/nextPlayableDueAt (notification dev-plan §7.2): a due
+  // item whose source game isn't retained/replayable must never produce a
+  // notification whose CTA leads to a disabled row, so the notification
+  // system keys off this narrower count instead of the display-facing
+  // dueCount above, which intentionally keeps counting unplayable items too.
+  const duePlayable = active.filter(i => i.dueAt <= nowIso && i.playable)
   return {
     displayed: sortedActive.slice(0, PRACTICE_QUEUE_DISPLAY_CAP),
     dueCount,
@@ -130,5 +136,9 @@ export function buildPracticeQueue(entries, { now = new Date() } = {}) {
     // Earliest still-pending due date, for the "no due but active" UI state
     // (dev-plan §12.2) — null when there's nothing left to schedule.
     nextDueAt: active.reduce((min, i) => (min === null || i.dueAt < min ? i.dueAt : min), null),
+    playableDueCount: duePlayable.length,
+    nextPlayableDueAt: active
+      .filter(i => i.playable)
+      .reduce((min, i) => (min === null || i.dueAt < min ? i.dueAt : min), null),
   }
 }
