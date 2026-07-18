@@ -155,6 +155,15 @@ const GAMEPLAY_GLOBALS = [
   'agsAcceptFriendMatchInvite', 'agsCheckResumableMatch', 'agsDeclineFriendMatchInvite',
   'agsDiscardActiveMatch', 'agsHandleFriendMatchInvite', 'agsJoinPeer',
   'agsResumeActiveMatch', 'agsStartFriendMatch', 'agsStartMatchedGame',
+  // An incoming friend-match invite must render for an idle Home session that
+  // has never loaded gameplay — without this stub the typeof guard in
+  // startGameInviteUpdates silently dropped every invite to such a session
+  // (found live in prod 2026-07-18; dev/e2e never hit it because the DEV
+  // test-seam block preloads gameplay). Deliberately NOT stubbed:
+  // handleMatchDeclined (only inviters receive declines, and creating the
+  // room already loaded gameplay) and clearFriendMatchInvite (nothing to
+  // clear if gameplay never loaded).
+  'showFriendMatchInvite',
 ]
 
 for (const name of GAMEPLAY_GLOBALS) {
@@ -4910,6 +4919,9 @@ function startGameInviteUpdates() {
   stopGameInviteUpdates()
   unsubscribeGameInvites = subscribeGameInvites(invite => {
     if (invite?.type === 'chess-match-declined') {
+      // Only the inviter receives declines, and creating the room already
+      // loaded gameplay — if it somehow isn't loaded, there's no waiting
+      // screen to update either, so dropping is correct.
       if (typeof window.handleMatchDeclined === 'function') {
         window.handleMatchDeclined(invite)
       }
@@ -4919,8 +4931,13 @@ function startGameInviteUpdates() {
       body: 'Open Ethan\'s Chess to join the match',
       tag: 'game-invite',
     })
+    // showFriendMatchInvite is a GAMEPLAY_GLOBALS lazy stub: calling it on an
+    // idle Home session loads app.js first, then renders the notification.
     if (typeof window.showFriendMatchInvite === 'function') {
-      window.showFriendMatchInvite(invite)
+      const rendered = window.showFriendMatchInvite(invite)
+      Promise.resolve(rendered).catch(error => {
+        console.warn('[AGS invite] could not render incoming invite:', error?.message || error)
+      })
     }
   })
 }
