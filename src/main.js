@@ -2083,6 +2083,28 @@ async function maybeRequireLegalAcceptance(profile = null, tokenData = null) {
   return false
 }
 
+// Shared tail for every path that ends with a freshly hydrated, authenticated
+// user landing on Home: token refresh scheduling, and resuming a live-match
+// invite (?peer=) that required signing in first. Called from
+// completeAuthenticatedSession (Google/Apple/password login, password
+// registration, session restore) AND from the legal-acceptance completion
+// handler below — both call hydrateAuthenticatedUser() themselves first, so
+// neither may skip this tail without silently dropping a pending match join.
+// (Previously duplicated inline in each caller: a brand-new registrant who
+// had to accept the legal gate never joined their invited match, because
+// that path's own completion code never checked chess_pending_peer.)
+function finishAuthenticatedEntry() {
+  scheduleProactiveRefresh()  // keep the token fresh for this session
+  if (typeof window.showScreen === 'function') window.showScreen('home')
+  // Covers Google's full-page redirect too, since the id survives in sessionStorage.
+  const pendingPeerId = sessionStorage.getItem('chess_pending_peer')
+  if (pendingPeerId) {
+    sessionStorage.removeItem('chess_pending_peer')
+    window.history.replaceState({}, '', window.location.pathname + window.location.hash)
+    window.agsJoinPeer?.(pendingPeerId)
+  }
+}
+
 async function completeAuthenticatedSession({ profile = null, tokenData = null } = {}) {
   await installSessionKeepAlive()
   const resolvedProfile = profile || await getProfile()
@@ -2090,17 +2112,7 @@ async function completeAuthenticatedSession({ profile = null, tokenData = null }
   if (!canProceed) return false
   if (!resolvedProfile) return false
   await hydrateAuthenticatedUser(resolvedProfile)
-  scheduleProactiveRefresh()  // keep the token fresh for this session
-  if (typeof window.showScreen === 'function') window.showScreen('home')
-  // A live-match invite link (?peer=) that required signing in first — now that
-  // we have an account, join the match instead of just landing on home. Covers
-  // Google's full-page redirect too, since the id survives in sessionStorage.
-  const pendingPeerId = sessionStorage.getItem('chess_pending_peer')
-  if (pendingPeerId) {
-    sessionStorage.removeItem('chess_pending_peer')
-    window.history.replaceState({}, '', window.location.pathname + window.location.hash)
-    window.agsJoinPeer?.(pendingPeerId)
-  }
+  finishAuthenticatedEntry()
   return true
 }
 
@@ -2589,7 +2601,7 @@ async function initAuth() {
     await refreshAcceptedLegalDocuments()
     setLegalMessage('')
     await hydrateAuthenticatedUser(profile)
-    if (typeof window.showScreen === 'function') window.showScreen('home')
+    finishAuthenticatedEntry()
   }
   window.agsDeclineLegal = async () => {
     stopFriendsRefresh()
