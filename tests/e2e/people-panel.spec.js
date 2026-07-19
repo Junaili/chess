@@ -17,13 +17,11 @@ test.describe('Combined People panel (Friends + Family)', () => {
     });
   });
 
-  test('friends and family share one card with a single refresh control', async ({ page }) => {
+  test('friends and family share one card without a manual refresh control', async ({ page }) => {
     const panel = page.locator('#ags-friends-panel');
     await expect(panel).toBeVisible();
-    // Exactly one header with one Refresh button for the whole card.
-    await expect(panel.locator('> .friends-header')).toHaveCount(1);
-    await expect(panel.locator('> .friends-header h3')).toHaveCount(0);
-    await expect(panel.locator('> .friends-header .btn-mini')).toHaveCount(1);
+    // The panel updates automatically, so it has no manual refresh control.
+    await expect(panel.locator('> .friends-header')).toHaveCount(0);
 
     // Family lives nested inside the same card, not as a sibling card.
     const family = page.locator('#ags-family-panel');
