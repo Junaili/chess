@@ -10,7 +10,7 @@ test.describe('UI smoke (signed out)', () => {
     await expect(page.getByRole('heading', { name: /Ethan's Chess/i })).toBeVisible();
     await expect(page.locator('#ags-signin-btn')).toBeVisible();              // Continue with Google
     await expect(page.getByRole('button', { name: 'Create Free Account' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Single Player as Guest' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Play Gambit Gus' })).toBeVisible();
   });
 
   test('signed-in home uses the updated play labels', async ({ page }) => {
