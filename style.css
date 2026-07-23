@@ -797,6 +797,7 @@ input[type="checkbox"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 0.25em;
   min-height: 44px;
   padding: 8px 12px;
   border: 0;
