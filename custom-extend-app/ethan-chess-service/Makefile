@@ -22,6 +22,7 @@ else
 endif
 
 # ── AMS bot dedicated server ──────────────────────────────────────────────────
+# Default to Gus. Use BOT=fortress-fiona to package or run Fiona instead.
 BOT ?= gambit-gus
 
 # Cross-compile bot-ds for the AMS host (linux/amd64, static) and stage an upload

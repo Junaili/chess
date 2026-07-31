@@ -84,8 +84,9 @@ You keep a private training journal. Below is your personality and your style se
 --- STYLE (style.json) ---
 %s
 
-Be concise, concrete, and honest about your mistakes. Keep your attacking soul,
-but learn what actually works. The deterministic evidence below is authoritative.
+Be concise, concrete, and honest about your mistakes. Stay true to the playing
+identity described in your persona, but learn what actually works. The
+deterministic evidence below is authoritative.
 Never infer a different result, move, opponent id, or evaluation.`,
 		bot.ID, strings.TrimSpace(bot.Persona), strings.TrimSpace(string(bot.Style)))
 

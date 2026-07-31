@@ -89,6 +89,22 @@ func main() {
 		log.Printf("bot-ds: registered with watchdog — ready for a session")
 	}
 
+	// AGS attaches the claimed game session to this AMS DS. A server-only
+	// client acknowledges readiness; local mode remains completely offline.
+	if !localServe {
+		if ags, enabled := newAGSSessionClient(); enabled && dsID != "" {
+			go func() {
+				session, err := ags.waitForClaim(ctx, dsID)
+				if err != nil { log.Printf("bot-ds: AGS session discovery: %v", err); return }
+				if err := ags.setReady(ctx, session.ID); err != nil { log.Printf("bot-ds: AGS session ready: %v", err); return }
+				log.Printf("bot-ds: AGS session %s is ready for signaling", session.ID)
+				if err := ags.answerSignal(ctx, session.ID, bot); err != nil { log.Printf("bot-ds: Fiona signaling: %v", err) }
+			}()
+		} else {
+			log.Printf("bot-ds: AGS session discovery disabled (set BOT_CLIENT_ID, BOT_CLIENT_SECRET, BOT_NAMESPACE, and BOT_BASE_URL)")
+		}
+	}
+
 	// 2. Wait to be claimed for a session, then serve it.
 	//
 	// TODO(ams): subscribe to AGS session notifications for this DS. On claim,

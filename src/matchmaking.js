@@ -31,7 +31,7 @@ function reportResult(run, result, extra = {}) {
   sendEvent('matchmaking_result', {
     result,
     wait_seconds: waitSeconds,
-    pool: MATCH_POOL,
+    pool: run?.matchPool || MATCH_POOL,
     ...extra,
   })
 }
@@ -70,7 +70,7 @@ async function findRecentMatchedSession(run) {
     orderBy: 'createdAt',
   })
   return selectRecentMatchSession(response.data?.data, {
-    matchPool: MATCH_POOL,
+    matchPool: run.matchPool,
     startedAt: run.startedAt,
   })
 }
@@ -222,7 +222,9 @@ async function pollMatchmaking(run, onFound, onTimeout, onError) {
   }
 }
 
-export async function startMatchmaking(onFound, onTimeout, onError) {
+// Options keep normal quickmatch unchanged while allowing a named bot to use
+// its own AGS match pool and DS session template.
+export async function startMatchmaking(onFound, onTimeout, onError, { matchPool = MATCH_POOL } = {}) {
   // Supersede any previous attempt immediately. If its create call resolves
   // later, the stale-run check below deletes the orphaned ticket.
   const previousRun = activeRun
@@ -237,6 +239,7 @@ export async function startMatchmaking(onFound, onTimeout, onError) {
   const run = {
     id: ++nextRunId,
     startedAt: Date.now(),
+    matchPool,
     deadline: Date.now() + MATCH_TIMEOUT,
     ticketId: null,
     pollTimer: null,
@@ -251,7 +254,7 @@ export async function startMatchmaking(onFound, onTimeout, onError) {
   let response
   try {
     response = await MatchTicketsApi(sdk).createMatchTicket({
-      matchPool: MATCH_POOL,
+      matchPool: run.matchPool,
       attributes: {},
       latencies: {},
     })
@@ -284,7 +287,7 @@ export async function startMatchmaking(onFound, onTimeout, onError) {
   // while Lobby was reconnecting.
   run.unsubscribeMatchFound = subscribeMatchFound(notification => {
     if (!isActive(run) || run.completing) return
-    if (!isNotificationForTicket(notification, run.ticketId, MATCH_POOL, run.startedAt)) return
+    if (!isNotificationForTicket(notification, run.ticketId, run.matchPool, run.startedAt)) return
     void completeMatchedSession(run, notification.sessionId, onFound, onError)
   })
   // Poll immediately so fast matches do not incur an unnecessary 2-second lag.

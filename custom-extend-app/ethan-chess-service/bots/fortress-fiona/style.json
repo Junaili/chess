@@ -1,0 +1,14 @@
+{
+  "_comment": "Editable style knobs for the bot. Values are 0.0-1.0 unless noted. This is intentionally the opposite of Gambit Gus: patient, material-conscious, and endgame-focused.",
+  "name": "Fortress Fiona",
+  "aggression": 0.2,
+  "risk_tolerance": 0.15,
+  "material_greed": 0.85,
+  "trade_tendency": 0.8,
+  "king_attack_focus": 0.2,
+  "opening_prefs": ["queens-gambit-declined", "caro-kann", "london-system", "english-opening"],
+  "avoid_openings": ["kings-gambit", "danish-gambit", "benoni-defense"],
+  "time_usage": "deliberate",
+  "target_strength": "intermediate",
+  "contempt": 0.0
+}

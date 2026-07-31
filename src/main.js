@@ -144,7 +144,7 @@ const GAMEPLAY_GLOBALS = [
   'selectColor', 'sendChatMessage', 'sendHighFive', 'shareInviteLink',
   'showAddContact', 'showColorSelect', 'showContactsForInvite', 'showHint',
   'showGameOver', 'showMatchTab', 'showWaitingScreen', 'toggleCoachMode',
-  'startFriendMatchInvite', 'startGusMatchmaking', 'startNewGame',
+  'startFriendMatchInvite', 'startGusMatchmaking', 'startFionaMatchmaking', 'startNewGame',
   'startRandomMatchmaking', 'startVideoChat', 'startVsComputer',
   'submitSafetyReport', 'toggleAudio', 'toggleVideoFeed', 'selectPieceColor',
   'setupPeerConnection', 'renderBoard', 'startGame', 'startRetryFromPosition',
@@ -460,6 +460,16 @@ async function startGusMatchmakingFlow(...args) {
   } catch (error) {
     args[2]?.('Gambit Gus could not join right now. Try again in a moment.')
     console.warn('[gus] matchmaking startup failed:', error?.message || error)
+    return null
+  }
+}
+
+async function startFionaMatchmakingFlow(...args) {
+  try {
+    return await (await matchmakingFeature.load()).startMatchmaking(...args, { matchPool: 'fortress-fiona' })
+  } catch (error) {
+    args[2]?.('Fortress Fiona could not join right now. Try again in a moment.')
+    console.warn('[fiona] matchmaking startup failed:', error?.message || error)
     return null
   }
 }
@@ -2643,6 +2653,7 @@ async function initAuth() {
   window.agsStartMatchmaking = startMatchmaking
   window.agsCancelMatchmaking = cancelMatchmaking
   window.agsStartGusMatchmaking = startGusMatchmakingFlow
+  window.agsStartFionaMatchmaking = startFionaMatchmakingFlow
   window.agsOpenGusProfile = openGusProfile
   window.agsRefreshGusProfile = refreshGusProfile
   window.agsShowGusTab = showGusTab
