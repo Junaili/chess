@@ -4512,6 +4512,7 @@ function updateAuthUI(loggedIn, name, userId) {
   const guestOptions = document.getElementById('ags-guest-options')
   const guestTrigger = document.getElementById('ags-open-guest')
   const memberPlayActions = document.getElementById('ags-member-play-actions')
+  const fionaBtn = document.getElementById('btn-play-fiona')
   const homeLeaderboard = document.getElementById('home-leaderboard-panel')
   const signedInInfo = document.getElementById('ags-signedin-info')
   const signedInName = document.getElementById('ags-signedin-name')
@@ -4535,6 +4536,7 @@ function updateAuthUI(loggedIn, name, userId) {
     if (accountEntry) accountEntry.style.display = 'none'
     if (guestEntry) guestEntry.style.display = 'none'
     if (memberPlayActions) memberPlayActions.style.display = ''
+    if (fionaBtn) fionaBtn.style.display = ''
     if (homeLeaderboard) homeLeaderboard.style.display = ''
     if (authActions) authActions.style.display = 'none'
     if (authOrDivider) authOrDivider.style.display = 'none'
@@ -4563,6 +4565,7 @@ function updateAuthUI(loggedIn, name, userId) {
     signedInInfo.style.display = 'none'
     const randomBtn = document.getElementById('btn-play-random')
     if (randomBtn) randomBtn.style.display = 'none'
+    if (fionaBtn) fionaBtn.style.display = 'none'
     friendsState = { friends: [], incoming: [], outgoing: [] }
     renderFriendsPanel(false)
     resetClubStatus()

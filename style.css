@@ -753,7 +753,28 @@ input[type="checkbox"] {
 #screen-home.signed-in .leaderboard-panel {
   align-self: stretch;
   min-height: 300px;
-  overflow: hidden;
+  /* This column contains the bot and club cards. Keep the page fixed while
+     making every card reachable through the visible scrollbar on its right. */
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(240, 195, 122, 0.62) rgba(255, 255, 255, 0.06);
+}
+
+#screen-home.signed-in .leaderboard-panel::-webkit-scrollbar {
+  width: 12px;
+}
+
+#screen-home.signed-in .leaderboard-panel::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+}
+
+#screen-home.signed-in .leaderboard-panel::-webkit-scrollbar-thumb {
+  background: rgba(240, 195, 122, 0.62);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
 }
 
 #screen-home.signed-in .lb-list {

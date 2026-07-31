@@ -3784,12 +3784,24 @@ function startGusMatchmaking() {
   startQueueMatchmaking('gus');
 }
 
+// Fortress Fiona uses her own match pool, but otherwise follows the exact
+// same waiting-room and peer-connection flow as Gus and normal matchmaking.
+function startFionaMatchmaking() {
+  startQueueMatchmaking('fiona');
+}
+
 function startQueueMatchmaking(opponentKind) {
-  const startFn = opponentKind === 'gus' ? window.agsStartGusMatchmaking : window.agsStartMatchmaking;
+  const startFn = opponentKind === 'gus'
+    ? window.agsStartGusMatchmaking
+    : opponentKind === 'fiona'
+      ? window.agsStartFionaMatchmaking
+      : window.agsStartMatchmaking;
   if (typeof startFn !== 'function') {
     alert(opponentKind === 'gus'
       ? 'Sign in to challenge Gambit Gus.'
-      : 'Sign in to play against random players.');
+      : opponentKind === 'fiona'
+        ? 'Sign in to challenge Fortress Fiona.'
+        : 'Sign in to play against random players.');
     return;
   }
   matchmakingActive = true;
@@ -3920,7 +3932,9 @@ function startQueueMatchmaking(opponentKind) {
       showScreen('home');
       alert(opponentKind === 'gus'
         ? "Gus couldn't make it to the board this time. Please try again in up to 2 minutes."
-        : 'No opponent found. Try again in a moment.');
+        : opponentKind === 'fiona'
+          ? "Fiona couldn't make it to the board this time. Please try again in up to 2 minutes."
+          : 'No opponent found. Try again in a moment.');
     },
     function onError(msg) {
       if (!matchmakingActive) return;
@@ -4956,6 +4970,7 @@ Object.assign(window, {
   showWaitingScreen,
   startGame,
   startFriendMatchInvite,
+  startFionaMatchmaking,
   startGusMatchmaking,
   startNewGame,
   startRandomMatchmaking,
