@@ -845,6 +845,7 @@ const STATIC_ACTIONS = new Set([
   'showScreen',
   'toggleCoachMode',
   'startGusMatchmaking',
+  'startFionaMatchmaking',
   'startNewGame',
   'startRandomMatchmaking',
   'startVideoChat',
