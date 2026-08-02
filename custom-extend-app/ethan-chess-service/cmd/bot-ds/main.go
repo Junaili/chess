@@ -12,9 +12,9 @@
 //	     -> on game end: record result to AGS
 //	     -> on "drain": finish the active session, then exit.
 //
-// Real today: the watchdog client and the WebRTC + chess game core (botgame).
-// Stubbed (need a live AMS fleet + AGS session wiring to run end-to-end): the
-// session-claim subscription and the session-data signaling, marked TODO(ams).
+// Real today: watchdog lifecycle, AGS claim polling, session-storage signaling,
+// and the WebRTC + chess game core (botgame). Match-result persistence remains
+// future work and is marked TODO(ams).
 package main
 
 import (
@@ -34,7 +34,9 @@ import (
 )
 
 func main() {
-	botDir := flag.String("bot-dir", "bots/gambit-gus", "bot directory (persona/style/brain)")
+	botID := flag.String("bot-id", "", "bot personality ID (or BOT_ID; default gambit-gus)")
+	botDir := flag.String("bot-dir", "", "bot directory (or BOT_DIR; default bots/<bot-id>)")
+	signalKey := flag.String("signal-key", "", "AGS session-storage signaling key (or BOT_SIGNAL_KEY)")
 	watchdogDefault := envOr("AMS_WATCHDOG_URL", "ws://localhost:5555/watchdog")
 	watchdogURL := watchdogDefault
 	flag.StringVar(&watchdogURL, "watchdog-url", watchdogDefault, "AMS watchdog websocket URL")
@@ -52,11 +54,18 @@ func main() {
 
 	_ = godotenv.Load(*envFile)
 
-	bot, err := botbrain.LoadBot(*botDir)
+	botConfig, err := resolveBotRuntimeConfig(*botID, *botDir, *signalKey, os.Getenv)
+	if err != nil {
+		log.Fatalf("configure bot: %v", err)
+	}
+	bot, err := botbrain.LoadBot(botConfig.Dir)
 	if err != nil {
 		log.Fatalf("load bot: %v", err)
 	}
-	log.Printf("bot-ds: bot %q (brain v%d, %d lessons) starting", bot.ID, bot.Brain.Version, len(bot.Brain.Lessons))
+	if bot.ID != botConfig.ID {
+		log.Fatalf("load bot: requested id %q but %s contains brain for %q", botConfig.ID, botConfig.Dir, bot.ID)
+	}
+	log.Printf("bot-ds: bot %q (%s, brain v%d, %d lessons) starting with signal key %q", bot.ID, bot.Name, bot.Brain.Version, len(bot.Brain.Lessons), botConfig.SignalKey)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -95,22 +104,33 @@ func main() {
 		if ags, enabled := newAGSSessionClient(); enabled && dsID != "" {
 			go func() {
 				session, err := ags.waitForClaim(ctx, dsID)
-				if err != nil { log.Printf("bot-ds: AGS session discovery: %v", err); return }
-				if err := ags.setReady(ctx, session.ID); err != nil { log.Printf("bot-ds: AGS session ready: %v", err); return }
+				if err != nil {
+					log.Printf("bot-ds: AGS session discovery: %v", err)
+					return
+				}
+				if err := ags.setReady(ctx, session.ID); err != nil {
+					log.Printf("bot-ds: AGS session ready: %v", err)
+					return
+				}
 				log.Printf("bot-ds: AGS session %s is ready for signaling", session.ID)
-				if err := ags.answerSignal(ctx, session.ID, bot); err != nil { log.Printf("bot-ds: Fiona signaling: %v", err) }
+				pc, err := ags.answerSignal(ctx, session.ID, bot, botConfig.SignalKey)
+				if err != nil {
+					log.Printf("bot-ds: %s signaling: %v", bot.Name, err)
+					return
+				}
+				defer pc.Close()
+				log.Printf("bot-ds: %s WebRTC session connected", bot.Name)
+				<-ctx.Done()
 			}()
 		} else {
 			log.Printf("bot-ds: AGS session discovery disabled (set BOT_CLIENT_ID, BOT_CLIENT_SECRET, BOT_NAMESPACE, and BOT_BASE_URL)")
 		}
 	}
 
-	// 2. Wait to be claimed for a session, then serve it.
-	//
-	// TODO(ams): subscribe to AGS session notifications for this DS. On claim,
-	// read the matched human's WebRTC offer from the session data and call
-	// serveSession; the rest of the game plays over the data channel.
-	log.Printf("bot-ds: waiting for a session claim (AGS session subscription not wired yet — TODO)")
+	// 2. waitForClaim polls the AGS game-session assignment for this DS. Once
+	// claimed, answerSignal exchanges WebRTC descriptions through the selected
+	// personality's session-storage key; gameplay then stays on the data channel.
+	log.Printf("bot-ds: waiting for a session claim")
 
 	<-ctx.Done()
 	log.Printf("bot-ds: shutting down")
@@ -120,11 +140,11 @@ func main() {
 // (in production, read from AGS session data). It answers via the shared bot game
 // core, after which the game plays out over the data channel.
 //
-// TODO(ams): publish `answer` to the AGS session data so the client can connect;
-// watch the connection / session outcome; on game end record the result to AGS
-// (stats, leaderboard, match history, and the bot's own history for the trainer).
+// TODO(ams): watch the connection / session outcome; on game end record the
+// result to AGS (stats, leaderboard, match history, and the bot's own history
+// for the trainer).
 func serveSession(ctx context.Context, bot *botbrain.Bot, offer webrtc.SessionDescription) (webrtc.SessionDescription, error) {
-	answer, pc, err := botgame.AnswerContext(ctx, offer, bot.Style, bot.ID)
+	answer, pc, err := botgame.AnswerContext(ctx, offer, bot.Style, bot.Name)
 	if err != nil {
 		return webrtc.SessionDescription{}, err
 	}
