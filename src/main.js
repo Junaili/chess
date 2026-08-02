@@ -466,7 +466,9 @@ async function startGusMatchmakingFlow(...args) {
 
 async function startFionaMatchmakingFlow(...args) {
   try {
-    return await (await matchmakingFeature.load()).startMatchmaking(...args, { matchPool: 'fortress-fiona' })
+    // Same quickmatch pool as Gus — one fleet hosts both, and the challenge
+    // names which personality should wake up.
+    return await (await gusFeature.load()).startBotMatchmaking('fortress-fiona', ...args)
   } catch (error) {
     args[2]?.('Fortress Fiona could not join right now. Try again in a moment.')
     console.warn('[fiona] matchmaking startup failed:', error?.message || error)

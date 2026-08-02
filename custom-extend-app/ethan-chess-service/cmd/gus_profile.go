@@ -44,10 +44,13 @@ const (
 )
 
 type gusHandlers struct {
-	botID     string
-	botUserID string
-	trainJob  *handler.TrainJob
-	watcher   *handler.MatchWatcher // nil when the match watcher is disabled
+	botID string
+	// hostedBots are the personalities the AMS bot DS can wake up as; a
+	// challenge may name any of them.
+	hostedBots []string
+	botUserID  string
+	trainJob   *handler.TrainJob
+	watcher    *handler.MatchWatcher // nil when the match watcher is disabled
 
 	// Baked-in-image persona/style, read once at startup (nil bot = not found).
 	bot *botbrain.Bot
@@ -64,7 +67,17 @@ type gusHandlers struct {
 	globalLimiter *emailRateLimiter // challenge: fleet-wide
 }
 
-func newGusHandlers(botID, botDir, botUserID string, trainJob *handler.TrainJob, watcher *handler.MatchWatcher) *gusHandlers {
+// hosts reports whether the AMS bot DS can wake up as botID.
+func (g *gusHandlers) hosts(botID string) bool {
+	for _, id := range g.hostedBots {
+		if id == botID {
+			return true
+		}
+	}
+	return false
+}
+
+func newGusHandlers(botID, botDir, botUserID string, hostedBots []string, trainJob *handler.TrainJob, watcher *handler.MatchWatcher) *gusHandlers {
 	bot, err := botbrain.LoadBot(botDir)
 	if err != nil {
 		// Profile still works from CloudSave data; persona falls back to defaults.
@@ -73,6 +86,7 @@ func newGusHandlers(botID, botDir, botUserID string, trainJob *handler.TrainJob,
 	}
 	return &gusHandlers{
 		botID:         botID,
+		hostedBots:    hostedBots,
 		botUserID:     botUserID,
 		trainJob:      trainJob,
 		watcher:       watcher,
@@ -489,7 +503,14 @@ func (g *gusHandlers) challenge(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"gus needs a breather — try again in a minute"}`, http.StatusTooManyRequests)
 		return
 	}
-	g.watcher.TriggerNow()
-	log.Printf("[gus] challenge accepted from %s — bot trigger dispatched", sub)
+	// The player picked a bot by name, so pin it. An unknown or absent name
+	// leaves the choice to the DS rather than rejecting a playable challenge.
+	requested := strings.TrimSpace(r.URL.Query().Get("bot"))
+	if requested != "" && !g.hosts(requested) {
+		log.Printf("[gus] challenge from %s named unknown bot %q — letting the DS choose", sub, requested)
+		requested = ""
+	}
+	g.watcher.TriggerNow(requested)
+	log.Printf("[gus] challenge accepted from %s — bot trigger dispatched (bot=%q)", sub, requested)
 	fmt.Fprint(w, `{"ok":true,"summoned":true}`)
 }

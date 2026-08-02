@@ -365,7 +365,7 @@ func (w *MatchWatcher) noteCoalescedTrigger() {
 	})
 }
 
-func (w *MatchWatcher) startTrigger() bool {
+func (w *MatchWatcher) startTrigger(botID string) bool {
 	ctx, ok := w.beginTrigger()
 	if !ok {
 		w.noteCoalescedTrigger()
@@ -387,35 +387,46 @@ func (w *MatchWatcher) startTrigger() bool {
 			log.Printf("match-watcher: claimed bot DS at %s", addr)
 			w.dbgSet(map[string]any{"lastClaimAt": time.Now().Format(time.RFC3339), "lastClaimAddr": addr})
 		}
-		w.postTrigger(ctx, url)
+		w.postTrigger(ctx, url, botID)
 	}()
 	return true
 }
 
+// trigger wakes a bot without naming one, so the DS picks a personality at
+// random — the humans-first fallback should not always send the same opponent.
 func (w *MatchWatcher) trigger() {
-	w.startTrigger()
+	w.startTrigger("")
 }
 
 // TriggerNow claims + wakes a bot DS immediately, bypassing the 20s wait gate.
-// Used by the player-initiated "Play with Gus" challenge: the caller has (or is
+// Used by the player-initiated "Play with <bot>" challenge: the caller has (or is
 // about to have) a ticket in the pool, so the bot queues right away. Spurious
 // triggers stay harmless — the bot's ticket self-cancels after 10s unmatched.
-func (w *MatchWatcher) TriggerNow() bool {
+//
+// botID pins which personality wakes up, because the player picked it by name.
+// Empty leaves the choice to the DS.
+func (w *MatchWatcher) TriggerNow(botID string) bool {
 	if w == nil {
 		return false
 	}
-	w.dbgSet(map[string]any{"lastChallengeAt": time.Now().Format(time.RFC3339)})
-	w.trigger()
+	w.dbgSet(map[string]any{"lastChallengeAt": time.Now().Format(time.RFC3339), "lastChallengeBot": botID})
+	w.startTrigger(botID)
 	return true
 }
 
 // postTrigger wakes the claimed DS. A claimed server that never receives its
 // trigger idles forever (nothing else tells it it was claimed), so retry the
 // POST a few times before giving up.
-func (w *MatchWatcher) postTrigger(ctx context.Context, url string) {
+func (w *MatchWatcher) postTrigger(ctx context.Context, url, botID string) {
+	body := []byte(`{}`)
+	if botID != "" {
+		if encoded, err := json.Marshal(map[string]string{"bot": botID}); err == nil {
+			body = encoded
+		}
+	}
 	var lastErr error
 	for attempt := 1; attempt <= 4; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte(`{}`)))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
 			return
 		}

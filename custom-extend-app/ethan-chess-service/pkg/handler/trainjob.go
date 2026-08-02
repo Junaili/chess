@@ -493,18 +493,26 @@ func (j *TrainJob) TrainHandler(secret string) http.HandlerFunc {
 // BotBrainHandler serves the play-affecting subset of the brain to the AMS bot
 // DS (fetched at trigger time). Cached for 60s so a burst of triggers doesn't
 // hammer CloudSave. Same shared-secret auth as the other bot endpoints.
-func (j *TrainJob) BotBrainHandler(secret string) http.HandlerFunc {
+func (j *TrainJob) BotBrainHandler(secret string, hosted []string) http.HandlerFunc {
 	type cached struct {
 		at         time.Time
 		body       []byte
 		refreshing chan struct{}
 		lastErr    error
 	}
+	// One DS hosts several personalities and asks for the one it woke up as, so
+	// each gets its own cache entry rather than sharing a single brain.
+	known := map[string]bool{j.botID: true}
+	for _, id := range hosted {
+		if id = strings.TrimSpace(id); id != "" {
+			known[id] = true
+		}
+	}
 	var mu sync.Mutex
-	var c cached
-	load := func(ctx context.Context) ([]byte, error) {
+	caches := map[string]*cached{}
+	load := func(ctx context.Context, botID string) ([]byte, error) {
 		var brain botbrain.Brain
-		found, err := fetchAdminValueContext(ctx, BotBrainKey(j.botID), &brain)
+		found, err := fetchAdminValueContext(ctx, BotBrainKey(botID), &brain)
 		if err != nil {
 			return nil, err
 		}
@@ -534,7 +542,22 @@ func (j *TrainJob) BotBrainHandler(secret string) http.HandlerFunc {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
+		// An unknown bot must not mint a cache entry and a blank brain; a DS
+		// predating multi-persona bots sends nothing and gets the default.
+		botID := strings.TrimSpace(r.URL.Query().Get("bot"))
+		if botID == "" {
+			botID = j.botID
+		}
+		if !known[botID] {
+			http.Error(w, "unknown bot "+botID, http.StatusBadRequest)
+			return
+		}
 		mu.Lock()
+		c := caches[botID]
+		if c == nil {
+			c = &cached{}
+			caches[botID] = c
+		}
 		if c.body != nil && time.Since(c.at) <= 60*time.Second {
 			body := c.body
 			mu.Unlock()
@@ -563,7 +586,7 @@ func (j *TrainJob) BotBrainHandler(secret string) http.HandlerFunc {
 			mu.Unlock()
 			if body == nil {
 				if err != nil {
-					log.Printf("bot-brain: fetch: %v", err)
+					log.Printf("bot-brain: fetch %s: %v", botID, err)
 				}
 				w.WriteHeader(http.StatusBadGateway)
 				return
@@ -575,7 +598,7 @@ func (j *TrainJob) BotBrainHandler(secret string) http.HandlerFunc {
 		done := c.refreshing
 		mu.Unlock()
 
-		body, err := load(r.Context())
+		body, err := load(r.Context(), botID)
 		mu.Lock()
 		if err == nil {
 			c.at = time.Now()
@@ -587,7 +610,7 @@ func (j *TrainJob) BotBrainHandler(secret string) http.HandlerFunc {
 		body = c.body
 		mu.Unlock()
 		if err != nil && body == nil {
-			log.Printf("bot-brain: fetch: %v", err)
+			log.Printf("bot-brain: fetch %s: %v", botID, err)
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}

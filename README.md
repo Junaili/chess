@@ -227,7 +227,7 @@ Friends, chat, family accounts, and other social features additionally require t
 - GDPR/native account deletion
 - Referral-triggered achievement unlocks
 - Stripe billing for Ethan's Chess Club (checkout sessions, webhooks, customer portal) and coin-gifting between players (`cmd/monetization_stripe.go`)
-- Self-learning matchmaking bots, starting with Gambit Gus and Fortress Fiona, served by one parameterized AMS dedicated-server binary (`cmd/bot-ds`)
+- Self-learning matchmaking bots, starting with Gambit Gus and Fortress Fiona, all served by one multi-persona AMS dedicated-server binary (`cmd/bot-ds`)
 
 See `custom-extend-app/ethan-chess-service/.env.example` for required configuration (an AGS server-side IAM client, Apple credentials, CORS/invite-host allowlists) and its `Makefile` for build/deploy targets. The frontend talks to it through `src/extend-client.js`.
 
@@ -553,7 +553,7 @@ const timer = setInterval(async () => {
 await MatchTicketsApi(sdk).deleteMatchTicket_ByTicketid(ticketId)
 ```
 
-The same pool can also match players against Gambit Gus or Fortress Fiona when no human opponent is available within a short window. Both personalities use the same AGS AMS dedicated-server binary; an instance selects its persona with `--bot-id gambit-gus` or `--bot-id fortress-fiona` (equivalently, `BOT_ID`) and loads `bots/<bot-id>`. See `src/gus.js`, `src/fiona.js`, and `custom-extend-app/ethan-chess-service/cmd/bot-ds`.
+The same pool can also match players against Gambit Gus or Fortress Fiona when no human opponent is available within a short window. Both personalities are served by one AGS AMS dedicated-server binary: each instance loads every bot staged under `bots/` and, once AMS claims it for a session, answers as the personality that owns the session's match pool (`chess-quickmatch` → Gambit Gus, `fortress-fiona` → Fortress Fiona), signaling through that bot's own session-storage key. One fleet therefore serves every personality. See `src/gus.js`, `src/fiona-ags-signal.js`, and `custom-extend-app/ethan-chess-service/cmd/bot-ds`.
 
 ---
 

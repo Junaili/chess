@@ -25,7 +25,11 @@ type Move struct {
 // MatchEntry is one completed game in a player's chess-match-history record.
 // startedAt/endedAt are ISO-8601 strings written by the web client.
 type MatchEntry struct {
-	ID             string `json:"id"`
+	ID string `json:"id"`
+	// Bot names the personality that played this game. One AMS fleet hosts
+	// several, so the record says which one rather than the reader assuming.
+	// Empty on records written before multi-persona bots.
+	Bot            string `json:"bot,omitempty"`
 	Mode           string `json:"mode"`
 	OpponentUserID string `json:"opponentUserId"`
 	OpponentName   string `json:"opponentName"`

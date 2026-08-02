@@ -76,6 +76,19 @@ const TRIGGER_SECRET = process.env.BOT_TRIGGER_SECRET || ''
 const EXTEND_BASE_URL = (process.env.EXTEND_BASE_URL || '').replace(/\/$/, '')
 const BOT_AI_WORKER = /^(1|true|yes)$/i.test(process.env.BOT_AI_WORKER || '')
 
+// Personalities this DS can wake up as. One AMS fleet hosts all of them: the
+// claimer names one in the trigger body, and an unnamed trigger picks at random
+// so the humans-first fallback varies which bot the player meets. Both share the
+// one bot AGS account — the opponent's name reaches the client over the data
+// channel (see playGame's botName), not from the account profile.
+const PERSONAS = {
+  'gambit-gus': { id: 'gambit-gus', name: 'Gambit Gus' },
+  'fortress-fiona': { id: 'fortress-fiona', name: 'Fortress Fiona' },
+}
+const ENABLED_PERSONAS = (process.env.BOT_PERSONAS || 'gambit-gus,fortress-fiona')
+  .split(',').map((s) => s.trim()).filter((id) => PERSONAS[id])
+const DEFAULT_PERSONA = ENABLED_PERSONAS[0] || 'gambit-gus'
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const shortTag = (id) => (id ? id.slice(0, 6) : '?')
 
@@ -85,7 +98,12 @@ let busy = false // one game per instance
 let draining = false
 let pendingReport = null // in-flight game-record POST; awaited before drain
 let pendingReportError = null
+let persona = PERSONAS[DEFAULT_PERSONA] // the personality this claim woke up as
+let triggerPending = false // a trigger body is being read; guards a double claim
 const onRecord = (r) => {
+  // Tag the record so the trainer files it under this personality's own history
+  // rather than whichever bot the Extend service is configured around.
+  r.bot = persona.id
   pendingReportError = null
   // Attach rejection handling immediately so a fast configuration/network
   // failure cannot trip the process-wide unhandled-rejection guard before the
@@ -106,6 +124,32 @@ const tuningOpts = () => ({
   workerSearch: BOT_AI_WORKER,
 })
 
+// pickPersona resolves the personality for one claim. An unrecognised or absent
+// request picks at random: the match-watcher's humans-first fallback sends no
+// name, and the player should sometimes meet Gus and sometimes Fiona.
+function pickPersona(requested) {
+  const id = String(requested || '').trim()
+  if (PERSONAS[id] && ENABLED_PERSONAS.includes(id)) return PERSONAS[id]
+  if (id) log('unknown persona', JSON.stringify(id), '— choosing at random instead')
+  const pool = ENABLED_PERSONAS.length ? ENABLED_PERSONAS : [DEFAULT_PERSONA]
+  return PERSONAS[pool[Math.floor(Math.random() * pool.length)]]
+}
+
+// readJsonBody never rejects: a malformed or oversized trigger body falls back to
+// {} so the claim still produces a game (with a randomly chosen personality)
+// instead of stranding the player.
+function readJsonBody(req, limit = 8192) {
+  return new Promise((resolve) => {
+    let raw = ''
+    req.on('data', (chunk) => {
+      raw += chunk
+      if (raw.length > limit) { raw = ''; req.destroy() }
+    })
+    req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}) } catch { resolve({}) } })
+    req.on('error', () => resolve({}))
+  })
+}
+
 async function ensureLogin() {
   if (auth) return auth
   auth = await login(process.env.BOT_EMAIL, process.env.BOT_PASSWORD)
@@ -118,7 +162,7 @@ async function ensureLogin() {
 async function fetchBrain() {
   if (!EXTEND_BASE_URL) return null
   try {
-    const r = await fetch(`${EXTEND_BASE_URL}/bot/brain`, {
+    const r = await fetch(`${EXTEND_BASE_URL}/bot/brain?bot=${encodeURIComponent(persona.id)}`, {
       headers: { 'x-trigger-secret': TRIGGER_SECRET },
       signal: AbortSignal.timeout(5000),
     })
@@ -204,14 +248,22 @@ async function main() {
       if (TRIGGER_SECRET && req.headers['x-trigger-secret'] !== TRIGGER_SECRET) {
         res.writeHead(403); res.end('forbidden'); return
       }
-      if (busy || draining) {
+      if (busy || draining || triggerPending) {
         res.writeHead(409, { 'Content-Type': 'application/json' })
         res.end('{"ok":false,"reason":"not available"}')
         return
       }
-      res.writeHead(202, { 'Content-Type': 'application/json' })
-      res.end('{"ok":true,"accepted":true}')
-      onTrigger(wd)
+      // Claimed synchronously so a second trigger arriving while this body is
+      // still streaming is rejected rather than starting a second game.
+      triggerPending = true
+      readJsonBody(req).then((body) => {
+        persona = pickPersona(body?.bot)
+        log('trigger accepted — waking as', persona.name)
+        res.writeHead(202, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, accepted: true, bot: persona.id }))
+        onTrigger(wd) // sets busy synchronously
+        triggerPending = false
+      })
       return
     }
     if (req.url === '/health') { res.writeHead(200); res.end('ok'); return }
@@ -308,7 +360,7 @@ async function runOneGame() {
       peer.once('connection', (conn) => {
         clearTimeout(timer)
         log(`[${tag}]`, 'opponent connected (bot is HOST)')
-        playGame(conn, 'host', { botName: 'Gambit Gus', botId: auth.userId, tag, onRecord, ...tuningOpts() })
+        playGame(conn, 'host', { botName: persona.name, botId: auth.userId, tag, onRecord, ...tuningOpts() })
           .then((why) => { log(`[${tag}]`, 'host game ended:', why); resolve() })
           .catch((e) => { log(`[${tag}]`, 'host game error:', e?.message || e); resolve() })
       })
@@ -324,7 +376,7 @@ async function runOneGame() {
   await sleep(JOINER_CONNECT_DELAY_MS)
   const conn = await connectJoiner(hostPeerId, tag)
   if (!conn) { log(`[${tag}]`, 'could not reach host peer after retries — giving up'); return }
-  const why = await playGame(conn, 'joiner', { botName: 'Gambit Gus', botId: auth.userId, tag, onRecord, ...tuningOpts() })
+  const why = await playGame(conn, 'joiner', { botName: persona.name, botId: auth.userId, tag, onRecord, ...tuningOpts() })
   log(`[${tag}]`, 'joiner game ended:', why)
   try { conn.close() } catch {}
 }

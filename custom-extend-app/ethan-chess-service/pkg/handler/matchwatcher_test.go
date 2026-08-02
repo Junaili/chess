@@ -32,7 +32,7 @@ func TestStartTriggerCoalescesAndCancelsConcurrentWork(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &MatchWatcher{triggerURL: "http://bot.invalid/trigger", runCtx: ctx}
-	if !w.startTrigger() {
+	if !w.startTrigger("") {
 		t.Fatal("first trigger was not started")
 	}
 	select {
@@ -41,7 +41,7 @@ func TestStartTriggerCoalescesAndCancelsConcurrentWork(t *testing.T) {
 		t.Fatal("trigger request did not start")
 	}
 	for i := 0; i < 20; i++ {
-		if w.startTrigger() {
+		if w.startTrigger("") {
 			t.Fatalf("trigger %d started while another trigger was in flight", i+2)
 		}
 	}

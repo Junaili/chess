@@ -25,8 +25,12 @@ type agsSessionClient struct {
 }
 
 type claimedSession struct {
-	ID      string                     `json:"id"`
-	Storage map[string]json.RawMessage `json:"storage"`
+	ID string `json:"id"`
+	// MatchPool names the AGS pool the session was matched from. It is the only
+	// claim-time signal of which personality the waiting player queued for, so
+	// it selects the bot this DS answers as.
+	MatchPool string                     `json:"matchPool"`
+	Storage   map[string]json.RawMessage `json:"storage"`
 }
 
 func (c *agsSessionClient) sessionByID(ctx context.Context, sessionID string) (*claimedSession, error) {

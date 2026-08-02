@@ -19,8 +19,18 @@ const botHistoryCap = 500
 // (peerjs-bot-spike/ds.mjs reportGame) and appends them to the bot's admin
 // game-record history — the source the daily self-learning trainer reads.
 // Auth is the shared x-trigger-secret (same secret the DS trigger uses).
-func BotGamesHandler(secret, botID string) http.HandlerFunc {
-	key := BotHistoryKey(botID)
+//
+// One DS hosts several personalities, so the record's "bot" field selects whose
+// history it joins. Only a personality in hosted is accepted: an unknown name
+// must not silently mint a new history record, and an absent one (a DS predating
+// multi-persona bots) still files under botID.
+func BotGamesHandler(secret, botID string, hosted []string) http.HandlerFunc {
+	keys := map[string]string{botID: BotHistoryKey(botID)}
+	for _, id := range hosted {
+		if id = strings.TrimSpace(id); id != "" {
+			keys[id] = BotHistoryKey(id)
+		}
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -41,14 +51,24 @@ func BotGamesHandler(secret, botID string) http.HandlerFunc {
 			return
 		}
 
+		recordedBy := strings.TrimSpace(entry.Bot)
+		if recordedBy == "" {
+			recordedBy = botID
+		}
+		key, hosted := keys[recordedBy]
+		if !hosted {
+			http.Error(w, "unknown bot "+recordedBy, http.StatusBadRequest)
+			return
+		}
+
 		duplicate, err := AppendBotGame(key, entry, botHistoryCap)
 		if err != nil {
 			log.Printf("bot-games: save history: %v", err)
 			http.Error(w, "storage error", http.StatusBadGateway)
 			return
 		}
-		log.Printf("bot-games: recorded game %s (%s, %d moves, duplicate=%v)",
-			entry.ID, entry.Result, len(entry.Moves), duplicate)
+		log.Printf("bot-games: recorded %s game %s (%s, %d moves, duplicate=%v)",
+			recordedBy, entry.ID, entry.Result, len(entry.Moves), duplicate)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "duplicate": duplicate})
 	}

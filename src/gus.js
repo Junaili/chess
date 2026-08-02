@@ -305,17 +305,24 @@ function renderMatches(matches, bot) {
 // the match watcher's regular gate is the fallback, so the player still gets a
 // game. Note AGS matchmaking does the pairing — if another human is waiting in
 // the pool, the player may (by design) get the human instead.
-export async function startGusMatchmaking(onFound, onTimeout, onError) {
+// Every bot shares the human quickmatch pool: one AMS fleet backs them all, and
+// naming the bot only pins which personality the claimed DS wakes up as. An
+// unnamed challenge lets the DS choose, which is what the cold-start gate does.
+export async function startBotMatchmaking(botId, onFound, onTimeout, onError) {
   let failed = false
   await startMatchmaking(onFound, onTimeout, message => { failed = true; onError(message) })
   if (failed) return
-  sendEvent('gus_challenge_requested', {})
+  sendEvent('gus_challenge_requested', { bot: botId })
   try {
-    const res = await extendFetch('/bot/challenge', { method: 'POST' })
-    if (!res.ok) console.warn('[gus] challenge returned', res.status, '— relying on the cold-start gate')
+    const res = await extendFetch(`/bot/challenge?bot=${encodeURIComponent(botId)}`, { method: 'POST' })
+    if (!res.ok) console.warn(`[bot] ${botId} challenge returned`, res.status, '— relying on the cold-start gate')
   } catch (error) {
-    console.warn('[gus] challenge failed:', error?.message || error, '— relying on the cold-start gate')
+    console.warn(`[bot] ${botId} challenge failed:`, error?.message || error, '— relying on the cold-start gate')
   }
+}
+
+export function startGusMatchmaking(onFound, onTimeout, onError) {
+  return startBotMatchmaking('gambit-gus', onFound, onTimeout, onError)
 }
 
 export function isGusAvailable() {

@@ -86,6 +86,17 @@ func main() {
 	if botDir == "" {
 		botDir = "bots/" + botID
 	}
+	// Personalities the AMS bot DS may wake up as. One fleet hosts them all and
+	// names the one it chose when reporting a game or fetching a brain.
+	hostedBots := []string{botID}
+	if raw := os.Getenv("BOT_PERSONAS"); raw != "" {
+		hostedBots = nil
+		for _, id := range strings.Split(raw, ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				hostedBots = append(hostedBots, id)
+			}
+		}
+	}
 	trainJob := handler.NewTrainJob(botID, botDir)
 	performanceReporter, performanceEnabled, err := perftelemetry.NewFromEnv()
 	if err != nil {
@@ -198,7 +209,7 @@ func main() {
 
 	// "Play with Gus": public bot profile (stats, journal, learned brain,
 	// caller dossier) + player-initiated challenge (auth required on both).
-	gus := newGusHandlers(botID, botDir, os.Getenv("BOT_USER_ID"), trainJob, watcher)
+	gus := newGusHandlers(botID, botDir, os.Getenv("BOT_USER_ID"), hostedBots, trainJob, watcher)
 	mux.Handle(basePath+"/bot/profile",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(gus.profile))))
 	mux.Handle(basePath+"/bot/challenge",
@@ -238,12 +249,12 @@ func main() {
 	}
 
 	// Bot self-learning: game intake from the AMS bot DS (shared-secret auth)
-	mux.HandleFunc(basePath+"/bot/games", handler.BotGamesHandler(os.Getenv("BOT_TRIGGER_SECRET"), botID))
+	mux.HandleFunc(basePath+"/bot/games", handler.BotGamesHandler(os.Getenv("BOT_TRIGGER_SECRET"), botID, hostedBots))
 
 	// Daily self-learning: the Task Scheduler invokes training via gRPC
 	// (RunScheduledTask); this HTTP endpoint is the manual/debug trigger.
 	mux.HandleFunc(basePath+"/bot/train", trainJob.TrainHandler(os.Getenv("BOT_TRIGGER_SECRET")))
-	mux.HandleFunc(basePath+"/bot/brain", trainJob.BotBrainHandler(os.Getenv("BOT_TRIGGER_SECRET")))
+	mux.HandleFunc(basePath+"/bot/brain", trainJob.BotBrainHandler(os.Getenv("BOT_TRIGGER_SECRET"), hostedBots))
 	mux.HandleFunc(basePath+"/debug/trainer", trainJob.TrainerDebugHandler(os.Getenv("BOT_TRIGGER_SECRET")))
 	if performanceEnabled {
 		mux.HandleFunc(basePath+"/debug/performance-capture",

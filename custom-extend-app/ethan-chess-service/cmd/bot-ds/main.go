@@ -1,8 +1,15 @@
 // Command bot-ds is the AccelByte AMS dedicated-server skeleton for the chess
-// personality bot. When matchmaking can't pair a human with another human, AGS
+// personality bots. When matchmaking can't pair a human with another human, AGS
 // claims one of these bot DS instances for the session; the human connects and
 // plays the bot, which runs the chess + brain server-side via pkg/botgame (the
 // transport already proven in cmd/spike-pion).
+//
+// One instance hosts every personality staged under --bots-dir. AMS claims a DS
+// without knowing which bot the waiting player queued for, so the personality is
+// chosen per claim from the game session's match pool (chess-quickmatch → Gambit
+// Gus, fortress-fiona → Fortress Fiona) and each answers on its own
+// session-storage signaling key. That is what lets one fleet — one buffer of
+// warm servers — serve all of them.
 //
 // Lifecycle (per AMS — Creating -> Ready -> In Session -> Draining):
 //
@@ -34,9 +41,9 @@ import (
 )
 
 func main() {
-	botID := flag.String("bot-id", "", "bot personality ID (or BOT_ID; default gambit-gus)")
-	botDir := flag.String("bot-dir", "", "bot directory (or BOT_DIR; default bots/<bot-id>)")
-	signalKey := flag.String("signal-key", "", "AGS session-storage signaling key (or BOT_SIGNAL_KEY)")
+	botID := flag.String("bot-id", "", "default bot personality ID (or BOT_ID; default gambit-gus)")
+	botDir := flag.String("bot-dir", "", "default bot directory (or BOT_DIR; default <bots-dir>/<bot-id>)")
+	signalKey := flag.String("signal-key", "", "AGS session-storage signaling key for the default bot (or BOT_SIGNAL_KEY)")
 	watchdogDefault := envOr("AMS_WATCHDOG_URL", "ws://localhost:5555/watchdog")
 	watchdogURL := watchdogDefault
 	flag.StringVar(&watchdogURL, "watchdog-url", watchdogDefault, "AMS watchdog websocket URL")
@@ -49,23 +56,37 @@ func main() {
 	heartbeat := flag.Duration("heartbeat", 15*time.Second, "watchdog heartbeat interval")
 	serveAddr := flag.String("serve-addr", "", "local game-serving address, e.g. :8090 (dev: lets a browser play the bot over WebRTC via POST /offer)")
 	envFile := flag.String("env", ".env", "AGS credentials env file")
+	botsDir := flag.String("bots-dir", "", "directory holding every hostable bot personality (or BOTS_DIR; default bots)")
 	flag.Parse()
 	_ = gamePort // accepted for the future game listener/session integration
 
 	_ = godotenv.Load(*envFile)
 
-	botConfig, err := resolveBotRuntimeConfig(*botID, *botDir, *signalKey, os.Getenv)
+	// Resolved after godotenv.Load so a BOTS_DIR set only in .env still applies,
+	// and resolved once so discovery and the roster agree on the same root.
+	botsRoot := firstNonEmpty(*botsDir, os.Getenv("BOTS_DIR"), defaultBotsDir)
+	discovered, err := discoverPersonaDirs(botsRoot)
 	if err != nil {
-		log.Fatalf("configure bot: %v", err)
+		log.Fatalf("scan bots dir %s: %v", botsRoot, err)
 	}
-	bot, err := botbrain.LoadBot(botConfig.Dir)
+	roster, err := resolveBotRoster(botsRoot, discovered, *botID, *botDir, *signalKey, os.Getenv)
 	if err != nil {
-		log.Fatalf("load bot: %v", err)
+		log.Fatalf("configure bots: %v", err)
 	}
-	if bot.ID != botConfig.ID {
-		log.Fatalf("load bot: requested id %q but %s contains brain for %q", botConfig.ID, botConfig.Dir, bot.ID)
+	bots, err := loadRoster(roster)
+	if err != nil {
+		log.Fatalf("%v", err)
 	}
-	log.Printf("bot-ds: bot %q (%s, brain v%d, %d lessons) starting with signal key %q", bot.ID, bot.Name, bot.Brain.Version, len(bot.Brain.Lessons), botConfig.SignalKey)
+	for _, persona := range roster.Personas {
+		bot := bots[persona.ID]
+		marker := ""
+		if persona.ID == roster.DefaultID {
+			marker = " (default)"
+		}
+		log.Printf("bot-ds: hosting %q (%s, brain v%d, %d lessons) for pool %q via %q%s",
+			bot.ID, bot.Name, bot.Brain.Version, len(bot.Brain.Lessons), persona.MatchPool, persona.SignalKey, marker)
+	}
+	defaultBot := bots[roster.DefaultID]
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -74,7 +95,7 @@ func main() {
 	// without AMS/AGS signaling. (On a real fleet, signaling comes via AGS.)
 	localServe := *serveAddr != ""
 	if localServe {
-		serveGames(*serveAddr, bot)
+		serveGames(*serveAddr, defaultBot)
 	}
 
 	// 1. Connect to the AMS watchdog and announce readiness.
@@ -112,8 +133,20 @@ func main() {
 					log.Printf("bot-ds: AGS session ready: %v", err)
 					return
 				}
-				log.Printf("bot-ds: AGS session %s is ready for signaling", session.ID)
-				pc, err := ags.answerSignal(ctx, session.ID, bot, botConfig.SignalKey)
+
+				// AMS claims a DS without knowing which personality the waiting
+				// player queued for; the session's match pool is what tells us.
+				persona, matched := roster.forMatchPool(session.MatchPool)
+				if !matched {
+					persona = roster.defaultPersona()
+					log.Printf("bot-ds: session %s has match pool %q, which no hosted bot claims — falling back to %q; "+
+						"set BOT_MATCH_POOLS if the pool was renamed", session.ID, session.MatchPool, persona.ID)
+				}
+				bot := bots[persona.ID]
+				log.Printf("bot-ds: AGS session %s (pool %q) is ready for signaling as %s via %q",
+					session.ID, session.MatchPool, bot.Name, persona.SignalKey)
+
+				pc, err := ags.answerSignal(ctx, session.ID, bot, persona.SignalKey)
 				if err != nil {
 					log.Printf("bot-ds: %s signaling: %v", bot.Name, err)
 					return
