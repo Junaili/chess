@@ -479,7 +479,11 @@ func (w *MatchWatcher) postTrigger(ctx context.Context, url, botID string) {
 			req.Header.Set("x-trigger-secret", w.triggerSecret)
 		}
 		resp, err := outboundHTTPClient.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
+		// Any 2xx is an accepted trigger. The DS answers 202 (it starts the game
+		// asynchronously), so a 200-only check read every SUCCESSFUL wake as a
+		// failure and retried into the now-busy DS, which correctly replied 409 —
+		// leaving "HTTP 409" recorded as the outcome of a trigger that worked.
+		if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			resp.Body.Close()
 			w.dbgSet(map[string]any{"lastTriggerPostAt": time.Now().Format(time.RFC3339), "lastTriggerPostHTTP": resp.StatusCode, "lastTriggerPostURL": url})
 			return

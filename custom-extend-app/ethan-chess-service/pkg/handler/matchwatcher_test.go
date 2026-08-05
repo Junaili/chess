@@ -343,3 +343,64 @@ func TestSetBotUserIDsInstallsTheWholeRoster(t *testing.T) {
 		t.Error("an empty roster must not clear known bot accounts")
 	}
 }
+
+// The bot DS answers 202 (it starts the game asynchronously). Treating only 200
+// as success made every successful wake look like a failure and retried into the
+// now-busy DS, which replied 409 — so a working trigger was recorded as
+// "HTTP 409" and real failures became indistinguishable from success.
+func TestPostTriggerAcceptsAnySuccessStatus(t *testing.T) {
+	for _, status := range []int{200, 202, 204} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var attempts int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts++
+				// A real DS rejects a second trigger while busy; if the first
+				// reply were misread, this is what the retry would hit.
+				if attempts > 1 {
+					w.WriteHeader(http.StatusConflict)
+					return
+				}
+				w.WriteHeader(status)
+			}))
+			defer srv.Close()
+
+			w := &MatchWatcher{}
+			w.postTrigger(context.Background(), srv.URL+"/trigger", "gambit-gus")
+
+			if attempts != 1 {
+				t.Errorf("posted %d times, want 1 — a 2xx must not be retried", attempts)
+			}
+			w.dbgMu.Lock()
+			gotErr, hadErr := w.dbg["lastTriggerPostError"]
+			w.dbgMu.Unlock()
+			if hadErr {
+				t.Errorf("successful trigger recorded an error: %v", gotErr)
+			}
+		})
+	}
+}
+
+// A genuine failure must still retry and be recorded.
+func TestPostTriggerRetriesAndRecordsRealFailures(t *testing.T) {
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	w := &MatchWatcher{}
+	w.postTrigger(ctx, srv.URL+"/trigger", "")
+
+	if attempts != 4 {
+		t.Errorf("posted %d times, want 4 retries on a real failure", attempts)
+	}
+	w.dbgMu.Lock()
+	_, hadErr := w.dbg["lastTriggerPostError"]
+	w.dbgMu.Unlock()
+	if !hadErr {
+		t.Error("a real failure must be recorded")
+	}
+}
