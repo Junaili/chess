@@ -200,6 +200,9 @@ func main() {
 	if !watcherEnabled {
 		watcher = nil
 	}
+	// Every bot's account must be recognised as ours, or that bot's queue ticket
+	// reads as a human waiting and the watcher wakes a bot to face a bot.
+	watcher.SetBotUserIDs(roster.userIDs())
 
 	// "Play with <bot>": public bot profile (stats, journal, learned brain,
 	// caller dossier) + player-initiated challenge (auth required on both).
@@ -252,6 +255,9 @@ func main() {
 
 	// Club subscription + Ethan Coins (dev-plan/subscription-coins-implementation-plan.md).
 	monetization := newMonetizationHandlerFromEnv()
+	// A bot missing from this set is a coin farm: players could high-five it on
+	// demand. Every personality's account has to be here.
+	monetization.botUserIDs = roster.userIDs()
 	accountDeletion.monetization = monetization
 	mux.Handle(basePath+"/club/status",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(monetization.status))))

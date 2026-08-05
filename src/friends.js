@@ -6,23 +6,17 @@ import { resolveDisplayNames } from './leaderboard.js'
 import { fetchPresenceMap } from './presence.js'
 import { moderateIncomingDisplayName } from './content-moderation.mjs'
 import { classifyFriendRelationship, normalizeFriendsError } from './friend-feedback.mjs'
+import { isBotIdentity } from './bot-identity.mjs'
 
 export { normalizeFriendsError } from './friend-feedback.mjs'
 
 const PAGE = { limit: 50, offset: 0 }
 
-function isGambitGusIdentity(userId, displayName = '') {
-  const normalizedUserId = String(userId || '').trim().toLowerCase()
-  const normalizedDisplayName = String(displayName || '').trim().toLowerCase()
-  const knownUserId = String(window.agsGambitGusUserId || '').trim().toLowerCase()
-  const knownName = String(window.agsGambitGusName || 'Gambit Gus').trim().toLowerCase()
-  return normalizedUserId === 'gambit-gus'
-    || (knownUserId && normalizedUserId === knownUserId)
-    || normalizedDisplayName === knownName
-}
+// Any personality, not just Gus — each signs in as its own account.
+const isGambitGusIdentity = isBotIdentity
 
 function gusFriendBlock() {
-  return { ok: false, reason: 'bot', error: 'Gambit Gus cannot be added to Friends.' }
+  return { ok: false, reason: 'bot', error: 'Chess bots cannot be added to Friends.' }
 }
 
 function friendsApi() {

@@ -81,9 +81,23 @@ const BOT_AI_WORKER = /^(1|true|yes)$/i.test(process.env.BOT_AI_WORKER || '')
 // so the humans-first fallback varies which bot the player meets. Both share the
 // one bot AGS account — the opponent's name reaches the client over the data
 // channel (see playGame's botName), not from the account profile.
+// Each personality signs in as its OWN AGS account, so two bot games can run at
+// once and a bot's games stay out of another bot's match history. Credentials
+// come from per-persona env vars; the unsuffixed BOT_EMAIL/BOT_PASSWORD remain
+// the default persona's, so a rollback to one shared account is config-only.
 const PERSONAS = {
-  'gambit-gus': { id: 'gambit-gus', name: 'Gambit Gus' },
-  'fortress-fiona': { id: 'fortress-fiona', name: 'Fortress Fiona' },
+  'gambit-gus': {
+    id: 'gambit-gus',
+    name: 'Gambit Gus',
+    emailEnv: 'BOT_EMAIL_GAMBIT_GUS',
+    passwordEnv: 'BOT_PASSWORD_GAMBIT_GUS',
+  },
+  'fortress-fiona': {
+    id: 'fortress-fiona',
+    name: 'Fortress Fiona',
+    emailEnv: 'BOT_EMAIL_FORTRESS_FIONA',
+    passwordEnv: 'BOT_PASSWORD_FORTRESS_FIONA',
+  },
 }
 const ENABLED_PERSONAS = (process.env.BOT_PERSONAS || 'gambit-gus,fortress-fiona')
   .split(',').map((s) => s.trim()).filter((id) => PERSONAS[id])
@@ -150,10 +164,26 @@ function readJsonBody(req, limit = 8192) {
   })
 }
 
+// personaCredentials falls back to the shared BOT_EMAIL/BOT_PASSWORD when a
+// personality has no account of its own configured, so a half-provisioned
+// roster still plays rather than failing the claim outright.
+function personaCredentials(p) {
+  const email = (process.env[p.emailEnv] || '').trim() || process.env.BOT_EMAIL
+  const password = (process.env[p.passwordEnv] || '').trim() || process.env.BOT_PASSWORD
+  const own = !!(process.env[p.emailEnv] || '').trim()
+  return { email, password, own }
+}
+
+// The auth cache is keyed by personality: this process can be triggered as a
+// different persona than the one it last logged in as, and reusing a cached
+// token would silently play Fiona's game on Gus's account.
 async function ensureLogin() {
-  if (auth) return auth
-  auth = await login(process.env.BOT_EMAIL, process.env.BOT_PASSWORD)
-  log('logged in as bot — userId =', auth.userId)
+  if (auth && auth.personaID === persona.id) return auth
+  const { email, password, own } = personaCredentials(persona)
+  if (!own) log('no dedicated account for', persona.id, '— using the shared bot account')
+  const session = await login(email, password)
+  auth = { ...session, personaID: persona.id }
+  log('logged in as', persona.name, '— userId =', auth.userId)
   return auth
 }
 

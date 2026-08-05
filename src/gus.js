@@ -1,11 +1,14 @@
-// "Play with Gus" — the client face of the self-learning cold-start bot
-// (Gambit Gus). Talks to the Extend service's player-facing endpoints:
+// "Play with <bot>" — the client face of the self-learning cold-start bots
+// (Gambit Gus, Fortress Fiona). Talks to the Extend service's player-facing
+// endpoints:
+//   GET  /bot/roster     — every hosted personality's identity
 //   GET  /bot/profile    — persona, stats, matches, journal, brain, training
-//   POST /bot/challenge  — summon Gus to the queue right now (skips the queue gate)
+//   POST /bot/challenge  — summon a bot to the queue now (skips the queue gate)
 // DOM: the #ags-gus-panel home card and the #screen-gus profile screen.
 import { extendFetch } from './extend-client.js'
 import { startMatchmaking } from './matchmaking.js'
 import { sendEvent } from './telemetry.js'
+import { setBotIdentities, clearBotIdentities } from './bot-identity.mjs'
 import {
   normalizeGusProfile, formatGusRecord, formatWinRate, streakLabel,
   difficultyLabel, thinkTimeLabel, trainingStatusLine, formatDay,
@@ -60,16 +63,37 @@ export async function initGusPanel() {
     return
   }
   gusAvailable = true
-  window.agsGambitGusUserId = profile.bot.userId || profile.bot.id || 'gambit-gus'
-  window.agsGambitGusName = profile.bot.name || 'Gambit Gus'
+  await publishBotIdentities(profile)
   renderHomePanel(profile)
+}
+
+// Publish every hosted bot's identity so friend requests, High Fives, and
+// friend-list entries are suppressed for ALL of them — each personality signs
+// in as its own AGS account, so one hardcoded id can't cover the roster.
+async function publishBotIdentities(defaultProfile) {
+  const fallback = [{
+    id: defaultProfile.bot.id || DEFAULT_BOT_ID,
+    userId: defaultProfile.bot.userId || '',
+    name: defaultProfile.bot.name || 'Gambit Gus',
+  }]
+  try {
+    const res = await extendFetch('/bot/roster')
+    if (!res.ok) throw new Error(`roster ${res.status}`)
+    const data = await res.json()
+    const bots = Array.isArray(data?.bots) ? data.bots : []
+    setBotIdentities(bots.length ? bots : fallback)
+  } catch (error) {
+    // A missing roster must never make a bot look like a human, so fall back to
+    // the profile we already have rather than publishing nothing.
+    console.warn('[bot] roster unavailable:', error?.message || error)
+    setBotIdentities(fallback)
+  }
 }
 
 export function resetGusPanel() {
   gusAvailable = false
   profileCache.clear()
-  window.agsGambitGusUserId = ''
-  window.agsGambitGusName = 'Gambit Gus'
+  clearBotIdentities()
   const panel = document.getElementById('ags-gus-panel')
   if (panel) panel.style.display = 'none'
   const playBtn = document.getElementById('btn-play-gus')

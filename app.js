@@ -1553,12 +1553,11 @@ function showGameOver() {
   setRematchMessage('');
 
   const addFriendBtn = document.getElementById('btn-add-match-friend');
-  const isGusOpponent = currentOpponent?.userId
-    && (
-      currentOpponent.userId === window.agsGambitGusUserId
-      || currentOpponent.userId === 'gambit-gus'
-      || String(currentOpponent.name || '').trim().toLowerCase() === String(window.agsGambitGusName || 'Gambit Gus').trim().toLowerCase()
-    );
+  // Any personality, not just Gus — each bot signs in as its own account, so
+  // this has to consult the published roster rather than one hardcoded id.
+  const isGusOpponent = !!currentOpponent?.userId
+    && typeof window.isGambitGusIdentity === 'function'
+    && window.isGambitGusIdentity(currentOpponent.userId, currentOpponent.name);
   if (addFriendBtn) addFriendBtn.style.display = isOnline && currentOpponent?.userId && !currentOpponentBlocked && !isGusOpponent ? '' : 'none';
 
   // High Five (dev-plan §9): eligibility is decided by window.agsHighFiveButtonState

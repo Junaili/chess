@@ -277,3 +277,69 @@ func TestClaimOnce_ClaimByKeys_RequestBodyShape(t *testing.T) {
 		t.Errorf("expected literal \"regions\":[\"us-east-2\"] in the request body, got: %s", raw)
 	}
 }
+
+// Every hosted personality plays as its own AGS account. If the watcher only
+// recognises one of them, a second bot's queue ticket reads as a human waiting
+// — and the watcher wakes a bot to play against a bot.
+func TestIsBotTicketRecognisesEveryBotAccount(t *testing.T) {
+	w := &MatchWatcher{botUserIDs: mwUserIDSet("gus-id", "fiona-id")}
+
+	for _, tc := range []struct {
+		name   string
+		ticket poolTicket
+		want   bool
+	}{
+		{"default bot by ticket user", poolTicket{UserID: "gus-id"}, true},
+		{"second bot by ticket user", poolTicket{UserID: "fiona-id"}, true},
+		{"human is not ours", poolTicket{UserID: "a-real-player"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := w.isBotTicket(tc.ticket); got != tc.want {
+				t.Errorf("isBotTicket = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	// The same must hold through every nested shape the pool reports players in,
+	// decoded from the wire form the live endpoint actually returns.
+	for _, raw := range []string{
+		`{"Ticket":{"Players":[{"PlayerID":"fiona-id"}]}}`,
+		`{"parties":[{"userIDs":["fiona-id"]}]}`,
+		`{"parties":[{"partyMembers":[{"userID":"fiona-id"}]}]}`,
+		`{"proposedTickets":[{"userID":"fiona-id"}]}`,
+	} {
+		var ticket poolTicket
+		if err := json.Unmarshal([]byte(raw), &ticket); err != nil {
+			t.Fatalf("decode %s: %v", raw, err)
+		}
+		if !w.isBotTicket(ticket) {
+			t.Errorf("second bot not recognised in %s", raw)
+		}
+	}
+}
+
+// SetBotUserIDs installs the roster's accounts over the single-account default.
+func TestSetBotUserIDsInstallsTheWholeRoster(t *testing.T) {
+	t.Setenv("MATCH_WATCHER_ENABLED", "true")
+	t.Setenv("BOT_USER_ID", "gus-id")
+	t.Setenv("BOT_TRIGGER_URL", "http://localhost:8091/trigger")
+	w, ok := NewMatchWatcherFromEnv()
+	if !ok {
+		t.Fatal("watcher should be enabled")
+	}
+	if w.isBotTicket(poolTicket{UserID: "fiona-id"}) {
+		t.Fatal("fiona should not be known before the roster is installed")
+	}
+	w.SetBotUserIDs([]string{"gus-id", "fiona-id"})
+	if !w.isBotTicket(poolTicket{UserID: "fiona-id"}) {
+		t.Error("fiona should be known after SetBotUserIDs")
+	}
+	if !w.isBotTicket(poolTicket{UserID: "gus-id"}) {
+		t.Error("gus should still be known after SetBotUserIDs")
+	}
+	// An empty roster must not wipe the configured default.
+	w.SetBotUserIDs(nil)
+	if !w.isBotTicket(poolTicket{UserID: "gus-id"}) {
+		t.Error("an empty roster must not clear known bot accounts")
+	}
+}

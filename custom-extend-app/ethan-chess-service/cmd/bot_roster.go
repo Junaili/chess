@@ -8,6 +8,8 @@ package main
 // never a code change.
 
 import (
+	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,17 +69,35 @@ func newBotRosterFromEnv() *botRoster {
 		if id == defaultID {
 			dir = defaultDir
 		}
-		entry := &botEntry{id: id, dir: dir, userID: botUserIDFor(id)}
+		entry := &botEntry{id: id, dir: dir, userID: botUserIDFor(id, defaultID)}
 		r.entries = append(r.entries, entry)
 		r.byID[id] = entry
 	}
 	return r
 }
 
-// botUserIDFor resolves the AGS account a personality plays as. Every bot
-// currently shares the one BOT_USER_ID account; per-bot accounts land next.
-func botUserIDFor(_ string) string {
-	return strings.TrimSpace(os.Getenv("BOT_USER_ID"))
+// botUserIDFor resolves the AGS account a personality plays as.
+//
+//	BOT_ACCOUNTS={"gambit-gus":"<userId>","fortress-fiona":"<userId>"}
+//
+// BOT_USER_ID remains the default bot's account when BOT_ACCOUNTS omits it, so
+// a rollback to the single-account setup is a config-only revert.
+//
+// Each bot having its own account is what lets two bot games run at once, and
+// what keeps a bot's games out of another bot's match history.
+func botUserIDFor(botID, defaultID string) string {
+	if raw := strings.TrimSpace(os.Getenv("BOT_ACCOUNTS")); raw != "" {
+		var accounts map[string]string
+		if err := json.Unmarshal([]byte(raw), &accounts); err != nil {
+			log.Printf("[bot-roster] BOT_ACCOUNTS is not valid JSON (%v) — falling back to BOT_USER_ID", err)
+		} else if id := strings.TrimSpace(accounts[botID]); id != "" {
+			return id
+		}
+	}
+	if botID == defaultID {
+		return strings.TrimSpace(os.Getenv("BOT_USER_ID"))
+	}
+	return ""
 }
 
 // ids returns the hosted personality ids in registration order.

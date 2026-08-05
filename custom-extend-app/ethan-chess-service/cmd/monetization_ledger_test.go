@@ -123,7 +123,7 @@ func testMonetizationHandler(transport http.RoundTripper) *monetizationHandler {
 		clientID:     "server-client",
 		clientSecret: "server-secret",
 		webBaseURL:   "https://web.test",
-		botUserID:    "gambit-gus-id",
+		botUserIDs:   []string{"gambit-gus-id"},
 		httpClient:   &http.Client{Transport: transport},
 		now:          func() time.Time { return time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC) },
 	}

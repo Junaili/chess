@@ -20,6 +20,7 @@ import { validateDeletionConfirmation } from './account-deletion-contract.mjs'
 import { resolveLearningFlags, resolveLearningRolloutPercents, isInRolloutPercent } from './learning-flags.mjs'
 import { emitLearningStateChanged } from './learning-events.mjs'
 import { historyRowView, filterHistory, historyFilterCounts, pageHistory, HISTORY_PAGE_SIZE } from './history-view.mjs'
+import { isBotIdentity } from './bot-identity.mjs'
 import './app-shell.js'
 
 // Learning-loop rollout flags (dev-plan/history-journal-learning-loop-development-plan.md
@@ -1100,15 +1101,8 @@ let profileHistoryState = {
 let blockedPlayers = []
 let deletionRequirements = null
 
-function isGambitGusIdentity(userId, displayName = '') {
-  const normalizedUserId = String(userId || '').trim().toLowerCase()
-  const normalizedDisplayName = String(displayName || '').trim().toLowerCase()
-  const knownUserId = String(window.agsGambitGusUserId || '').trim().toLowerCase()
-  const knownName = String(window.agsGambitGusName || 'Gambit Gus').trim().toLowerCase()
-  return normalizedUserId === 'gambit-gus'
-    || (knownUserId && normalizedUserId === knownUserId)
-    || normalizedDisplayName === knownName
-}
+// Any personality, not just Gus — each signs in as its own account.
+const isGambitGusIdentity = isBotIdentity
 
 window.isGambitGusIdentity = isGambitGusIdentity
 

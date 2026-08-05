@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,8 +25,12 @@ import (
 // It reuses the service's client-credentials flow; the service's IAM client must
 // have ADMIN:NAMESPACE:{ns}:MATCHMAKING:POOL:TICKETS (Read).
 type MatchWatcher struct {
-	pool             string
-	botUserID        string
+	pool string
+	// botUserIDs are the AGS accounts our own bots play as. Every hosted
+	// personality has its own, so this must be a SET: with one id, a second
+	// bot's queue ticket reads as a human waiting and the watcher triggers a
+	// bot to play against a bot.
+	botUserIDs       map[string]struct{}
 	waitSeconds      int
 	pollSeconds      int
 	retriggerSeconds int
@@ -67,7 +72,8 @@ type MatchWatcher struct {
 //
 //	MATCH_WATCHER_ENABLED=true
 //	MATCH_POOL=chess-quickmatch
-//	BOT_USER_ID=<the bot's AGS user id>   (so the bot's own ticket is ignored)
+//	BOT_USER_ID=<the default bot's AGS user id>  (so its own ticket is ignored;
+//	             SetBotUserIDs installs the full roster of bot accounts)
 //	BOT_WAIT_SECONDS=20
 //	MATCH_WATCHER_POLL_SECONDS=3
 //	BOT_TRIGGER_URL=http://localhost:8091/trigger
@@ -77,7 +83,7 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 	}
 	w := &MatchWatcher{
 		pool:             mwEnvOr("MATCH_POOL", "chess-quickmatch"),
-		botUserID:        os.Getenv("BOT_USER_ID"),
+		botUserIDs:       mwUserIDSet(os.Getenv("BOT_USER_ID")),
 		waitSeconds:      mwEnvInt("BOT_WAIT_SECONDS", 20),
 		pollSeconds:      mwEnvInt("MATCH_WATCHER_POLL_SECONDS", 3),
 		retriggerSeconds: mwEnvInt("MATCH_WATCHER_RETRIGGER_SECONDS", 30),
@@ -109,6 +115,37 @@ func NewMatchWatcherFromEnv() (*MatchWatcher, bool) {
 	return w, true
 }
 
+// mwUserIDSet builds a bot-account set from non-empty ids.
+func mwUserIDSet(ids ...string) map[string]struct{} {
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			set[id] = struct{}{}
+		}
+	}
+	return set
+}
+
+// SetBotUserIDs installs the full set of accounts our bots play as. Called once
+// at startup with the roster's accounts; every one of them must be recognised
+// as ours, or that bot's queue ticket looks like a human waiting for a game.
+func (w *MatchWatcher) SetBotUserIDs(ids []string) {
+	if w == nil || len(ids) == 0 {
+		return
+	}
+	w.botUserIDs = mwUserIDSet(ids...)
+}
+
+// botUserIDList renders the configured accounts for logs and the debug endpoint.
+func (w *MatchWatcher) botUserIDList() []string {
+	out := make([]string, 0, len(w.botUserIDs))
+	for id := range w.botUserIDs {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (w *MatchWatcher) Start(ctx context.Context) {
 	w.triggerMu.Lock()
 	w.runCtx = ctx
@@ -121,8 +158,8 @@ func (w *MatchWatcher) Start(ctx context.Context) {
 			dst = fmt.Sprintf("AMS claim fleet=%s port=%q region=%q", w.amsFleetID, w.amsPortName, w.amsRegion)
 		}
 	}
-	log.Printf("match-watcher: watching pool=%q wait=%ds poll=%ds retrigger=%ds trigger=[%s] botUser=%s",
-		w.pool, w.waitSeconds, w.pollSeconds, w.retriggerSeconds, dst, w.botUserID)
+	log.Printf("match-watcher: watching pool=%q wait=%ds poll=%ds retrigger=%ds trigger=[%s] botUsers=%v",
+		w.pool, w.waitSeconds, w.pollSeconds, w.retriggerSeconds, dst, w.botUserIDList())
 	t := time.NewTicker(time.Duration(w.pollSeconds) * time.Second)
 	defer t.Stop()
 	for {
@@ -286,32 +323,39 @@ func (w *MatchWatcher) poll(ctx context.Context) error {
 	return nil
 }
 
+// isBotTicket reports whether a pool ticket belongs to ANY of our bots. Every
+// hosted personality has its own account, so a single-id check would count a
+// second bot's ticket as a waiting human — and the watcher would wake a bot to
+// play against a bot.
 func (w *MatchWatcher) isBotTicket(t poolTicket) bool {
-	want := w.botUserID
-	if want == "" {
+	if len(w.botUserIDs) == 0 {
 		return false
 	}
-	if t.UserID == want {
+	ours := func(id string) bool {
+		_, ok := w.botUserIDs[id]
+		return ok
+	}
+	if ours(t.UserID) {
 		return true
 	}
 	for _, player := range t.Ticket.Players {
-		if player.PlayerID == want {
+		if ours(player.PlayerID) {
 			return true
 		}
 	}
 	for _, proposed := range t.ProposedTickets {
-		if proposed.UserID == want {
+		if ours(proposed.UserID) {
 			return true
 		}
 	}
 	for _, party := range t.Parties {
 		for _, id := range party.UserIDs {
-			if id == want {
+			if ours(id) {
 				return true
 			}
 		}
 		for _, member := range party.PartyMembers {
-			if member.UserID == want {
+			if ours(member.UserID) {
 				return true
 			}
 		}
@@ -487,7 +531,7 @@ func (w *MatchWatcher) DebugHandler(secret string) http.HandlerFunc {
 			"now": time.Now().Format(time.RFC3339),
 			"config": map[string]any{
 				"pool": w.pool, "waitSeconds": w.waitSeconds, "pollSeconds": w.pollSeconds,
-				"botUserID": w.botUserID, "amsClaimEnabled": w.amsClaimEnabled,
+				"botUserIDs": w.botUserIDList(), "amsClaimEnabled": w.amsClaimEnabled,
 				"amsFleetID": w.amsFleetID, "amsClaimKeys": w.amsClaimKeys,
 				"amsRegion": w.amsRegion, "amsPortName": w.amsPortName, "amsBase": w.amsBase,
 				"triggerURL": w.triggerURL, "hasTriggerSecret": w.triggerSecret != "",

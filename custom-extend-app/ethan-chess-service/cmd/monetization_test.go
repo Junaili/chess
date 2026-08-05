@@ -53,6 +53,8 @@ func TestClubSKUCoinAmountsMatchThePlan(t *testing.T) {
 
 func TestValidHighFiveTarget(t *testing.T) {
 	const bot = "gambit-gus-id"
+	const secondBot = "fortress-fiona-id"
+	bots := []string{bot, secondBot}
 	cases := []struct {
 		name      string
 		sender    string
@@ -66,10 +68,13 @@ func TestValidHighFiveTarget(t *testing.T) {
 		{"empty recipient rejected", "sender-1", "", "match-1", false},
 		{"empty matchId rejected", "sender-1", "recipient-1", "", false},
 		{"bot recipient rejected", "sender-1", bot, "match-1", false},
+		// Every personality has its own account; one missing from the set is a
+		// coin farm players could high-five on demand.
+		{"second bot recipient rejected", "sender-1", secondBot, "match-1", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := validHighFiveTarget(c.sender, c.recipient, c.matchID, bot)
+			got := validHighFiveTarget(c.sender, c.recipient, c.matchID, bots)
 			if got != c.want {
 				t.Errorf("validHighFiveTarget(%q,%q,%q) = %v, want %v", c.sender, c.recipient, c.matchID, got, c.want)
 			}
@@ -82,10 +87,10 @@ func TestValidHighFiveTargetRejectsOversizedIDs(t *testing.T) {
 	for i := range oversized {
 		oversized[i] = 'a'
 	}
-	if validHighFiveTarget("sender-1", string(oversized), "match-1", "") {
+	if validHighFiveTarget("sender-1", string(oversized), "match-1", nil) {
 		t.Error("expected an oversized recipient id to be rejected")
 	}
-	if validHighFiveTarget("sender-1", "recipient-1", string(oversized), "") {
+	if validHighFiveTarget("sender-1", "recipient-1", string(oversized), nil) {
 		t.Error("expected an oversized match id to be rejected")
 	}
 }

@@ -72,7 +72,7 @@ type monetizationHandler struct {
 	clientID     string
 	clientSecret string
 	webBaseURL   string
-	botUserID    string
+	botUserIDs   []string
 
 	stripeSecretKey     string
 	stripeWebhookSecret string
@@ -91,7 +91,7 @@ func newMonetizationHandlerFromEnv() *monetizationHandler {
 		clientID:            os.Getenv("AB_CLIENT_ID"),
 		clientSecret:        os.Getenv("AB_CLIENT_SECRET"),
 		webBaseURL:          strings.TrimRight(defaultString(os.Getenv("WEB_BASE_URL"), "https://junaili.github.io/chess"), "/"),
-		botUserID:           os.Getenv("BOT_USER_ID"),
+		botUserIDs:          []string{os.Getenv("BOT_USER_ID")},
 		stripeSecretKey:     os.Getenv("STRIPE_SECRET_KEY"),
 		stripeWebhookSecret: os.Getenv("STRIPE_WEBHOOK_SECRET"),
 		httpClient:          &http.Client{Timeout: 15 * time.Second},
@@ -376,7 +376,7 @@ func (h *monetizationHandler) highFive(w http.ResponseWriter, r *http.Request) {
 	}
 	matchID := strings.TrimSpace(body.MatchID)
 	recipientID := strings.TrimSpace(body.RecipientUserID)
-	if !validHighFiveTarget(senderID, recipientID, matchID, h.botUserID) {
+	if !validHighFiveTarget(senderID, recipientID, matchID, h.botUserIDs) {
 		writeMonetizationError(w, http.StatusBadRequest, "invalid_target", "Can't send a High Five here.")
 		return
 	}
@@ -461,15 +461,20 @@ func (h *monetizationHandler) highFive(w http.ResponseWriter, r *http.Request) {
 	writeMonetizationJSON(w, http.StatusOK, map[string]any{"ok": true, "senderBalance": balance})
 }
 
-func validHighFiveTarget(senderID, recipientID, matchID, botUserID string) bool {
+// validHighFiveTarget gates who may receive a high-five. botUserIDs must list
+// EVERY bot account: each personality has its own, and a bot missing from the
+// set is a coin farm — players could high-five it for rewards on demand.
+func validHighFiveTarget(senderID, recipientID, matchID string, botUserIDs []string) bool {
 	if senderID == "" || recipientID == "" || matchID == "" {
 		return false
 	}
 	if senderID == recipientID {
 		return false
 	}
-	if botUserID != "" && recipientID == botUserID {
-		return false
+	for _, botID := range botUserIDs {
+		if botID != "" && recipientID == botID {
+			return false
+		}
 	}
 	if len(matchID) > 128 || len(recipientID) > 128 {
 		return false

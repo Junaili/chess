@@ -92,3 +92,59 @@ func TestBotRosterResolve(t *testing.T) {
 		})
 	}
 }
+
+func TestBotRosterResolvesPerBotAccounts(t *testing.T) {
+	t.Setenv("BOT_ID", "gambit-gus")
+	t.Setenv("BOT_PERSONAS", "gambit-gus,fortress-fiona")
+	t.Setenv("BOTS_DIR", "")
+	t.Setenv("BOT_DIR", "")
+	t.Setenv("BOT_USER_ID", "gus-account")
+	t.Setenv("BOT_ACCOUNTS", `{"gambit-gus":"gus-account","fortress-fiona":"fiona-account"}`)
+
+	r := newBotRosterFromEnv()
+	if got := r.byID["fortress-fiona"].userID; got != "fiona-account" {
+		t.Errorf("fiona userID = %q, want fiona-account", got)
+	}
+	if got := r.userIDs(); len(got) != 2 {
+		t.Errorf("userIDs = %v, want both accounts", got)
+	}
+}
+
+// BOT_USER_ID stays the default bot's account so reverting to the shared-account
+// setup is a config-only change.
+func TestBotRosterFallsBackToBotUserIDForTheDefault(t *testing.T) {
+	t.Setenv("BOT_ID", "gambit-gus")
+	t.Setenv("BOT_PERSONAS", "gambit-gus,fortress-fiona")
+	t.Setenv("BOTS_DIR", "")
+	t.Setenv("BOT_DIR", "")
+	t.Setenv("BOT_USER_ID", "gus-account")
+	t.Setenv("BOT_ACCOUNTS", "")
+
+	r := newBotRosterFromEnv()
+	if got := r.byID["gambit-gus"].userID; got != "gus-account" {
+		t.Errorf("default userID = %q, want gus-account", got)
+	}
+	// A bot with no account of its own must not inherit another bot's: that
+	// would file its games under the wrong account and break ticket filtering.
+	if got := r.byID["fortress-fiona"].userID; got != "" {
+		t.Errorf("fiona userID = %q, want empty (no account configured)", got)
+	}
+	if got := r.userIDs(); len(got) != 1 || got[0] != "gus-account" {
+		t.Errorf("userIDs = %v, want just the configured one", got)
+	}
+}
+
+// Malformed config must not take the roster down; it falls back rather than
+// crashing the service on boot.
+func TestBotRosterSurvivesMalformedBotAccounts(t *testing.T) {
+	t.Setenv("BOT_ID", "gambit-gus")
+	t.Setenv("BOT_PERSONAS", "gambit-gus")
+	t.Setenv("BOTS_DIR", "")
+	t.Setenv("BOT_DIR", "")
+	t.Setenv("BOT_USER_ID", "gus-account")
+	t.Setenv("BOT_ACCOUNTS", "{not json")
+
+	if got := newBotRosterFromEnv().byID["gambit-gus"].userID; got != "gus-account" {
+		t.Errorf("userID = %q, want the BOT_USER_ID fallback", got)
+	}
+}
