@@ -84,13 +84,20 @@ func main() {
 	botID, botDir := roster.defaultID, roster.byID[roster.defaultID].dir
 	hostedBots := roster.ids()
 	log.Printf("bot roster: %s (default %s)", strings.Join(hostedBots, ", "), botID)
-	trainJob := handler.NewTrainJob(botID, botDir)
+	// Every personality self-learns: its own trainer over its own persona
+	// directory and its own CloudSave history, so its reflections come out in
+	// its own voice. One Task Scheduler entry drives the whole roster.
+	trainRoster := handler.NewTrainRoster(botID)
+	for _, entry := range roster.entries {
+		trainRoster.Add(entry.id, entry.dir)
+	}
+	trainJob := trainRoster.Default()
 	performanceReporter, performanceEnabled, err := perftelemetry.NewFromEnv()
 	if err != nil {
 		log.Fatalf("configure performance telemetry: %v", err)
 	}
 	if performanceEnabled {
-		trainJob.SetPerformanceCapture(performanceReporter.Capture)
+		trainRoster.SetPerformanceCapture(performanceReporter.Capture)
 	}
 
 	grpcServer := grpc.NewServer(
@@ -99,7 +106,7 @@ func main() {
 		grpc.MaxSendMsgSize(1<<20),
 	)
 	pb.RegisterChessServiceServer(grpcServer, service.NewChessServiceServer())
-	taskscheduler.RegisterScheduledTaskHandlerServer(grpcServer, handler.NewScheduledTaskHandler(trainJob))
+	taskscheduler.RegisterScheduledTaskHandlerServer(grpcServer, handler.NewScheduledTaskHandler(trainRoster))
 	// Reflection must stay on: the Admin Portal's Task Scheduler tab discovers
 	// the ScheduledTaskHandler service via gRPC reflection, and without it task
 	// creation is blocked ("This app doesn't have a task scheduler gRPC
@@ -201,12 +208,9 @@ func main() {
 	// randomly chosen bot, so any of them can be asked for by ?bot=.
 	botProfiles := map[string]*botHandlers{}
 	for _, entry := range roster.entries {
-		// The daily trainer only runs for the default bot, so the others report
-		// no training rather than borrowing the default bot's status.
-		botTrainJob := trainJob
-		if entry.id != botID {
-			botTrainJob = nil
-		}
+		// Each bot reports its OWN trainer's status — every personality now
+		// self-learns, so none has to borrow another's run history.
+		botTrainJob, _ := trainRoster.Get(entry.id)
 		botProfiles[entry.id] = newBotHandlers(entry.id, entry.dir, entry.userID, hostedBots, botTrainJob, watcher)
 	}
 	gus := botProfiles[botID]
@@ -284,9 +288,9 @@ func main() {
 
 	// Daily self-learning: the Task Scheduler invokes training via gRPC
 	// (RunScheduledTask); this HTTP endpoint is the manual/debug trigger.
-	mux.HandleFunc(basePath+"/bot/train", trainJob.TrainHandler(os.Getenv("BOT_TRIGGER_SECRET")))
+	mux.HandleFunc(basePath+"/bot/train", trainRoster.TrainHandler(os.Getenv("BOT_TRIGGER_SECRET")))
 	mux.HandleFunc(basePath+"/bot/brain", trainJob.BotBrainHandler(os.Getenv("BOT_TRIGGER_SECRET"), hostedBots))
-	mux.HandleFunc(basePath+"/debug/trainer", trainJob.TrainerDebugHandler(os.Getenv("BOT_TRIGGER_SECRET")))
+	mux.HandleFunc(basePath+"/debug/trainer", trainRoster.TrainerDebugHandler(os.Getenv("BOT_TRIGGER_SECRET")))
 	if performanceEnabled {
 		mux.HandleFunc(basePath+"/debug/performance-capture",
 			performanceReporter.Handler(os.Getenv("BOT_TRIGGER_SECRET")))

@@ -385,8 +385,9 @@ func TestTrainingBackfillsOldGameAndCommitsJournalAtomically(t *testing.T) {
 func TestScheduledTaskValidationAndConflictSemantics(t *testing.T) {
 	t.Setenv("AB_NAMESPACE", "test")
 	t.Setenv("BOT_TRAIN_TASK_NAME", "gus-daily-training")
-	job := NewTrainJob("gambit-gus", "unused")
-	handler := NewScheduledTaskHandler(job)
+	roster := NewTrainRoster("gambit-gus")
+	job := roster.Add("gambit-gus", "unused")
+	handler := NewScheduledTaskHandler(roster)
 
 	response, err := handler.RunScheduledTask(context.Background(), &ts.ScheduledTaskRequest{})
 	if err != nil || response.Success || response.HttpStatusCode != 400 {

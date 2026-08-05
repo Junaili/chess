@@ -6,7 +6,8 @@
 //
 // Usage:
 //
-//	go run ./cmd/train-bot --bot-dir bots/gambit-gus --bot-user-id <agsUserID>
+//	go run ./cmd/train-bot --bot fortress-fiona
+//	go run ./cmd/train-bot --bot-dir bots/gambit-gus
 //
 // Env (.env or environment):
 //
@@ -22,6 +23,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,6 +35,8 @@ import (
 )
 
 func main() {
+	botID := flag.String("bot", "", "personality to train, resolved under -bots-dir (shorthand for -bot-dir)")
+	botsDir := flag.String("bots-dir", "bots", "parent directory holding one directory per personality")
 	botDir := flag.String("bot-dir", "bots/gambit-gus", "path to the bot's directory (persona.md, style.json, brain.json)")
 	historyKey := flag.String("history-key", "", "AGS admin game-record key (default chess-bot-<botID>-history)")
 	sinceHours := flag.Int("since-hours", 0, "optional history window in hours; 0 backfills every retained unprocessed game")
@@ -41,6 +45,21 @@ func main() {
 	envFile := flag.String("env", ".env", "AGS credentials env file (shared with the service)")
 	llmEnvFile := flag.String("llm-env", ".env.local", "LOCAL-ONLY LLM config env file (never deployed)")
 	flag.Parse()
+
+	// -bot is the shorthand; an explicit -bot-dir always wins, so the two can't
+	// silently disagree about which personality is being trained.
+	if *botID != "" {
+		explicitDir := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "bot-dir" {
+				explicitDir = true
+			}
+		})
+		if explicitDir {
+			fatal("pass either -bot or -bot-dir, not both")
+		}
+		*botDir = filepath.Join(*botsDir, *botID)
+	}
 
 	// LLM config is local-only (.env.local), loaded first so it takes precedence;
 	// AGS creds come from the shared .env. Real environment variables win over both.

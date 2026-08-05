@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -15,13 +16,14 @@ import (
 // (accelbyte.extend.task_scheduler.v1.ScheduledTaskHandler): the platform
 // sidecar calls RunScheduledTask on this app's gRPC server per the cron
 // configured in the Admin Portal's Task Scheduler tab. Our one task is the
-// daily self-learning training run.
+// daily self-learning training run, which trains every hosted personality —
+// one cron entry for the whole roster, so adding a bot needs no portal change.
 type ScheduledTaskHandler struct {
-	job *TrainJob
+	roster *TrainRoster
 }
 
-func NewScheduledTaskHandler(job *TrainJob) *ScheduledTaskHandler {
-	return &ScheduledTaskHandler{job: job}
+func NewScheduledTaskHandler(roster *TrainRoster) *ScheduledTaskHandler {
+	return &ScheduledTaskHandler{roster: roster}
 }
 
 func (h *ScheduledTaskHandler) RunScheduledTask(ctx context.Context, req *ts.ScheduledTaskRequest) (*ts.ScheduledTaskResponse, error) {
@@ -42,33 +44,60 @@ func (h *ScheduledTaskHandler) RunScheduledTask(ctx context.Context, req *ts.Sch
 		req.GetRunId(), req.GetTaskName(), req.GetAttemptNumber(), scheduled)
 
 	// Respect sidecar cancellation so a timed-out attempt cannot continue in the
-	// background and race its retry on another replica.
-	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	// background and race its retry on another replica. Each bot gets its own
+	// budget inside RunAll; this bounds the roster as a whole.
+	runCtx, cancel := context.WithTimeout(ctx, time.Duration(len(h.roster.IDs()))*PerBotTrainTimeout)
 	defer cancel()
 
-	st, conflict, err := h.job.TryRun(runCtx, req.GetRunId())
+	results := h.roster.RunAll(runCtx, req.GetRunId())
+	if len(results) == 0 {
+		return &ts.ScheduledTaskResponse{Success: false, Message: "no bots registered for training", HttpStatusCode: 500}, nil
+	}
+
+	var trained, conflicts int
+	var failures []string
+	for _, res := range results {
+		switch {
+		case res.Error != "":
+			failures = append(failures, res.BotID+": "+res.Error)
+		case res.Conflict:
+			conflicts++
+		default:
+			trained++
+		}
+	}
+
+	result, _ := json.Marshal(results)
 	switch {
-	case conflict:
-		// Never acknowledge an in-flight retry as successful: the original
-		// attempt may still fail. Asking the scheduler to retry means it will
-		// eventually observe the durable run ID or perform the work itself.
-		active, _ := st["activeRunID"].(string)
+	case conflicts == len(results):
+		// Nothing ran, so a retry is genuinely warranted. Never acknowledge an
+		// in-flight retry as successful: the original attempt may still fail.
+		// Asking the scheduler to retry means it will eventually observe the
+		// durable run ID or perform the work itself.
 		return &ts.ScheduledTaskResponse{
 			Success:        false,
-			Message:        "training run " + active + " is in progress; retry this scheduled run",
+			Message:        "every bot is already training; retry this scheduled run",
+			ResultData:     string(result),
 			HttpStatusCode: 409,
 		}, nil
-	case err != nil:
+	case trained == 0 && len(failures) > 0:
 		return &ts.ScheduledTaskResponse{
 			Success:        false,
-			Message:        err.Error(),
+			Message:        strings.Join(failures, "; "),
+			ResultData:     string(result),
 			HttpStatusCode: 500,
 		}, nil
 	}
-	result, _ := json.Marshal(st)
+	// A bot that conflicted is already being trained by someone, and a bot that
+	// failed has its own error recorded — neither should cost the bots that did
+	// train their successful run by forcing a whole-roster retry.
+	message := fmt.Sprintf("training run completed for %d/%d bots", trained, len(results))
+	if len(failures) > 0 {
+		message += " (failed — " + strings.Join(failures, "; ") + ")"
+	}
 	return &ts.ScheduledTaskResponse{
 		Success:        true,
-		Message:        "training run completed",
+		Message:        message,
 		ResultData:     string(result),
 		HttpStatusCode: 200,
 	}, nil
