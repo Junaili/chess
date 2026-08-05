@@ -13,10 +13,14 @@ import {
 } from './gus-data.mjs'
 
 const PROFILE_TTL_MS = 60_000
+export const DEFAULT_BOT_ID = 'gambit-gus'
 
-let cachedProfile = null
-let cachedAt = 0
+// One cache entry per personality: the matchmaking wait screen offers a random
+// bot, so several profiles can be viewed in a session and they must not clobber
+// each other's cached data.
+const profileCache = new Map() // botId -> { profile, at }
 let gusAvailable = false
+let lastViewedBotId = DEFAULT_BOT_ID
 
 const esc = s => String(s ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -27,13 +31,18 @@ export function gusTransportAvailable() {
   return !!import.meta.env.DEV || !!import.meta.env.VITE_EXTEND_EMAIL_URL
 }
 
-async function fetchGusProfile(force = false) {
-  if (!force && cachedProfile && Date.now() - cachedAt < PROFILE_TTL_MS) return cachedProfile
-  const res = await extendFetch('/bot/profile')
+function cachedFor(botId) {
+  return profileCache.get(botId) || null
+}
+
+async function fetchGusProfile(force = false, botId = DEFAULT_BOT_ID) {
+  const hit = cachedFor(botId)
+  if (!force && hit && Date.now() - hit.at < PROFILE_TTL_MS) return hit.profile
+  const res = await extendFetch(`/bot/profile?bot=${encodeURIComponent(botId)}`)
   if (!res.ok) throw new Error(`profile ${res.status}`)
-  cachedProfile = normalizeGusProfile(await res.json())
-  cachedAt = Date.now()
-  return cachedProfile
+  const profile = normalizeGusProfile(await res.json())
+  profileCache.set(botId, { profile, at: Date.now() })
+  return profile
 }
 
 // ── home panel ────────────────────────────────────────────────────────────────
@@ -58,8 +67,7 @@ export async function initGusPanel() {
 
 export function resetGusPanel() {
   gusAvailable = false
-  cachedProfile = null
-  cachedAt = 0
+  profileCache.clear()
   window.agsGambitGusUserId = ''
   window.agsGambitGusName = 'Gambit Gus'
   const panel = document.getElementById('ags-gus-panel')
@@ -96,28 +104,30 @@ function renderHomePanel(profile) {
 
 // ── profile screen ────────────────────────────────────────────────────────────
 
-export async function openGusProfile() {
+export async function openGusProfile(botId = DEFAULT_BOT_ID) {
+  lastViewedBotId = botId
   if (typeof window.showScreen === 'function') window.showScreen('gus')
-  sendEvent('gus_profile_viewed', {})
-  setStatus('Loading Gus’s latest…', '')
+  sendEvent('gus_profile_viewed', { bot: botId })
+  setStatus('Loading the latest…', '')
+  const hit = cachedFor(botId)
   try {
-    const profile = await fetchGusProfile(Date.now() - cachedAt > PROFILE_TTL_MS)
+    const profile = await fetchGusProfile(!hit || Date.now() - hit.at > PROFILE_TTL_MS, botId)
     renderGusScreen(profile)
     setStatus('', '')
   } catch (error) {
-    console.warn('[gus] profile load failed:', error?.message || error)
-    if (cachedProfile) {
-      renderGusScreen(cachedProfile)
-      setStatus('Showing Gus’s last known info — refresh to retry.', 'error')
+    console.warn(`[bot] ${botId} profile load failed:`, error?.message || error)
+    if (hit) {
+      renderGusScreen(hit.profile)
+      setStatus('Showing the last known info — refresh to retry.', 'error')
     } else {
-      setStatus('Could not reach Gus right now. Check your connection and try again.', 'error')
+      setStatus('Could not reach this bot right now. Check your connection and try again.', 'error')
     }
   }
 }
 
 export async function refreshGusProfile() {
-  cachedAt = 0
-  await openGusProfile()
+  profileCache.delete(lastViewedBotId)
+  await openGusProfile(lastViewedBotId)
 }
 
 let gusRecentMatches = []
@@ -155,8 +165,24 @@ function renderGusScreen(profile) {
   setText('gus-profile-name', bot.name)
   setText('gus-profile-tagline', bot.tagline ? `“${bot.tagline}”` : '')
   setText('gus-personality', bot.personality || 'A chess bot with personality — he plays, loses, learns, and comes back sharper.')
+  // The profile screen is reachable for any personality (the wait screen offers
+  // a random one), so the challenge button must name and summon the bot being
+  // viewed rather than always Gus.
   const challengeBtn = document.getElementById('btn-gus-challenge')
-  if (challengeBtn) challengeBtn.style.display = playable ? '' : 'none'
+  if (challengeBtn) {
+    challengeBtn.style.display = playable ? '' : 'none'
+    challengeBtn.textContent = `${bot.id === 'fortress-fiona' ? '♜' : '♞'} Play ${bot.name} Now`
+    challengeBtn.dataset.botId = bot.id
+    if (challengeBtn.dataset.botBound !== '1') {
+      challengeBtn.dataset.botBound = '1'
+      challengeBtn.addEventListener('click', () => {
+        const start = challengeBtn.dataset.botId === 'fortress-fiona'
+          ? window.startFionaMatchmaking
+          : window.startGusMatchmaking
+        if (typeof start === 'function') start()
+      })
+    }
+  }
   const offlineNote = document.getElementById('gus-offline-note')
   if (offlineNote) offlineNote.style.display = playable ? 'none' : ''
 

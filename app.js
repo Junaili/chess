@@ -3731,11 +3731,37 @@ function showWaitingScreen(role) {
   document.getElementById('waiting-sub').textContent = sub;
   document.getElementById('invite-link-section').style.display = 'none';
   document.getElementById('waiting-spinner').style.display = 'block';
-  // Only the random "Find a Chess Buddy" queue can actually pair you with
-  // Gus as a fallback — the direct Gus challenge already knows who you're
-  // playing, and friend invites/joins aren't matchmaking at all.
+  // Only the random "Find a Chess Buddy" queue can actually pair you with a
+  // bot as a fallback — a direct challenge already knows who you're playing,
+  // and friend invites/joins aren't matchmaking at all.
   const learnGusBtn = document.getElementById('btn-learn-about-gus');
-  if (learnGusBtn) learnGusBtn.style.display = role === 'matchmaking' ? '' : 'none';
+  if (learnGusBtn) {
+    const showLearnBot = role === 'matchmaking';
+    learnGusBtn.style.display = showLearnBot ? '' : 'none';
+    if (showLearnBot) featureRandomWaitingBot(learnGusBtn);
+  }
+}
+
+// Any of these can wake for a random-queue player who finds no human, so the
+// wait screen offers a different one each time instead of always naming Gus.
+const WAITING_BOTS = [
+  { id: 'gambit-gus', name: 'Gambit Gus', glyph: '♞' },
+  { id: 'fortress-fiona', name: 'Fortress Fiona', glyph: '♜' },
+];
+
+function featureRandomWaitingBot(button) {
+  const bot = WAITING_BOTS[Math.floor(Math.random() * WAITING_BOTS.length)];
+  button.textContent = `${bot.glyph} While you wait, meet ${bot.name} →`;
+  button.dataset.botId = bot.id;
+  // Bound here rather than via data-click: that dispatcher only accepts static
+  // literal arguments, and the bot being offered changes on every wait.
+  if (button.dataset.botBound !== '1') {
+    button.dataset.botBound = '1';
+    button.addEventListener('click', () => {
+      const id = button.dataset.botId || 'gambit-gus';
+      if (typeof window.agsOpenGusProfile === 'function') window.agsOpenGusProfile(id);
+    });
+  }
 }
 
 function pickWhiteUserId(memberUserIds = [], sessionId = '') {
@@ -3784,8 +3810,9 @@ function startGusMatchmaking() {
   startQueueMatchmaking('gus');
 }
 
-// Fortress Fiona uses her own match pool, but otherwise follows the exact
-// same waiting-room and peer-connection flow as Gus and normal matchmaking.
+// Fortress Fiona shares the quickmatch pool with Gus — the challenge names her
+// so the claimed bot DS wakes as her — and otherwise follows the exact same
+// waiting-room and peer-connection flow as Gus and normal matchmaking.
 function startFionaMatchmaking() {
   startQueueMatchmaking('fiona');
 }

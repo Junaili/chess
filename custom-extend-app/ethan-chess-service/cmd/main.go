@@ -82,9 +82,18 @@ func main() {
 	if botID == "" {
 		botID = "gambit-gus"
 	}
+	// BOTS_DIR is the parent holding one directory per personality; BOT_DIR
+	// overrides the default bot's own directory alone. Sibling personalities
+	// resolve from BOTS_DIR rather than from BOT_DIR's parent, so pointing
+	// BOT_DIR somewhere outside the roster (a test fixture, a mounted volume)
+	// can't drag the other bots along with it.
+	botsDir := os.Getenv("BOTS_DIR")
+	if botsDir == "" {
+		botsDir = "bots"
+	}
 	botDir := os.Getenv("BOT_DIR")
 	if botDir == "" {
-		botDir = "bots/" + botID
+		botDir = filepath.Join(botsDir, botID)
 	}
 	// Personalities the AMS bot DS may wake up as. One fleet hosts them all and
 	// names the one it chose when reporting a game or fetching a brain.
@@ -207,11 +216,39 @@ func main() {
 		watcher = nil
 	}
 
-	// "Play with Gus": public bot profile (stats, journal, learned brain,
+	// "Play with <bot>": public bot profile (stats, journal, learned brain,
 	// caller dossier) + player-initiated challenge (auth required on both).
+	// One handler set per hostable personality, since each has its own persona
+	// file and its own CloudSave history — the matchmaking wait screen offers a
+	// randomly chosen bot, so any of them can be asked for by ?bot=.
 	gus := newGusHandlers(botID, botDir, os.Getenv("BOT_USER_ID"), hostedBots, trainJob, watcher)
+	botProfiles := map[string]*gusHandlers{botID: gus}
+	for _, id := range hostedBots {
+		if id == botID {
+			continue
+		}
+		// The daily trainer only runs for the default bot, so the others report
+		// no training rather than borrowing Gus's status.
+		botProfiles[id] = newGusHandlers(id, filepath.Join(botsDir, id),
+			os.Getenv("BOT_USER_ID"), hostedBots, nil, watcher)
+	}
+	profileFor := func(w http.ResponseWriter, r *http.Request) {
+		requested := strings.TrimSpace(r.URL.Query().Get("bot"))
+		if requested == "" {
+			requested = botID
+		}
+		handlers, hosted := botProfiles[requested]
+		if !hosted {
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":"unknown bot"}`, http.StatusBadRequest)
+			return
+		}
+		handlers.profile(w, r)
+	}
 	mux.Handle(basePath+"/bot/profile",
-		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(gus.profile))))
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(profileFor))))
+	// The challenge stays on the default handler: it reads ?bot= itself, and a
+	// single instance keeps one shared rate limiter across all personalities.
 	mux.Handle(basePath+"/bot/challenge",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(gus.challenge))))
 

@@ -416,9 +416,15 @@ func (g *gusHandlers) snapshot() (games []botbrain.MatchEntry, brain *botbrain.B
 // ── HTTP handlers ─────────────────────────────────────────────────────────────
 
 func (g *gusHandlers) identity() map[string]any {
-	name, tagline, personality := "Gambit Gus", "", ""
+	// Fall back to this bot's own name, never a hardcoded one: the same handler
+	// type now serves every personality, so a persona that fails to parse must
+	// not label Fiona as Gus.
+	name, tagline, personality := g.botID, "", ""
 	var style json.RawMessage
 	if g.bot != nil {
+		if g.bot.Name != "" {
+			name = g.bot.Name
+		}
 		if n, t, p := parsePersonaMarkdown(g.bot.Persona); n != "" {
 			name, tagline, personality = n, t, p
 		}

@@ -767,7 +767,7 @@ test.describe('UI smoke (signed out)', () => {
     await expect(timer).toBeHidden();
   });
 
-  test('random matchmaking offers to meet Gus while waiting, and it opens his profile', async ({ page }) => {
+  test('random matchmaking offers to meet a bot while waiting, and it opens that bot\'s profile', async ({ page }) => {
     await gotoApp(page);
     await page.evaluate(() => {
       window.agsStartMatchmaking = () => {};
@@ -777,11 +777,33 @@ test.describe('UI smoke (signed out)', () => {
 
     const learnGusBtn = page.locator('#btn-learn-about-gus');
     await expect(learnGusBtn).toBeVisible();
-    await learnGusBtn.click();
-    await expect(page.locator('#screen-gus')).toBeVisible();
+    // Either bot may wake for a random-queue player, so the offer is randomized.
+    await expect(learnGusBtn).toHaveText(/While you wait, meet (Gambit Gus|Fortress Fiona)/);
+    const offered = await learnGusBtn.getAttribute('data-bot-id');
+    expect(['gambit-gus', 'fortress-fiona']).toContain(offered);
+
+    // The click must ask for the bot that was actually offered.
+    const requested = await page.evaluate(() => new Promise(resolve => {
+      window.agsOpenGusProfile = id => resolve(id);
+      document.getElementById('btn-learn-about-gus').click();
+    }));
+    expect(requested).toBe(offered);
   });
 
-  test('the meet-Gus link only appears for random matchmaking, not friend invites or a direct Gus challenge', async ({ page }) => {
+  test('the wait screen eventually offers each bot across repeated waits', async ({ page }) => {
+    await gotoApp(page);
+    const seen = await page.evaluate(() => {
+      const ids = new Set();
+      for (let i = 0; i < 200; i++) {
+        window.showWaitingScreen('matchmaking');
+        ids.add(document.getElementById('btn-learn-about-gus').dataset.botId);
+      }
+      return [...ids].sort();
+    });
+    expect(seen).toEqual(['fortress-fiona', 'gambit-gus']);
+  });
+
+  test('the meet-a-bot link only appears for random matchmaking, not friend invites or a direct Gus challenge', async ({ page }) => {
     await gotoApp(page);
     const learnGusBtn = page.locator('#btn-learn-about-gus');
 
