@@ -137,7 +137,9 @@ test.describe('Gambit Gus profile', () => {
     await page.evaluate(() => window.agsOpenGusProfile());
 
     await expect(page.locator('#screen-gus')).toBeVisible();
-    await expect(page.locator('#gus-profile-status')).toContainText('Could not reach Gus');
+    // Bot-agnostic copy: this screen serves whichever personality is being
+    // viewed, so the failure message can't name Gus.
+    await expect(page.locator('#gus-profile-status')).toContainText('Could not reach this bot');
   });
 
   test('shows friendly empty states for a brand-new bot', async ({ page }) => {
