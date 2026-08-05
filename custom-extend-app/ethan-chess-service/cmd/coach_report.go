@@ -106,7 +106,7 @@ type coachReportHandler struct {
 func newCoachReportHandler(botDir string) *coachReportHandler {
 	name, persona := "Gambit Gus", ""
 	if bot, err := botbrain.LoadBot(botDir); err == nil {
-		if n, _, p := parsePersonaMarkdown(bot.Persona); n != "" {
+		if n, _, p, _ := parsePersonaMarkdown(bot.Persona); n != "" {
 			name, persona = n, p
 		}
 	} else {

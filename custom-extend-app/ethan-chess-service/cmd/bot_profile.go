@@ -41,9 +41,12 @@ const (
 	gusOpeningLimit       = 8
 	gusProfileCacheTTL    = 30 * time.Second
 	gusChallengeGlobalCap = 10 // per minute, protects the AMS fleet buffer
+
+	// Shown when a persona.md declares no "- **Glyph:**" bullet.
+	defaultBotGlyph = "♟"
 )
 
-type gusHandlers struct {
+type botHandlers struct {
 	botID string
 	// hostedBots are the personalities the AMS bot DS can wake up as; a
 	// challenge may name any of them.
@@ -68,7 +71,7 @@ type gusHandlers struct {
 }
 
 // hosts reports whether the AMS bot DS can wake up as botID.
-func (g *gusHandlers) hosts(botID string) bool {
+func (g *botHandlers) hosts(botID string) bool {
 	for _, id := range g.hostedBots {
 		if id == botID {
 			return true
@@ -77,14 +80,14 @@ func (g *gusHandlers) hosts(botID string) bool {
 	return false
 }
 
-func newGusHandlers(botID, botDir, botUserID string, hostedBots []string, trainJob *handler.TrainJob, watcher *handler.MatchWatcher) *gusHandlers {
+func newBotHandlers(botID, botDir, botUserID string, hostedBots []string, trainJob *handler.TrainJob, watcher *handler.MatchWatcher) *botHandlers {
 	bot, err := botbrain.LoadBot(botDir)
 	if err != nil {
 		// Profile still works from CloudSave data; persona falls back to defaults.
 		log.Printf("[gus] load bot dir %q: %v", botDir, err)
 		bot = nil
 	}
-	return &gusHandlers{
+	return &botHandlers{
 		botID:         botID,
 		hostedBots:    hostedBots,
 		botUserID:     botUserID,
@@ -101,7 +104,7 @@ func newGusHandlers(botID, botDir, botUserID string, hostedBots []string, trainJ
 // parsePersonaMarkdown pulls the display fields out of persona.md. The file is
 // hand-authored, so parse defensively: name/tagline come from the "- **Name:**"
 // bullet style, personality is the prose under "## Personality".
-func parsePersonaMarkdown(md string) (name, tagline, personality string) {
+func parsePersonaMarkdown(md string) (name, tagline, personality, glyph string) {
 	var inPersonality bool
 	var para []string
 	for _, line := range strings.Split(md, "\n") {
@@ -119,8 +122,13 @@ func parsePersonaMarkdown(md string) (name, tagline, personality string) {
 		if v, ok := personaBullet(trimmed, "tagline"); ok {
 			tagline = strings.Trim(v, `"“”`)
 		}
+		// The piece the UI shows next to this bot's name. Data, not a client-side
+		// switch on bot id — a new personality shouldn't need a frontend edit.
+		if v, ok := personaBullet(trimmed, "glyph"); ok {
+			glyph = v
+		}
 	}
-	return name, tagline, strings.Join(para, " ")
+	return name, tagline, strings.Join(para, " "), glyph
 }
 
 // personaBullet matches `- **Key:** value` (case-insensitive key).
@@ -384,7 +392,7 @@ func journalNewestFirst(entries []handler.JournalEntry, limit int) []handler.Jou
 
 // snapshot returns the (briefly cached) CloudSave state: games, brain, journal.
 // The brain falls back to the baked-in seed when the bot has never trained.
-func (g *gusHandlers) snapshot() (games []botbrain.MatchEntry, brain *botbrain.Brain, journal []handler.JournalEntry, err error) {
+func (g *botHandlers) snapshot() (games []botbrain.MatchEntry, brain *botbrain.Brain, journal []handler.JournalEntry, err error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if time.Since(g.fetchedAt) < gusProfileCacheTTL {
@@ -415,18 +423,22 @@ func (g *gusHandlers) snapshot() (games []botbrain.MatchEntry, brain *botbrain.B
 
 // ── HTTP handlers ─────────────────────────────────────────────────────────────
 
-func (g *gusHandlers) identity() map[string]any {
+func (g *botHandlers) identity() map[string]any {
 	// Fall back to this bot's own name, never a hardcoded one: the same handler
 	// type now serves every personality, so a persona that fails to parse must
 	// not label Fiona as Gus.
 	name, tagline, personality := g.botID, "", ""
+	glyph := defaultBotGlyph
 	var style json.RawMessage
 	if g.bot != nil {
 		if g.bot.Name != "" {
 			name = g.bot.Name
 		}
-		if n, t, p := parsePersonaMarkdown(g.bot.Persona); n != "" {
+		if n, t, p, gl := parsePersonaMarkdown(g.bot.Persona); n != "" {
 			name, tagline, personality = n, t, p
+			if gl != "" {
+				glyph = gl
+			}
 		}
 		style = g.bot.Style
 	}
@@ -436,6 +448,7 @@ func (g *gusHandlers) identity() map[string]any {
 		"name":        name,
 		"tagline":     tagline,
 		"personality": personality,
+		"glyph":       glyph,
 	}
 	if len(style) > 0 {
 		id["style"] = style
@@ -443,7 +456,7 @@ func (g *gusHandlers) identity() map[string]any {
 	return id
 }
 
-func (g *gusHandlers) profile(w http.ResponseWriter, r *http.Request) {
+func (g *botHandlers) profile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
@@ -490,7 +503,7 @@ func (g *gusHandlers) profile(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(out)
 }
 
-func (g *gusHandlers) challenge(w http.ResponseWriter, r *http.Request) {
+func (g *botHandlers) challenge(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)

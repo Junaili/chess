@@ -15,6 +15,7 @@ func TestParsePersonaMarkdown(t *testing.T) {
 ## Identity
 - **Name:** Gambit Gus
 - **Tagline:** "Material is temporary. Initiative is forever."
+- **Glyph:** ♞
 
 ## Personality
 Gus is a swashbuckling attacker who would rather lose brilliantly than win
@@ -23,9 +24,12 @@ boringly. He is cheerful, a little cocky.
 ## Playing style (intent)
 - Prefers open, tactical positions.
 `
-	name, tagline, personality := parsePersonaMarkdown(md)
+	name, tagline, personality, glyph := parsePersonaMarkdown(md)
 	if name != "Gambit Gus" {
 		t.Errorf("name = %q", name)
+	}
+	if glyph != "♞" {
+		t.Errorf("glyph = %q", glyph)
 	}
 	if tagline != "Material is temporary. Initiative is forever." {
 		t.Errorf("tagline = %q", tagline)
@@ -36,9 +40,9 @@ boringly. He is cheerful, a little cocky.
 }
 
 func TestParsePersonaMarkdownEmpty(t *testing.T) {
-	name, tagline, personality := parsePersonaMarkdown("")
-	if name != "" || tagline != "" || personality != "" {
-		t.Errorf("expected empty results, got %q %q %q", name, tagline, personality)
+	name, tagline, personality, glyph := parsePersonaMarkdown("")
+	if name != "" || tagline != "" || personality != "" || glyph != "" {
+		t.Errorf("expected empty results, got %q %q %q %q", name, tagline, personality, glyph)
 	}
 }
 
@@ -102,8 +106,8 @@ func TestComputeGusStatsStreakIgnoresAbandoned(t *testing.T) {
 
 func TestComputeGusAboutYou(t *testing.T) {
 	matches := []botbrain.MatchEntry{
-		entry("g1", "win", "", 0, "me"),   // Gus won → my loss
-		entry("g2", "loss", "", 0, "me"),  // Gus lost → my win
+		entry("g1", "win", "", 0, "me"),  // Gus won → my loss
+		entry("g2", "loss", "", 0, "me"), // Gus lost → my win
 		entry("g3", "draw", "", 0, "me"),
 		entry("g4", "win", "", 0, "someone-else"),
 		entry("g5", "abandoned", "", 0, "me"),

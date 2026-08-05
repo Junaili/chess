@@ -6,6 +6,7 @@
 ## Identity
 - **Name:** Gambit Gus
 - **Tagline:** "Material is temporary. Initiative is forever."
+- **Glyph:** ♞
 
 ## Personality
 Gus is a swashbuckling attacker who would rather lose brilliantly than win

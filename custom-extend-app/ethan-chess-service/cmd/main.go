@@ -78,34 +78,12 @@ func main() {
 	}
 	// Bot self-learning (created before gRPC registration: the Extend Task
 	// Scheduler sidecar invokes RunScheduledTask on this server daily).
-	botID := os.Getenv("BOT_ID")
-	if botID == "" {
-		botID = "gambit-gus"
-	}
-	// BOTS_DIR is the parent holding one directory per personality; BOT_DIR
-	// overrides the default bot's own directory alone. Sibling personalities
-	// resolve from BOTS_DIR rather than from BOT_DIR's parent, so pointing
-	// BOT_DIR somewhere outside the roster (a test fixture, a mounted volume)
-	// can't drag the other bots along with it.
-	botsDir := os.Getenv("BOTS_DIR")
-	if botsDir == "" {
-		botsDir = "bots"
-	}
-	botDir := os.Getenv("BOT_DIR")
-	if botDir == "" {
-		botDir = filepath.Join(botsDir, botID)
-	}
 	// Personalities the AMS bot DS may wake up as. One fleet hosts them all and
 	// names the one it chose when reporting a game or fetching a brain.
-	hostedBots := []string{botID}
-	if raw := os.Getenv("BOT_PERSONAS"); raw != "" {
-		hostedBots = nil
-		for _, id := range strings.Split(raw, ",") {
-			if id = strings.TrimSpace(id); id != "" {
-				hostedBots = append(hostedBots, id)
-			}
-		}
-	}
+	roster := newBotRosterFromEnv()
+	botID, botDir := roster.defaultID, roster.byID[roster.defaultID].dir
+	hostedBots := roster.ids()
+	log.Printf("bot roster: %s (default %s)", strings.Join(hostedBots, ", "), botID)
 	trainJob := handler.NewTrainJob(botID, botDir)
 	performanceReporter, performanceEnabled, err := perftelemetry.NewFromEnv()
 	if err != nil {
@@ -221,32 +199,48 @@ func main() {
 	// One handler set per hostable personality, since each has its own persona
 	// file and its own CloudSave history — the matchmaking wait screen offers a
 	// randomly chosen bot, so any of them can be asked for by ?bot=.
-	gus := newGusHandlers(botID, botDir, os.Getenv("BOT_USER_ID"), hostedBots, trainJob, watcher)
-	botProfiles := map[string]*gusHandlers{botID: gus}
-	for _, id := range hostedBots {
-		if id == botID {
-			continue
-		}
+	botProfiles := map[string]*botHandlers{}
+	for _, entry := range roster.entries {
 		// The daily trainer only runs for the default bot, so the others report
-		// no training rather than borrowing Gus's status.
-		botProfiles[id] = newGusHandlers(id, filepath.Join(botsDir, id),
-			os.Getenv("BOT_USER_ID"), hostedBots, nil, watcher)
-	}
-	profileFor := func(w http.ResponseWriter, r *http.Request) {
-		requested := strings.TrimSpace(r.URL.Query().Get("bot"))
-		if requested == "" {
-			requested = botID
+		// no training rather than borrowing the default bot's status.
+		botTrainJob := trainJob
+		if entry.id != botID {
+			botTrainJob = nil
 		}
-		handlers, hosted := botProfiles[requested]
+		botProfiles[entry.id] = newBotHandlers(entry.id, entry.dir, entry.userID, hostedBots, botTrainJob, watcher)
+	}
+	gus := botProfiles[botID]
+	profileFor := func(w http.ResponseWriter, r *http.Request) {
+		entry, hosted := roster.resolve(r.URL.Query().Get("bot"))
 		if !hosted {
 			w.Header().Set("Content-Type", "application/json")
 			http.Error(w, `{"error":"unknown bot"}`, http.StatusBadRequest)
 			return
 		}
-		handlers.profile(w, r)
+		botProfiles[entry.id].profile(w, r)
 	}
 	mux.Handle(basePath+"/bot/profile",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(profileFor))))
+	// The roster the client renders its bot cards and wait-screen offers from,
+	// so adding a personality needs no frontend change.
+	rosterHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		bots := make([]map[string]any, 0, len(roster.entries))
+		for _, entry := range roster.entries {
+			bots = append(bots, botProfiles[entry.id].identity())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"bots":     bots,
+			"default":  botID,
+			"playable": watcher != nil,
+		})
+	}
+	mux.Handle(basePath+"/bot/roster",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(rosterHandler))))
 	// The challenge stays on the default handler: it reads ?bot= itself, and a
 	// single instance keeps one shared rate limiter across all personalities.
 	mux.Handle(basePath+"/bot/challenge",

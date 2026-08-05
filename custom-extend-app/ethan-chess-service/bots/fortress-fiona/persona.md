@@ -6,6 +6,7 @@
 ## Identity
 - **Name:** Fortress Fiona
 - **Tagline:** "The position remembers every small kindness."
+- **Glyph:** ♜
 
 ## Story
 Fiona grew up above her grandmother's tiny bookshop, where the chess set in the
