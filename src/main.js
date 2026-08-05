@@ -145,7 +145,7 @@ const GAMEPLAY_GLOBALS = [
   'selectColor', 'sendChatMessage', 'sendHighFive', 'shareInviteLink',
   'showAddContact', 'showColorSelect', 'showContactsForInvite', 'showHint',
   'showGameOver', 'showMatchTab', 'showWaitingScreen', 'toggleCoachMode',
-  'startFriendMatchInvite', 'startGusMatchmaking', 'startFionaMatchmaking', 'startNewGame',
+  'startFriendMatchInvite', 'startBotChallenge', 'startGusMatchmaking', 'startFionaMatchmaking', 'startNewGame',
   'startRandomMatchmaking', 'startVideoChat', 'startVsComputer',
   'submitSafetyReport', 'toggleAudio', 'toggleVideoFeed', 'selectPieceColor',
   'setupPeerConnection', 'renderBoard', 'startGame', 'startRetryFromPosition',
@@ -455,27 +455,21 @@ async function openGusProfile(...args) {
 }
 const refreshGusProfile = async (...args) => (await gusFeature.load()).refreshGusProfile(...args)
 const showGusTab = async (...args) => (await gusFeature.load()).showGusTab(...args)
-async function startGusMatchmakingFlow(...args) {
+// One flow for every personality: they share the quickmatch pool and the
+// challenge names which one should wake up.
+async function startBotMatchmakingFlow(botId, ...args) {
   try {
-    return await (await gusFeature.load()).startGusMatchmaking(...args)
+    return await (await gusFeature.load()).startBotMatchmaking(botId, ...args)
   } catch (error) {
-    args[2]?.('Gambit Gus could not join right now. Try again in a moment.')
-    console.warn('[gus] matchmaking startup failed:', error?.message || error)
+    const name = window.agsBotRoster?.find(bot => bot.id === botId)?.name || 'That bot'
+    args[2]?.(`${name} could not join right now. Try again in a moment.`)
+    console.warn(`[bot] ${botId} matchmaking startup failed:`, error?.message || error)
     return null
   }
 }
 
-async function startFionaMatchmakingFlow(...args) {
-  try {
-    // Same quickmatch pool as Gus — one fleet hosts both, and the challenge
-    // names which personality should wake up.
-    return await (await gusFeature.load()).startBotMatchmaking('fortress-fiona', ...args)
-  } catch (error) {
-    args[2]?.('Fortress Fiona could not join right now. Try again in a moment.')
-    console.warn('[fiona] matchmaking startup failed:', error?.message || error)
-    return null
-  }
-}
+const startGusMatchmakingFlow = (...args) => startBotMatchmakingFlow('gambit-gus', ...args)
+const startFionaMatchmakingFlow = (...args) => startBotMatchmakingFlow('fortress-fiona', ...args)
 
 let preparedJournalRender = null
 let journalRenderGeneration = 0
@@ -847,6 +841,7 @@ const STATIC_ACTIONS = new Set([
   'showMatchTab',
   'showScreen',
   'toggleCoachMode',
+  'startBotChallenge',
   'startGusMatchmaking',
   'startFionaMatchmaking',
   'startNewGame',
@@ -2649,8 +2644,10 @@ async function initAuth() {
   window.agsFormatKudosCount = formatKudosCount
   window.agsStartMatchmaking = startMatchmaking
   window.agsCancelMatchmaking = cancelMatchmaking
+  window.agsStartBotMatchmaking = startBotMatchmakingFlow
   window.agsStartGusMatchmaking = startGusMatchmakingFlow
   window.agsStartFionaMatchmaking = startFionaMatchmakingFlow
+  window.agsInitBotPanels = initGusPanel
   window.agsOpenGusProfile = openGusProfile
   window.agsRefreshGusProfile = refreshGusProfile
   window.agsShowGusTab = showGusTab
@@ -4509,7 +4506,6 @@ function updateAuthUI(loggedIn, name, userId) {
   const guestOptions = document.getElementById('ags-guest-options')
   const guestTrigger = document.getElementById('ags-open-guest')
   const memberPlayActions = document.getElementById('ags-member-play-actions')
-  const fionaBtn = document.getElementById('btn-play-fiona')
   const homeLeaderboard = document.getElementById('home-leaderboard-panel')
   const signedInInfo = document.getElementById('ags-signedin-info')
   const signedInName = document.getElementById('ags-signedin-name')
@@ -4533,7 +4529,6 @@ function updateAuthUI(loggedIn, name, userId) {
     if (accountEntry) accountEntry.style.display = 'none'
     if (guestEntry) guestEntry.style.display = 'none'
     if (memberPlayActions) memberPlayActions.style.display = ''
-    if (fionaBtn) fionaBtn.style.display = ''
     if (homeLeaderboard) homeLeaderboard.style.display = ''
     if (authActions) authActions.style.display = 'none'
     if (authOrDivider) authOrDivider.style.display = 'none'
@@ -4562,7 +4557,6 @@ function updateAuthUI(loggedIn, name, userId) {
     signedInInfo.style.display = 'none'
     const randomBtn = document.getElementById('btn-play-random')
     if (randomBtn) randomBtn.style.display = 'none'
-    if (fionaBtn) fionaBtn.style.display = 'none'
     friendsState = { friends: [], incoming: [], outgoing: [] }
     renderFriendsPanel(false)
     resetClubStatus()

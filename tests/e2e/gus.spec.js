@@ -193,3 +193,115 @@ test.describe('Gambit Gus profile', () => {
     }
   });
 });
+
+// ── Home cards ────────────────────────────────────────────────────────────────
+// One card per hosted personality, cloned from #bot-card-template and driven by
+// GET /bot/roster — adding a bot must need no markup change.
+
+const FIONA_PROFILE = {
+  ...GUS_PROFILE,
+  bot: {
+    id: 'fortress-fiona',
+    userId: 'bot-user-2',
+    name: 'Fortress Fiona',
+    tagline: 'The position remembers every small kindness.',
+    glyph: '♜',
+    personality: 'A patient defender who trades into strong endgames.',
+  },
+  recentMatches: [],
+  journal: [],
+};
+
+// The cards live inside the signed-in-only #home-leaderboard-panel. Reveal it
+// so visibility assertions test the per-bot gating rather than the sign-in gate.
+async function revealBotPanels(page) {
+  await page.evaluate(() => {
+    // Exactly what signing in does: the panel is gated by both the inline
+    // display and the #screen-home.signed-in CSS rule.
+    document.getElementById('screen-home')?.classList.add('signed-in')
+    const panel = document.getElementById('home-leaderboard-panel')
+    if (panel) panel.style.display = ''
+  });
+}
+
+async function stubRoster(page, { roster, profiles }) {
+  await page.route('**/bot/roster*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ bots: roster, default: 'gambit-gus', playable: true }),
+  }));
+  await page.route('**/bot/profile*', route => {
+    const requested = new URL(route.request().url()).searchParams.get('bot') || 'gambit-gus';
+    const payload = profiles[requested];
+    if (!payload) return route.fulfill({ status: 400, contentType: 'application/json', body: '{"error":"unknown bot"}' });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload) });
+  });
+}
+
+const ROSTER = [
+  { id: 'gambit-gus', userId: 'bot-user-1', name: 'Gambit Gus', glyph: '♞' },
+  { id: 'fortress-fiona', userId: 'bot-user-2', name: 'Fortress Fiona', glyph: '♜' },
+];
+
+test.describe('Bot home cards', () => {
+  test('renders one card per hosted bot, each naming and summoning itself', async ({ page }) => {
+    await gotoApp(page);
+    await stubRoster(page, {
+      roster: ROSTER,
+      profiles: {
+        'gambit-gus': { ...GUS_PROFILE, bot: { ...GUS_PROFILE.bot, glyph: '♞' } },
+        'fortress-fiona': FIONA_PROFILE,
+      },
+    });
+    await page.evaluate(() => window.agsInitBotPanels());
+    await revealBotPanels(page);
+
+    const cards = page.locator('[data-bot-card]');
+    await expect(cards).toHaveCount(2);
+    await expect(page.locator('[data-bot-card="gambit-gus"] [data-bot-name]')).toHaveText('Gambit Gus');
+    await expect(page.locator('[data-bot-card="fortress-fiona"] [data-bot-name]')).toHaveText('Fortress Fiona');
+    // Fiona gets her own tagline and glyph from her own profile, not Gus's.
+    await expect(page.locator('[data-bot-card="fortress-fiona"] [data-bot-tagline]'))
+      .toContainText('The position remembers every small kindness');
+    await expect(page.locator('[data-bot-card="fortress-fiona"] [data-bot-glyph]')).toHaveText('♜');
+
+    // The challenge must summon the bot on whose card it sits.
+    const summoned = await page.evaluate(() => new Promise(resolve => {
+      window.startBotChallenge = id => resolve(id);
+      document.querySelector('[data-bot-card="fortress-fiona"] [data-bot-challenge]').click();
+    }));
+    expect(summoned).toBe('fortress-fiona');
+  });
+
+  test('a bot that is not playable keeps its card but loses its challenge buttons', async ({ page }) => {
+    await gotoApp(page);
+    await stubRoster(page, {
+      roster: ROSTER,
+      profiles: {
+        'gambit-gus': { ...GUS_PROFILE, bot: { ...GUS_PROFILE.bot, glyph: '♞' } },
+        'fortress-fiona': { ...FIONA_PROFILE, playable: false },
+      },
+    });
+    await page.evaluate(() => window.agsInitBotPanels());
+    await revealBotPanels(page);
+
+    await expect(page.locator('[data-bot-card="fortress-fiona"]')).toBeVisible();
+    await expect(page.locator('[data-bot-card="fortress-fiona"] [data-bot-challenge]')).toBeHidden();
+    await expect(page.locator('[data-bot-play="fortress-fiona"]')).toHaveCount(0);
+    // The playable bot is unaffected.
+    await expect(page.locator('[data-bot-play="gambit-gus"]')).toHaveCount(1);
+  });
+
+  test('one broken bot profile does not hide the rest of the roster', async ({ page }) => {
+    await gotoApp(page);
+    await stubRoster(page, {
+      roster: ROSTER,
+      profiles: { 'gambit-gus': { ...GUS_PROFILE, bot: { ...GUS_PROFILE.bot, glyph: '♞' } } },
+    });
+    await page.evaluate(() => window.agsInitBotPanels());
+    await revealBotPanels(page);
+
+    await expect(page.locator('[data-bot-card="gambit-gus"]')).toBeVisible();
+    await expect(page.locator('[data-bot-card="fortress-fiona"]')).toHaveCount(0);
+  });
+});

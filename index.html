@@ -137,8 +137,10 @@
           <div id="ags-member-play-actions" class="menu-buttons">
             <button class="btn btn-primary" data-click="showColorSelect('computer')">Single Player</button>
             <button class="btn btn-matchmake" id="btn-play-random" style="display:none" data-click="startRandomMatchmaking()">Find a Chess Buddy</button>
-            <button class="btn btn-gus" id="btn-play-gus" style="display:none" data-click="startGusMatchmaking()">Play Gambit Gus ♞</button>
-            <button class="btn btn-gus" id="btn-play-fiona" style="display:none" data-click="startFionaMatchmaking()">Play Fortress Fiona ♜</button>
+            <!-- One "Play <bot>" button per hosted personality, rendered by
+                 src/gus.js from the roster and revealed only when that bot is
+                 actually playable. -->
+            <div id="ags-bot-play-actions" class="menu-buttons"></div>
           </div>
           <p class="menu-note">Choose your color, customize your pieces, and start from the board you actually want to play on.</p>
           <div id="home-idle-prompt" class="home-idle-prompt" style="display:none">
@@ -270,32 +272,26 @@
           </section>
         </div>
         <div id="home-leaderboard-panel" class="leaderboard-panel">
-          <!-- ── Gambit Gus card: the resident bot's home-screen presence.
-               Revealed by src/gus.js once signed in and the Extend profile
-               endpoint answers; stays hidden for guests / offline Extend. ── -->
-          <section id="ags-gus-panel" class="friends-panel gus-panel" style="display:none">
-            <div class="friends-header">
-              <h3><span class="gus-avatar" aria-hidden="true">♞</span> <span id="gus-home-name">Gambit Gus</span></h3>
-              <button class="btn-mini" data-click="window.agsOpenGusProfile && window.agsOpenGusProfile()">Meet Gus →</button>
-            </div>
-            <p id="gus-home-tagline" class="gus-home-tagline"></p>
-            <p id="gus-home-record" class="gus-home-record"></p>
-            <p id="gus-home-blurb" class="gus-home-blurb"></p>
-            <div class="friends-add-row">
-              <button class="btn-mini success" id="btn-play-gus-home" data-click="startGusMatchmaking()">♞ Challenge Gus</button>
-              <button class="btn-mini" data-click="window.agsOpenGusProfile && window.agsOpenGusProfile()">Stats &amp; Journal</button>
-            </div>
-          </section>
-          <section class="friends-panel gus-panel">
-            <div class="friends-header">
-              <h3><span class="gus-avatar" aria-hidden="true">♜</span> Fortress Fiona</h3>
-            </div>
-            <p class="gus-home-tagline">“The position remembers every small kindness.”</p>
-            <p class="gus-home-blurb">A patient defender who trades into strong endgames.</p>
-            <div class="friends-add-row">
-              <button class="btn-mini success" data-click="startFionaMatchmaking()">♜ Challenge Fiona</button>
-            </div>
-          </section>
+          <!-- ── Bot cards: one per hosted personality, rendered by src/gus.js
+               from GET /bot/roster once signed in and the Extend profile
+               endpoint answers. Hidden for guests / offline Extend. Adding a
+               bot is a server-side roster change — no markup edit here. ── -->
+          <div id="ags-bot-panels"></div>
+          <template id="bot-card-template">
+            <section class="friends-panel gus-panel" data-bot-card>
+              <div class="friends-header">
+                <h3><span class="gus-avatar" aria-hidden="true" data-bot-glyph></span> <span data-bot-name></span></h3>
+                <button class="btn-mini" data-bot-open></button>
+              </div>
+              <p class="gus-home-tagline" data-bot-tagline></p>
+              <p class="gus-home-record" data-bot-record></p>
+              <p class="gus-home-blurb" data-bot-blurb></p>
+              <div class="friends-add-row">
+                <button class="btn-mini success" data-bot-challenge></button>
+                <button class="btn-mini" data-bot-stats>Stats &amp; Journal</button>
+              </div>
+            </section>
+          </template>
           <!-- ── Ethan's Chess Club card: revealed by src/club.js once signed
                in and /club/status answers. Child sessions get a static line
                with no tap action — never a purchase entry point. ── -->

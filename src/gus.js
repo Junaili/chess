@@ -4,7 +4,8 @@
 //   GET  /bot/roster     — every hosted personality's identity
 //   GET  /bot/profile    — persona, stats, matches, journal, brain, training
 //   POST /bot/challenge  — summon a bot to the queue now (skips the queue gate)
-// DOM: the #ags-gus-panel home card and the #screen-gus profile screen.
+// DOM: #ags-bot-panels (one card per bot, cloned from #bot-card-template),
+// #ags-bot-play-actions, and the #screen-gus profile screen.
 import { extendFetch } from './extend-client.js'
 import { startMatchmaking } from './matchmaking.js'
 import { sendEvent } from './telemetry.js'
@@ -48,82 +49,145 @@ async function fetchGusProfile(force = false, botId = DEFAULT_BOT_ID) {
   return profile
 }
 
-// ── home panel ────────────────────────────────────────────────────────────────
+// ── home panels ───────────────────────────────────────────────────────────────
 
-// initGusPanel is called once the player is signed in. It probes the profile;
-// on success it reveals the home card and the "Play Gus" button. Any failure
-// (Extend down, endpoint not deployed yet, guest token) just leaves Gus hidden.
+// initGusPanel is called once the player is signed in. It reads the roster and
+// renders one home card + one "Play <bot>" button per personality, revealing
+// each only when that bot is actually playable. Any failure (Extend down,
+// endpoint not deployed yet, guest token) just leaves the bots hidden.
 export async function initGusPanel() {
   if (!gusTransportAvailable()) return
-  let profile
+  let roster
   try {
-    profile = await fetchGusProfile()
+    roster = await fetchBotRoster()
   } catch (error) {
-    console.warn('[gus] profile unavailable:', error?.message || error)
+    console.warn('[bot] roster unavailable:', error?.message || error)
     return
   }
-  gusAvailable = true
-  await publishBotIdentities(profile)
-  renderHomePanel(profile)
+
+  // Identities go out before any profile loads: they gate friend requests and
+  // High Fives, and a bot must never look like a human just because its
+  // profile fetch is slow.
+  setBotIdentities(roster)
+  // The wait screen and the challenge copy read names/glyphs from here rather
+  // than from a hardcoded list.
+  window.agsBotRoster = roster.map(bot => ({ id: bot.id, name: bot.name, glyph: bot.glyph || '' }))
+
+  // One slow or broken bot must not hide the rest of the roster.
+  const loaded = await Promise.all(roster.map(async bot => {
+    try {
+      return { bot, profile: await fetchGusProfile(false, bot.id) }
+    } catch (error) {
+      console.warn(`[bot] ${bot.id} profile unavailable:`, error?.message || error)
+      return null
+    }
+  }))
+
+  const rendered = loaded.filter(Boolean)
+  if (!rendered.length) return
+  gusAvailable = rendered.some(entry => entry.profile.playable)
+  renderHomePanels(rendered)
 }
 
-// Publish every hosted bot's identity so friend requests, High Fives, and
-// friend-list entries are suppressed for ALL of them — each personality signs
-// in as its own AGS account, so one hardcoded id can't cover the roster.
-async function publishBotIdentities(defaultProfile) {
-  const fallback = [{
-    id: defaultProfile.bot.id || DEFAULT_BOT_ID,
-    userId: defaultProfile.bot.userId || '',
-    name: defaultProfile.bot.name || 'Gambit Gus',
-  }]
+// fetchBotRoster returns every hosted personality. A deployment predating
+// /bot/roster still gets the default bot from its profile, so the home card
+// never disappears on an older service.
+async function fetchBotRoster() {
   try {
     const res = await extendFetch('/bot/roster')
     if (!res.ok) throw new Error(`roster ${res.status}`)
     const data = await res.json()
-    const bots = Array.isArray(data?.bots) ? data.bots : []
-    setBotIdentities(bots.length ? bots : fallback)
+    const bots = (Array.isArray(data?.bots) ? data.bots : [])
+      .filter(bot => bot && bot.id)
+    if (bots.length) return bots
   } catch (error) {
-    // A missing roster must never make a bot look like a human, so fall back to
-    // the profile we already have rather than publishing nothing.
-    console.warn('[bot] roster unavailable:', error?.message || error)
-    setBotIdentities(fallback)
+    console.warn('[bot] roster fetch failed, falling back to the default bot:', error?.message || error)
   }
+  const profile = await fetchGusProfile()
+  return [{
+    id: profile.bot.id || DEFAULT_BOT_ID,
+    userId: profile.bot.userId || '',
+    name: profile.bot.name || 'Gambit Gus',
+    glyph: profile.bot.glyph || '',
+  }]
+}
+
+// challengeBot routes through app.js so the challenge gets the full waiting-room
+// and peer-connection flow, not just the backend summon.
+function challengeBot(botId) {
+  if (typeof window.startBotChallenge === 'function') window.startBotChallenge(botId)
 }
 
 export function resetGusPanel() {
   gusAvailable = false
   profileCache.clear()
   clearBotIdentities()
-  const panel = document.getElementById('ags-gus-panel')
-  if (panel) panel.style.display = 'none'
-  const playBtn = document.getElementById('btn-play-gus')
-  if (playBtn) playBtn.style.display = 'none'
+  window.agsBotRoster = []
+  const panels = document.getElementById('ags-bot-panels')
+  if (panels) panels.replaceChildren()
+  const playActions = document.getElementById('ags-bot-play-actions')
+  if (playActions) playActions.replaceChildren()
 }
 
-function renderHomePanel(profile) {
-  const panel = document.getElementById('ags-gus-panel')
-  if (!panel) return
-  const { bot, stats, playable, journal } = profile
+function renderHomePanels(entries) {
+  const panels = document.getElementById('ags-bot-panels')
+  const playActions = document.getElementById('ags-bot-play-actions')
+  const template = document.getElementById('bot-card-template')
+  if (!panels || !template) return
+  panels.replaceChildren()
+  if (playActions) playActions.replaceChildren()
 
-  setText('gus-home-name', bot.name)
-  setText('gus-home-tagline', bot.tagline ? `“${bot.tagline}”` : '')
-  const bits = []
-  bits.push(stats.games ? `${formatGusRecord(stats)} lifetime` : 'Brand new — no games yet')
+  for (const { bot, profile } of entries) {
+    panels.append(buildBotCard(template, bot, profile))
+    if (playActions && profile.playable) playActions.append(buildPlayButton(bot, profile))
+  }
+}
+
+function buildBotCard(template, bot, profile) {
+  const card = template.content.firstElementChild.cloneNode(true)
+  const { stats, playable, journal } = profile
+  const name = profile.bot.name || bot.name || bot.id
+  const glyph = profile.bot.glyph || bot.glyph || ''
+  const sel = attr => card.querySelector(`[${attr}]`)
+
+  card.dataset.botCard = bot.id
+  sel('data-bot-glyph').textContent = glyph
+  sel('data-bot-name').textContent = name
+  sel('data-bot-tagline').textContent = profile.bot.tagline ? `“${profile.bot.tagline}”` : ''
+
+  const bits = [stats.games ? `${formatGusRecord(stats)} lifetime` : 'Brand new — no games yet']
   const streak = streakLabel(stats)
   if (streak) bits.push(streak.toLowerCase())
-  setText('gus-home-record', bits.join(' · '))
+  sel('data-bot-record').textContent = bits.join(' · ')
 
   const teaser = journal[0]
   const teaserQuote = teaser && parseJournalText(teaser.text).find(b => b.type === 'quote')
-  setText('gus-home-blurb', teaserQuote
-    ? `Gus’s model-assisted reflection: “${teaserQuote.text}”`
-    : 'He reviews completed games and publishes evidence-checked training notes.')
+  sel('data-bot-blurb').textContent = teaserQuote
+    ? `${name}’s model-assisted reflection: “${teaserQuote.text}”`
+    // Deliberately pronoun-free: personalities differ and the roster is open.
+    : 'Reviews completed games and publishes evidence-checked training notes.'
 
-  const playBtnHome = document.getElementById('btn-play-gus-home')
-  if (playBtnHome) playBtnHome.style.display = playable ? '' : 'none'
-  const playBtn = document.getElementById('btn-play-gus')
-  if (playBtn) playBtn.style.display = playable ? '' : 'none'
-  panel.style.display = ''
+  const open = sel('data-bot-open')
+  open.textContent = `Meet ${name} →`
+  open.addEventListener('click', () => openGusProfile(bot.id))
+  sel('data-bot-stats').addEventListener('click', () => openGusProfile(bot.id))
+
+  const challenge = sel('data-bot-challenge')
+  challenge.textContent = `${glyph} Challenge ${name}`.trim()
+  challenge.style.display = playable ? '' : 'none'
+  challenge.addEventListener('click', () => challengeBot(bot.id))
+  return card
+}
+
+function buildPlayButton(bot, profile) {
+  const name = profile.bot.name || bot.name || bot.id
+  const glyph = profile.bot.glyph || bot.glyph || ''
+  const button = document.createElement('button')
+  button.className = 'btn btn-gus'
+  button.dataset.botPlay = bot.id
+  button.textContent = `Play ${name} ${glyph}`.trim()
+  button.addEventListener('click', () => challengeBot(bot.id))
+  return button
 }
 
 // ── profile screen ────────────────────────────────────────────────────────────
@@ -188,23 +252,20 @@ function renderGusScreen(profile) {
 
   setText('gus-profile-name', bot.name)
   setText('gus-profile-tagline', bot.tagline ? `“${bot.tagline}”` : '')
-  setText('gus-personality', bot.personality || 'A chess bot with personality — he plays, loses, learns, and comes back sharper.')
+  // Deliberately pronoun-free: personalities differ and the roster is open.
+  setText('gus-personality', bot.personality || 'A chess bot with personality — plays, loses, learns, and comes back sharper.')
   // The profile screen is reachable for any personality (the wait screen offers
   // a random one), so the challenge button must name and summon the bot being
-  // viewed rather than always Gus.
+  // viewed rather than always Gus. The glyph comes from the bot's persona file,
+  // so a new personality needs no edit here.
   const challengeBtn = document.getElementById('btn-gus-challenge')
   if (challengeBtn) {
     challengeBtn.style.display = playable ? '' : 'none'
-    challengeBtn.textContent = `${bot.id === 'fortress-fiona' ? '♜' : '♞'} Play ${bot.name} Now`
+    challengeBtn.textContent = `${bot.glyph || ''} Play ${bot.name} Now`.trim()
     challengeBtn.dataset.botId = bot.id
     if (challengeBtn.dataset.botBound !== '1') {
       challengeBtn.dataset.botBound = '1'
-      challengeBtn.addEventListener('click', () => {
-        const start = challengeBtn.dataset.botId === 'fortress-fiona'
-          ? window.startFionaMatchmaking
-          : window.startGusMatchmaking
-        if (typeof start === 'function') start()
-      })
+      challengeBtn.addEventListener('click', () => challengeBot(challengeBtn.dataset.botId || DEFAULT_BOT_ID))
     }
   }
   const offlineNote = document.getElementById('gus-offline-note')

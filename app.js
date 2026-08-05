@@ -3741,16 +3741,29 @@ function showWaitingScreen(role) {
   }
 }
 
-// Any of these can wake for a random-queue player who finds no human, so the
+// Any hosted bot can wake for a random-queue player who finds no human, so the
 // wait screen offers a different one each time instead of always naming Gus.
-const WAITING_BOTS = [
+// The live roster is published by src/gus.js once signed in; this list is the
+// signed-out / Extend-unavailable fallback.
+const FALLBACK_WAITING_BOTS = [
   { id: 'gambit-gus', name: 'Gambit Gus', glyph: '♞' },
   { id: 'fortress-fiona', name: 'Fortress Fiona', glyph: '♜' },
 ];
 
+function waitingBots() {
+  const roster = window.agsBotRoster;
+  return Array.isArray(roster) && roster.length ? roster : FALLBACK_WAITING_BOTS;
+}
+
+function botDisplayName(botId) {
+  const bot = waitingBots().find(entry => entry.id === botId);
+  return bot?.name || 'The bot';
+}
+
 function featureRandomWaitingBot(button) {
-  const bot = WAITING_BOTS[Math.floor(Math.random() * WAITING_BOTS.length)];
-  button.textContent = `${bot.glyph} While you wait, meet ${bot.name} →`;
+  const bots = waitingBots();
+  const bot = bots[Math.floor(Math.random() * bots.length)];
+  button.textContent = `${bot.glyph || ''} While you wait, meet ${bot.name} →`.trim();
   button.dataset.botId = bot.id;
   // Bound here rather than via data-click: that dispatcher only accepts static
   // literal arguments, and the bot being offered changes on every wait.
@@ -3802,38 +3815,38 @@ function startRandomMatchmaking() {
   startQueueMatchmaking('random');
 }
 
-// "Play with Gus": the same real-matchmaking + P2P flow as Play vs Random —
-// src/gus.js additionally asks the backend to summon the bot immediately
-// instead of leaving the player to wait out the humans-first gate.
+// "Play with <bot>": the same real-matchmaking + P2P flow as Play vs Random —
+// src/gus.js additionally asks the backend to summon that personality
+// immediately instead of leaving the player to wait out the humans-first gate.
+// Every bot shares the quickmatch pool; the challenge names which one wakes.
+function startBotChallenge(botId) {
+  startQueueMatchmaking(botId);
+}
+
 function startGusMatchmaking() {
-  startQueueMatchmaking('gus');
+  startQueueMatchmaking('gambit-gus');
 }
 
-// Fortress Fiona shares the quickmatch pool with Gus — the challenge names her
-// so the claimed bot DS wakes as her — and otherwise follows the exact same
-// waiting-room and peer-connection flow as Gus and normal matchmaking.
 function startFionaMatchmaking() {
-  startQueueMatchmaking('fiona');
+  startQueueMatchmaking('fortress-fiona');
 }
 
+// opponentKind is 'random' or a bot id from the roster.
 function startQueueMatchmaking(opponentKind) {
-  const startFn = opponentKind === 'gus'
-    ? window.agsStartGusMatchmaking
-    : opponentKind === 'fiona'
-      ? window.agsStartFionaMatchmaking
-      : window.agsStartMatchmaking;
-  if (typeof startFn !== 'function') {
-    alert(opponentKind === 'gus'
-      ? 'Sign in to challenge Gambit Gus.'
-      : opponentKind === 'fiona'
-        ? 'Sign in to challenge Fortress Fiona.'
-        : 'Sign in to play against random players.');
+  const isBot = opponentKind !== 'random';
+  const startFn = isBot
+    ? (...args) => window.agsStartBotMatchmaking(opponentKind, ...args)
+    : window.agsStartMatchmaking;
+  if (typeof (isBot ? window.agsStartBotMatchmaking : window.agsStartMatchmaking) !== 'function') {
+    alert(isBot
+      ? `Sign in to challenge ${botDisplayName(opponentKind)}.`
+      : 'Sign in to play against random players.');
     return;
   }
   matchmakingActive = true;
   gameMode = 'online';
   const queueStartedAt = Date.now();
-  showWaitingScreen(opponentKind === 'gus' ? 'gus-matchmaking' : 'matchmaking');
+  showWaitingScreen(isBot ? 'gus-matchmaking' : 'matchmaking');
   startMatchmakingWaitTimer(queueStartedAt);
   if (typeof window.agsPrepareSessionChat === 'function') window.agsPrepareSessionChat();
   if (typeof window.agsSendEvent === 'function') window.agsSendEvent('matchmaking_started', { opponent: opponentKind });
@@ -3956,11 +3969,9 @@ function startQueueMatchmaking(opponentKind) {
       }
       destroyPeer();
       showScreen('home');
-      alert(opponentKind === 'gus'
-        ? "Gus couldn't make it to the board this time. Please try again in up to 2 minutes."
-        : opponentKind === 'fiona'
-          ? "Fiona couldn't make it to the board this time. Please try again in up to 2 minutes."
-          : 'No opponent found. Try again in a moment.');
+      alert(isBot
+        ? `${botDisplayName(opponentKind)} couldn't make it to the board this time. Please try again in up to 2 minutes.`
+        : 'No opponent found. Try again in a moment.');
     },
     function onError(msg) {
       if (!matchmakingActive) return;
@@ -4996,6 +5007,7 @@ Object.assign(window, {
   showWaitingScreen,
   startGame,
   startFriendMatchInvite,
+  startBotChallenge,
   startFionaMatchmaking,
   startGusMatchmaking,
   startNewGame,

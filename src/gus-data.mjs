@@ -13,6 +13,9 @@ export function normalizeGusProfile(raw) {
       userId: bot.userId || '',
       name: bot.name || 'Gambit Gus',
       tagline: bot.tagline || '',
+      // The chess piece shown beside this bot's name, from its persona file —
+      // data, not a client-side switch on bot id.
+      glyph: bot.glyph || '',
       personality: bot.personality || '',
       style: bot.style && typeof bot.style === 'object' ? bot.style : null,
     },
