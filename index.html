@@ -50,7 +50,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-CUAziR5Q.js"></script>
+  <script type="module" crossorigin src="/chess/assets/index-BGvJRWqU.js"></script>
   <link rel="modulepreload" crossorigin href="/chess/assets/chunk-CMxvf4Kt.js">
   <link rel="stylesheet" crossorigin href="/chess/assets/index-D0qmcR2P.css">
 </head>
@@ -497,12 +497,22 @@
         <p class="profile-safety-copy">Manage players you blocked or permanently delete your account.</p>
         <div id="profile-blocked-players" class="profile-blocked-players"></div>
         <p id="profile-safety-message" class="auth-message" aria-live="polite"></p>
-        <div class="profile-danger-zone">
+        <div id="account-deletion-request" class="profile-danger-zone">
           <div>
             <strong>Delete account</strong>
             <span>Request permanent deletion of your account and game data.</span>
           </div>
           <button type="button" class="btn btn-danger" data-click="window.agsOpenDeleteAccount && window.agsOpenDeleteAccount()">Delete Account</button>
+        </div>
+        <!-- Shown instead of the request row while AGS holds a submitted
+             deletion in its grace period, so the player can see it is coming
+             and still change their mind. -->
+        <div id="account-deletion-pending" class="profile-danger-zone" style="display:none" role="status" aria-live="polite">
+          <div>
+            <strong>Deletion scheduled</strong>
+            <span id="account-deletion-pending-detail">Your account is scheduled for deletion.</span>
+          </div>
+          <button type="button" class="btn btn-secondary" id="btn-cancel-deletion" data-click="window.agsCancelAccountDeletion && window.agsCancelAccountDeletion()">Keep my account</button>
         </div>
       </section>
       <section id="learning-notification-settings" class="learning-notification-settings"></section>
