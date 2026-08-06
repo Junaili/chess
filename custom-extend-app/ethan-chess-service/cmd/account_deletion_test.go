@@ -374,3 +374,21 @@ func TestDeletionStatusRequiresAPlayerToken(t *testing.T) {
 		t.Errorf("unauthenticated request reached AGS: %v", rt.gotMethods)
 	}
 }
+
+// Submitting or cancelling a deletion invalidates the player's tokens, so the
+// next status call can return 401. Surfacing that as a vague outage would tell
+// a player to "try again" when what they need is to sign in again.
+func TestDeletionStatusPassesThroughUpstreamAuthFailure(t *testing.T) {
+	for _, upstream := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		rt := &statusRoundTripper{statusCode: upstream, statusBody: `{"errorCode":20001}`}
+		rec := httptest.NewRecorder()
+		statusHandler(rt).handle(rec, deletionStatusRequest(http.MethodGet))
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("upstream %d produced %d, want 401", upstream, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "Sign in again") {
+			t.Errorf("upstream %d body = %s", upstream, rec.Body.String())
+		}
+	}
+}

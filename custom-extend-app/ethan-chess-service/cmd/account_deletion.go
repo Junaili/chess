@@ -488,6 +488,13 @@ func (h *accountDeletionHandler) status(w http.ResponseWriter, r *http.Request) 
 		_ = json.NewEncoder(w).Encode(map[string]any{"pending": false})
 		return
 	}
+	// Submitting or cancelling a deletion invalidates the player's existing
+	// tokens, so the very next status call can come back 401. Pass that through
+	// as "sign in again" rather than a vague outage message.
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		writeDeletionError(w, http.StatusUnauthorized, "unauthenticated", "Sign in again to check your account status.")
+		return
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.Printf("[account-deletion] status for %s returned %d", userID, resp.StatusCode)
 		writeDeletionError(w, http.StatusBadGateway, "status_unavailable", "Could not check your account status.")
