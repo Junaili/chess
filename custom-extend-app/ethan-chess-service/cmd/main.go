@@ -172,8 +172,11 @@ func main() {
 	// `monetization` is constructed below) — see the assignment further down.
 	mux.Handle(basePath+"/account/deletion-requirements",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(accountDeletion.requirements))))
+	// GET reports a deletion scheduled during the AGS grace period, POST
+	// requests one, DELETE cancels one — so a player who changes their mind is
+	// never stranded without a way back.
 	mux.Handle(basePath+"/account/deletion",
-		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(accountDeletion.deleteAccount))))
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(accountDeletion.handle))))
 
 	// Reporting and Group now have browser CORS for the web app, but AGS still
 	// rejects Capacitor's capacitor://localhost origin. Keep these narrow

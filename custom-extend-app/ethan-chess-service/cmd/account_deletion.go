@@ -421,3 +421,142 @@ func (h *accountDeletionHandler) submitAGSDeletion(userID string) error {
 	}
 	return nil
 }
+
+// ── Pending-deletion visibility (AGS GDPR grace period) ──────────────────────
+//
+// A submitted deletion is not immediate: AGS holds it for a grace period before
+// erasing anything. Without these, the app went silent after a deletion request
+// — the player had no way to see that a deletion was scheduled, and no way to
+// change their mind. Apple reviewers exercise exactly that path.
+//
+// Both read through the PLAYER's own token (never the service's admin
+// credentials), so a player can only ever see or cancel their own deletion.
+// They use the namespace-scoped public routes, which take the same
+// game-namespace user id the submit path uses; AGS resolves it to the
+// underlying publisher account, so the status reported here reflects the
+// request submitted by submitAGSDeletion.
+
+// agsDeletionStatus is the AGS GDPR payload. The field names really are
+// PascalCase on the wire, unlike the rest of the AGS APIs.
+type agsDeletionStatus struct {
+	UserID         string `json:"UserID"`
+	Status         string `json:"Status"`
+	DeletionStatus bool   `json:"DeletionStatus"`
+	ExecutionDate  string `json:"ExecutionDate"`
+	DeletionDate   string `json:"DeletionDate"`
+}
+
+// zeroTimestamp is what AGS returns for "no date set" rather than omitting it.
+const zeroTimestamp = "0001-01-01T00:00:00Z"
+
+func (h *accountDeletionHandler) deletionStatusURL(userID string) string {
+	return fmt.Sprintf("%s/gdpr/public/namespaces/%s/users/%s/deletions/status",
+		h.agsBaseURL, url.PathEscape(h.namespace), url.PathEscape(userID))
+}
+
+func (h *accountDeletionHandler) deletionCancelURL(userID string) string {
+	return fmt.Sprintf("%s/gdpr/public/namespaces/%s/users/%s/deletions",
+		h.agsBaseURL, url.PathEscape(h.namespace), url.PathEscape(userID))
+}
+
+// status reports whether a deletion is scheduled for the calling player.
+func (h *accountDeletionHandler) status(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	userID := subFromContext(r.Context())
+	playerToken := accessTokenFromContext(r.Context())
+	if userID == "" || playerToken == "" {
+		writeDeletionError(w, http.StatusUnauthorized, "unauthenticated", "Sign in again to check your account status.")
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, h.deletionStatusURL(userID), nil)
+	if err != nil {
+		writeDeletionError(w, http.StatusBadGateway, "status_unavailable", "Could not check your account status.")
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+playerToken)
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		writeDeletionError(w, http.StatusBadGateway, "status_unavailable", "Could not check your account status.")
+		return
+	}
+	defer resp.Body.Close()
+
+	// No deletion on file is a normal state, not an error: report "not pending"
+	// rather than surfacing a scary failure on every profile open.
+	if resp.StatusCode == http.StatusNotFound {
+		_ = json.NewEncoder(w).Encode(map[string]any{"pending": false})
+		return
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Printf("[account-deletion] status for %s returned %d", userID, resp.StatusCode)
+		writeDeletionError(w, http.StatusBadGateway, "status_unavailable", "Could not check your account status.")
+		return
+	}
+
+	var parsed agsDeletionStatus
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&parsed); err != nil {
+		writeDeletionError(w, http.StatusBadGateway, "status_unavailable", "Could not check your account status.")
+		return
+	}
+	out := map[string]any{"pending": parsed.DeletionStatus}
+	if parsed.DeletionStatus {
+		out["status"] = parsed.Status
+		if parsed.ExecutionDate != "" && parsed.ExecutionDate != zeroTimestamp {
+			out["executionDate"] = parsed.ExecutionDate
+		}
+	}
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// cancel withdraws a pending deletion during the grace period.
+func (h *accountDeletionHandler) cancel(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	userID := subFromContext(r.Context())
+	playerToken := accessTokenFromContext(r.Context())
+	if userID == "" || playerToken == "" {
+		writeDeletionError(w, http.StatusUnauthorized, "unauthenticated", "Sign in again to cancel account deletion.")
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodDelete, h.deletionCancelURL(userID), nil)
+	if err != nil {
+		writeDeletionError(w, http.StatusBadGateway, "cancel_failed", "Could not cancel the deletion. Try again.")
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+playerToken)
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		writeDeletionError(w, http.StatusBadGateway, "cancel_failed", "Could not cancel the deletion. Try again.")
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+
+	// Nothing to cancel means the player already got what they want; treating it
+	// as an error would strand them on a screen they cannot clear.
+	if resp.StatusCode == http.StatusNotFound {
+		_ = json.NewEncoder(w).Encode(map[string]any{"cancelled": true, "pending": false})
+		return
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Printf("[account-deletion] cancel for %s returned %d", userID, resp.StatusCode)
+		writeDeletionError(w, http.StatusBadGateway, "cancel_failed", "Could not cancel the deletion. Try again.")
+		return
+	}
+	log.Printf("[account-deletion] player %s cancelled their pending deletion", userID)
+	_ = json.NewEncoder(w).Encode(map[string]any{"cancelled": true, "pending": false})
+}
+
+// handle routes /account/deletion by method: GET reports a scheduled deletion,
+// POST requests one, DELETE cancels one.
+func (h *accountDeletionHandler) handle(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.status(w, r)
+	case http.MethodDelete:
+		h.cancel(w, r)
+	default:
+		h.deleteAccount(w, r)
+	}
+}

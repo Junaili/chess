@@ -16,7 +16,7 @@ import {
   moderateOutgoingChat,
 } from './content-moderation.mjs'
 import { getReportTicketId, getSafetyError } from './safety-payloads.mjs'
-import { validateDeletionConfirmation } from './account-deletion-contract.mjs'
+import { validateDeletionConfirmation, describePendingDeletion } from './account-deletion-contract.mjs'
 import { resolveLearningFlags, resolveLearningRolloutPercents, isInRolloutPercent } from './learning-flags.mjs'
 import { emitLearningStateChanged } from './learning-events.mjs'
 import { historyRowView, filterHistory, historyFilterCounts, pageHistory, HISTORY_PAGE_SIZE } from './history-view.mjs'
@@ -389,6 +389,8 @@ const unblockPlayer = async (...args) => (await safetyFeature.load()).unblockPla
 const fetchDeletionRequirements = async (...args) => (await accountDeletionFeature.load()).fetchDeletionRequirements(...args)
 const submitAccountDeletion = async (...args) => (await accountDeletionFeature.load()).submitAccountDeletion(...args)
 const authorizeAppleDeletionIfRequired = async (...args) => (await accountDeletionFeature.load()).authorizeAppleDeletionIfRequired(...args)
+const fetchDeletionStatus = async (...args) => (await accountDeletionFeature.load()).fetchDeletionStatus(...args)
+const cancelAccountDeletion = async (...args) => (await accountDeletionFeature.load()).cancelAccountDeletion(...args)
 
 const primeUnlockedCache = async (...args) => (await achievementsFeature.load()).primeUnlockedCache(...args)
 const diffNewlyUnlocked = async (...args) => (await achievementsFeature.load()).diffNewlyUnlocked(...args)
@@ -879,6 +881,7 @@ const STATIC_ACTIONS = new Set([
   'agsLoginApple',
   'agsLogout',
   'agsOpenDeleteAccount',
+  'agsCancelAccountDeletion',
   'agsOpenAchievements',
   'agsOpenForgotPassword',
   'agsOpenClub',
@@ -3111,6 +3114,8 @@ async function initAuth() {
   }
   window.agsIsBlockedPlayer = userId => blockedPlayers.some(item => item.userId === userId)
   window.agsOpenDeleteAccount = openDeleteAccountModal
+  window.agsCancelAccountDeletion = handleCancelAccountDeletion
+  window.agsRefreshDeletionStatus = refreshDeletionStatus
   window.agsUpdateDeleteConfirmation = updateDeleteAccountConfirmation
   window.agsConfirmDeleteAccount = confirmAccountDeletion
   window.agsCloseDeleteAccount = () => {
@@ -3804,6 +3809,7 @@ async function openPublicProfile(userId, displayName = '') {
       narrativesRemainingToday: getClubStatus()?.narrativesRemainingToday ?? null,
     })
     renderBlockedPlayers()
+    void refreshDeletionStatus()
     return
   }
 
@@ -3900,6 +3906,66 @@ function setAccountDeletionMessage(text, tone = '') {
   if (!message) return
   message.className = `auth-message${tone ? ` ${tone}` : ''}`
   message.textContent = text || ''
+}
+
+// ── Pending deletion (AGS grace period) ──────────────────────────────────────
+// A submitted deletion is not immediate. While one is scheduled the profile
+// swaps the "Delete account" row for a notice plus a way back, so the player
+// is never left wondering whether the request landed.
+
+function renderDeletionStatus(status) {
+  const requestRow = document.getElementById('account-deletion-request')
+  const pendingRow = document.getElementById('account-deletion-pending')
+  const detail = document.getElementById('account-deletion-pending-detail')
+  if (!requestRow || !pendingRow) return
+
+  const pending = describePendingDeletion(status)
+  if (!pending) {
+    requestRow.style.display = ''
+    pendingRow.style.display = 'none'
+    return
+  }
+  if (detail) detail.textContent = pending.detail
+  requestRow.style.display = 'none'
+  pendingRow.style.display = ''
+}
+
+async function refreshDeletionStatus() {
+  if (!currentUserId) return
+  try {
+    renderDeletionStatus(await fetchDeletionStatus())
+  } catch (error) {
+    // A status probe that fails must not hide the Delete button — that path is
+    // an App Store requirement and has to stay reachable.
+    console.warn('[account-deletion] status unavailable:', error?.message || error)
+    renderDeletionStatus(null)
+  }
+}
+
+async function handleCancelAccountDeletion() {
+  const button = document.getElementById('btn-cancel-deletion')
+  const detail = document.getElementById('account-deletion-pending-detail')
+  if (button) button.disabled = true
+  const previous = detail ? detail.textContent : ''
+  if (detail) detail.textContent = 'Cancelling…'
+  try {
+    await cancelAccountDeletion()
+    renderDeletionStatus(null)
+    const message = document.getElementById('profile-safety-message')
+    if (message) {
+      message.className = 'auth-message success'
+      message.textContent = 'Your account deletion was cancelled. Your account is safe.'
+    }
+  } catch (error) {
+    if (detail) detail.textContent = previous
+    const message = document.getElementById('profile-safety-message')
+    if (message) {
+      message.className = 'auth-message error'
+      message.textContent = error?.message || 'Could not cancel the deletion. Try again.'
+    }
+  } finally {
+    if (button) button.disabled = false
+  }
 }
 
 async function openDeleteAccountModal() {

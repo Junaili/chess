@@ -39,6 +39,25 @@ export async function submitAccountDeletion({ confirmation, appleAuthorizationCo
   return parseResponse(response, 'Account deletion was not accepted. Your account was not deleted.')
 }
 
+// A submitted deletion sits in an AGS grace period before anything is erased.
+// These let the profile show "deletion scheduled" and offer a way back, instead
+// of going silent after the request.
+export async function fetchDeletionStatus() {
+  const response = await extendFetch('/account/deletion', {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  })
+  return parseResponse(response, 'Could not check your account status.')
+}
+
+export async function cancelAccountDeletion() {
+  const response = await extendFetch('/account/deletion', {
+    method: 'DELETE',
+    headers: { Accept: 'application/json' },
+  })
+  return parseResponse(response, 'Could not cancel the deletion. Try again.')
+}
+
 export async function authorizeAppleDeletionIfRequired(requirements) {
   if (!requirements?.appleReauthorizationRequired) return ''
   const result = await reauthorizeAppleForDeletion()

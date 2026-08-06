@@ -208,3 +208,169 @@ func TestAppleClientSecretUsesES256Shape(t *testing.T) {
 		t.Fatalf("ES256 signature length = %d", len(signature))
 	}
 }
+
+// ── Pending-deletion status + cancel ─────────────────────────────────────────
+
+// statusRoundTripper serves the GDPR status/cancel routes and records what was
+// called with which credentials.
+type statusRoundTripper struct {
+	statusCode   int
+	statusBody   string
+	cancelStatus int
+
+	gotStatusPath string
+	gotCancelPath string
+	gotAuth       string
+	gotMethods    []string
+}
+
+func (f *statusRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	f.gotMethods = append(f.gotMethods, req.Method)
+	f.gotAuth = req.Header.Get("Authorization")
+	status, body := http.StatusOK, `{}`
+	switch {
+	case strings.HasSuffix(req.URL.Path, "/deletions/status"):
+		f.gotStatusPath = req.URL.Path
+		status, body = f.statusCode, f.statusBody
+	case strings.HasSuffix(req.URL.Path, "/deletions") && req.Method == http.MethodDelete:
+		f.gotCancelPath = req.URL.Path
+		status = f.cancelStatus
+	}
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}, nil
+}
+
+func deletionStatusRequest(method string) *http.Request {
+	req := httptest.NewRequest(method, "/account/deletion", nil)
+	ctx := context.WithValue(req.Context(), subCtxKey, "player-123")
+	ctx = context.WithValue(ctx, accessTokenCtxKey, "player-token")
+	return req.WithContext(ctx)
+}
+
+func statusHandler(rt *statusRoundTripper) *accountDeletionHandler {
+	return &accountDeletionHandler{
+		agsBaseURL: "https://ags.test",
+		namespace:  "chess",
+		httpClient: &http.Client{Transport: rt},
+		now:        func() time.Time { return time.Unix(1_750_000_000, 0) },
+	}
+}
+
+func TestDeletionStatusReportsScheduledDeletion(t *testing.T) {
+	rt := &statusRoundTripper{
+		statusCode: http.StatusOK,
+		// AGS really does use PascalCase on this payload.
+		statusBody: `{"UserID":"pub-1","Status":"Pending","DeletionStatus":true,"ExecutionDate":"2026-09-02T00:00:00Z"}`,
+	}
+	rec := httptest.NewRecorder()
+	statusHandler(rt).handle(rec, deletionStatusRequest(http.MethodGet))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if out["pending"] != true {
+		t.Errorf("pending = %v, want true", out["pending"])
+	}
+	if out["executionDate"] != "2026-09-02T00:00:00Z" {
+		t.Errorf("executionDate = %v", out["executionDate"])
+	}
+	// A player's own token, never the service's admin credentials: this must
+	// never be able to read another player's deletion.
+	if rt.gotAuth != "Bearer player-token" {
+		t.Errorf("auth = %q, want the caller's own token", rt.gotAuth)
+	}
+	if !strings.Contains(rt.gotStatusPath, "/chess/users/player-123/deletions/status") {
+		t.Errorf("status path = %q", rt.gotStatusPath)
+	}
+}
+
+// AGS returns the zero time when no date is recorded; it must not surface as a
+// real execution date.
+func TestDeletionStatusDropsZeroExecutionDate(t *testing.T) {
+	rt := &statusRoundTripper{
+		statusCode: http.StatusOK,
+		statusBody: `{"Status":"","DeletionStatus":false,"ExecutionDate":"0001-01-01T00:00:00Z"}`,
+	}
+	rec := httptest.NewRecorder()
+	statusHandler(rt).handle(rec, deletionStatusRequest(http.MethodGet))
+
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if out["pending"] != false {
+		t.Errorf("pending = %v, want false", out["pending"])
+	}
+	if _, present := out["executionDate"]; present {
+		t.Errorf("zero execution date must not be reported: %v", out)
+	}
+}
+
+// No deletion on file is a normal state, not an error — otherwise every profile
+// open would surface a failure.
+func TestDeletionStatusTreatsNotFoundAsNotPending(t *testing.T) {
+	rt := &statusRoundTripper{statusCode: http.StatusNotFound, statusBody: `{}`}
+	rec := httptest.NewRecorder()
+	statusHandler(rt).handle(rec, deletionStatusRequest(http.MethodGet))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if out["pending"] != false {
+		t.Errorf("pending = %v, want false", out["pending"])
+	}
+}
+
+func TestDeletionCancelUsesPlayerTokenAndDelete(t *testing.T) {
+	rt := &statusRoundTripper{cancelStatus: http.StatusOK}
+	rec := httptest.NewRecorder()
+	statusHandler(rt).handle(rec, deletionStatusRequest(http.MethodDelete))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if rt.gotCancelPath == "" {
+		t.Fatal("cancel endpoint was never called")
+	}
+	if strings.HasSuffix(rt.gotCancelPath, "/status") {
+		t.Errorf("cancel hit the status route: %q", rt.gotCancelPath)
+	}
+	if rt.gotAuth != "Bearer player-token" {
+		t.Errorf("auth = %q, want the caller's own token", rt.gotAuth)
+	}
+}
+
+// Nothing to cancel means the player already has what they want.
+func TestDeletionCancelTreatsNotFoundAsSuccess(t *testing.T) {
+	rt := &statusRoundTripper{cancelStatus: http.StatusNotFound}
+	rec := httptest.NewRecorder()
+	statusHandler(rt).handle(rec, deletionStatusRequest(http.MethodDelete))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+// An unauthenticated caller must never reach AGS.
+func TestDeletionStatusRequiresAPlayerToken(t *testing.T) {
+	rt := &statusRoundTripper{statusCode: http.StatusOK, statusBody: `{}`}
+	req := httptest.NewRequest(http.MethodGet, "/account/deletion", nil)
+	req = req.WithContext(context.WithValue(req.Context(), subCtxKey, "player-123")) // no token
+	rec := httptest.NewRecorder()
+	statusHandler(rt).handle(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if len(rt.gotMethods) != 0 {
+		t.Errorf("unauthenticated request reached AGS: %v", rt.gotMethods)
+	}
+}
