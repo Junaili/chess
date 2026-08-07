@@ -398,10 +398,13 @@ func TestDeletionStatusPassesThroughUpstreamAuthFailure(t *testing.T) {
 // while every iOS player is silently blocked, which is how this reached
 // production unnoticed.
 func TestMissingAppleConfigNamesEveryGap(t *testing.T) {
-	full := &accountDeletionHandler{
-		appleTeamID: "TEAM", appleKeyID: "KEY", appleClientID: "io.example.chess",
-		applePrivateKey: "cGVt",
+	newFull := func() *accountDeletionHandler {
+		return &accountDeletionHandler{
+			appleTeamID: "TEAM", appleKeyID: "KEY", appleClientID: "io.example.chess",
+			applePrivateKey: "cGVt",
+		}
 	}
+	full := newFull()
 	if got := full.missingAppleConfig(); len(got) != 0 {
 		t.Errorf("fully configured handler reported gaps: %v", got)
 	}
@@ -427,8 +430,10 @@ func TestMissingAppleConfigNamesEveryGap(t *testing.T) {
 		{"blank team id", func(h *accountDeletionHandler) { h.appleTeamID = "   " }, "APPLE_TEAM_ID"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := *full
-			tc.mutate(&h)
+			// A fresh handler per case: the struct holds a mutex and must not be
+			// copied by value.
+			h := newFull()
+			tc.mutate(h)
 			got := h.missingAppleConfig()
 			if len(got) != 1 || got[0] != tc.wantGap {
 				t.Errorf("missingAppleConfig = %v, want exactly [%s]", got, tc.wantGap)
