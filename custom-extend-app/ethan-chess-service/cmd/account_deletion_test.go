@@ -392,3 +392,50 @@ func TestDeletionStatusPassesThroughUpstreamAuthFailure(t *testing.T) {
 		}
 	}
 }
+
+// Sign in with Apple accounts cannot be deleted without all four Apple
+// settings. A partial config is the dangerous case: web players keep working
+// while every iOS player is silently blocked, which is how this reached
+// production unnoticed.
+func TestMissingAppleConfigNamesEveryGap(t *testing.T) {
+	full := &accountDeletionHandler{
+		appleTeamID: "TEAM", appleKeyID: "KEY", appleClientID: "io.example.chess",
+		applePrivateKey: "cGVt",
+	}
+	if got := full.missingAppleConfig(); len(got) != 0 {
+		t.Errorf("fully configured handler reported gaps: %v", got)
+	}
+	if !full.appleConfigured() {
+		t.Error("fully configured handler reported not configured")
+	}
+
+	none := &accountDeletionHandler{}
+	if got := none.missingAppleConfig(); len(got) != 4 {
+		t.Errorf("empty config reported %v, want all four named", got)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*accountDeletionHandler)
+		wantGap string
+	}{
+		{"team id", func(h *accountDeletionHandler) { h.appleTeamID = "" }, "APPLE_TEAM_ID"},
+		{"key id", func(h *accountDeletionHandler) { h.appleKeyID = "" }, "APPLE_KEY_ID"},
+		{"client id", func(h *accountDeletionHandler) { h.appleClientID = "" }, "APPLE_CLIENT_ID"},
+		{"private key", func(h *accountDeletionHandler) { h.applePrivateKey = "" }, "APPLE_PRIVATE_KEY_B64"},
+		// Whitespace is not configuration.
+		{"blank team id", func(h *accountDeletionHandler) { h.appleTeamID = "   " }, "APPLE_TEAM_ID"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := *full
+			tc.mutate(&h)
+			got := h.missingAppleConfig()
+			if len(got) != 1 || got[0] != tc.wantGap {
+				t.Errorf("missingAppleConfig = %v, want exactly [%s]", got, tc.wantGap)
+			}
+			if h.appleConfigured() {
+				t.Error("a partial config must not count as configured")
+			}
+		})
+	}
+}

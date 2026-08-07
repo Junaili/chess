@@ -167,6 +167,10 @@ func main() {
 	// Native account deletion. The authenticated user comes from token
 	// introspection; Apple credentials and the AGS S2S client stay server-side.
 	accountDeletion := newAccountDeletionHandlerFromEnv()
+	// Surface a missing Apple revocation credential at boot: without it, Sign in
+	// with Apple players cannot delete their account and nothing says so until
+	// someone taps the button.
+	accountDeletion.LogAppleDeletionReadiness()
 	// Club subscription + Ethan Coins (dev-plan §11.8): cancel Stripe subs and
 	// warn about Apple subs before/during deletion. Wired here (after
 	// `monetization` is constructed below) — see the assignment further down.

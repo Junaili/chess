@@ -83,6 +83,10 @@ func (h *accountDeletionHandler) requirements(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if appleLinked && !h.appleConfigured() {
+		// Log the specific gap: "try again later" is what the player sees, but
+		// this never self-heals — it needs configuration.
+		log.Printf("[account-deletion] BLOCKED for Apple-linked user %s — missing %s",
+			userID, strings.Join(h.missingAppleConfig(), ", "))
 		writeDeletionError(w, http.StatusServiceUnavailable, "apple_revocation_unavailable", "Account deletion is temporarily unavailable. Try again later.")
 		return
 	}
@@ -268,7 +272,44 @@ func (h *accountDeletionHandler) isAppleLinked(userID string) (bool, error) {
 }
 
 func (h *accountDeletionHandler) appleConfigured() bool {
-	return h.appleTeamID != "" && h.appleKeyID != "" && h.appleClientID != "" && h.applePrivateKey != ""
+	return len(h.missingAppleConfig()) == 0
+}
+
+// missingAppleConfig names the Apple settings that are absent. Sign in with
+// Apple accounts cannot be deleted without all four (TN3194 requires revoking
+// the authorization with a server-held credential), so any gap silently blocks
+// account deletion for every iOS player while leaving web players working —
+// which is exactly how this reached production unnoticed.
+func (h *accountDeletionHandler) missingAppleConfig() []string {
+	var missing []string
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{"APPLE_TEAM_ID", h.appleTeamID},
+		{"APPLE_KEY_ID", h.appleKeyID},
+		{"APPLE_CLIENT_ID", h.appleClientID},
+		{"APPLE_PRIVATE_KEY_B64", h.applePrivateKey},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			missing = append(missing, field.name)
+		}
+	}
+	return missing
+}
+
+// LogAppleDeletionReadiness reports at startup whether Sign in with Apple
+// accounts can actually be deleted. Without it the gap is invisible until a
+// player — or an App Review tester — taps Delete Account and is told to "try
+// again later" for something that will never succeed on its own.
+func (h *accountDeletionHandler) LogAppleDeletionReadiness() {
+	if missing := h.missingAppleConfig(); len(missing) > 0 {
+		log.Printf("[account-deletion] WARNING: Sign in with Apple accounts CANNOT be deleted — missing %s. "+
+			"iOS players will see \"temporarily unavailable\"; Apple Guideline 5.1.1(v) requires this to work.",
+			strings.Join(missing, ", "))
+		return
+	}
+	log.Printf("[account-deletion] Apple token revocation configured (client %s)", h.appleClientID)
 }
 
 func (h *accountDeletionHandler) revokeAppleAuthorization(code string) error {
