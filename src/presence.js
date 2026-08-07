@@ -8,6 +8,7 @@ import {
   serializePersonalChatPayload,
 } from './realtime-delivery.mjs'
 import { parseMatchFoundNotification } from './matchmaking-recovery.mjs'
+import { canSendOnSocket } from './lobby-liveness.mjs'
 
 const AVAILABILITY = {
   offline: 0,
@@ -84,6 +85,72 @@ function settleOpenWaiters(opened) {
   openWaiters.clear()
 }
 
+// The native WebSocket behind the SDK wrapper, so we can read its readyState.
+//
+// Why this is needed: browsers do NOT throw when send() runs on a
+// CLOSING/CLOSED socket — they log "WebSocket is already in CLOSING or CLOSED
+// state" and silently drop the frame. The SDK's send only checks that its
+// socket object exists, never its readyState, so it sends into the void and the
+// request hangs until our own timeout. A try/catch cannot help, because nothing
+// throws. The window is real: `lobbyConnected` stays true from the moment the
+// socket starts closing until our onClose handler runs.
+//
+// The wrapper cannot tell us: it exposes `instance`, but that is snapshotted
+// when the wrapper object is built — before connect() creates the socket — so
+// it is permanently null. Capturing at construction is the only way in.
+const nativeSockets = new WeakMap() // SDK wrapper → native WebSocket
+
+// connectAndCapture calls socket.connect() while briefly observing WebSocket
+// construction, so we can hold the real socket.
+//
+// The observation window is exactly one synchronous call — our own connect() —
+// and it is restored in a finally, so nothing else in the app can be caught by
+// it. Deliberately no URL filter: anything constructed inside our own call
+// stack is the lobby socket by definition, and a URL pattern that failed to
+// match some future deployment would silently disable the readyState check
+// rather than loudly break.
+function connectAndCapture(socket) {
+  const Native = globalThis.WebSocket
+  if (typeof Native !== 'function') {
+    socket.connect()
+    return
+  }
+  let captured = null
+  const Observed = function (...args) {
+    const ws = new Native(...args)
+    if (!captured) captured = ws
+    return ws
+  }
+  Observed.prototype = Native.prototype
+  for (const key of ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED']) Observed[key] = Native[key]
+  try {
+    globalThis.WebSocket = Observed
+    socket.connect()
+  } finally {
+    globalThis.WebSocket = Native
+  }
+  if (captured) nativeSockets.set(socket, captured)
+  debugPresence('native-socket-captured', !!captured)
+}
+
+// Is this socket actually able to carry a frame right now? Falls back to
+// `lobbyConnected` when the native socket wasn't captured, so a future SDK
+// change degrades to the old behaviour instead of blocking every send.
+function lobbySocketOpen(socket) {
+  if (!socket) return false
+  return canSendOnSocket(nativeSockets.get(socket), lobbyConnected)
+}
+
+// Liveness check for request/response sends: a dead socket is treated as a
+// disconnect so the reconnect path runs, rather than leaving us to time out
+// against a socket that can never answer.
+function lobbySendReady(socket) {
+  if (lobbySocketOpen(socket)) return true
+  debugPresence('send-on-dead-socket')
+  handleSocketDown(socket)
+  return false
+}
+
 // Tear down a dead socket and schedule a reconnect. Shared by onClose and (for
 // connections that never opened) onError, guarded so the two can't double-fire
 // for the same failed attempt — whichever runs first nulls out lobbyWs, so the
@@ -137,7 +204,7 @@ function ensureLobbyConnected() {
     // The generated SDK only lets listeners be registered after connect()
     // creates its native WebSocket. Browser open events are asynchronous, so
     // the listeners below are still attached before the handshake completes.
-    socket.connect()
+    connectAndCapture(socket)
   } catch (error) {
     lobbyWs = null
     lobbyConnected = false
@@ -334,7 +401,7 @@ export function disconnectPresence() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
   const socket = lobbyWs
   try {
-    if (socket && lobbyConnected) {
+    if (socket && lobbySocketOpen(socket)) {
       sendPresence('offline')
       socket.sendOfflineNotification({ id: lobbyId() })
     }
@@ -397,7 +464,7 @@ export async function signOutPresence() {
   if (!sdk.getToken()?.accessToken) return
   try {
     const opened = await waitForLobbyOpen()
-    if (opened && lobbyWs) {
+    if (opened && lobbySocketOpen(lobbyWs)) {
       sendPresence('offline')
       lobbyWs.sendOfflineNotification({ id: lobbyId() })
       await sleep(OFFLINE_FLUSH_MS)
@@ -445,6 +512,12 @@ export async function refreshPresenceToken(accessToken) {
         resolve(response?.code === 0)
       },
     })
+    if (!lobbySendReady(socket)) {
+      pendingTokenRefreshRequests.delete(key)
+      clearTimeout(timer)
+      resolve(false)
+      return
+    }
     try {
       socket.sendRefreshToken({ id, token: accessToken })
     } catch (error) {
@@ -574,6 +647,12 @@ async function sendPersonalChatOnce({ from, to, payload }) {
     })
 
     debugPresence('send-personal-chat', { id, from, to, type: payload?.type })
+    if (!lobbySendReady(socket)) {
+      pendingPersonalChatRequests.delete(key)
+      clearTimeout(timer)
+      resolve({ ok: false, retryable: true, error: 'Connection lost while sending the invite.' })
+      return
+    }
     try {
       socket.sendPersonalChat(message)
     } catch (error) {
@@ -787,6 +866,10 @@ function mapFriendsStatusResponse(response, requestedIds) {
 async function requestFriendsStatus() {
   const opened = await waitForLobbyOpen()
   if (!opened || !lobbyWs) return null
+  // The socket can start closing between waitForLobbyOpen resolving and the
+  // send below — callers land here on sign-in, when a just-restored session's
+  // socket is often mid-recycle.
+  if (!lobbySendReady(lobbyWs)) return null
 
   const id = lobbyId()
   const key = normalizeId(id)
