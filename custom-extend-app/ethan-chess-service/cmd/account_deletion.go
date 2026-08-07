@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,6 +34,11 @@ type accountDeletionHandler struct {
 	applePrivateKey string
 	httpClient      *http.Client
 	now             func() time.Time
+
+	// lastAppleFailure records why the most recent Apple revocation failed, for
+	// the debug probe — this service's logs are not readable from outside.
+	appleFailureMu   sync.Mutex
+	lastAppleFailure *appleFailure
 
 	// monetization is set post-construction in main.go (nil-safe: existing
 	// tests construct accountDeletionHandler directly and never set this).
@@ -159,6 +165,7 @@ func (h *accountDeletionHandler) deleteAccount(w http.ResponseWriter, r *http.Re
 			return
 		}
 		if err := h.revokeAppleAuthorization(code); err != nil {
+			log.Printf("[account-deletion] Apple revocation failed for %s: %v", userID, err)
 			writeDeletionError(w, http.StatusBadGateway, "apple_revocation_failed", "Apple authorization could not be revoked. Your account was not deleted; try again.")
 			return
 		}
@@ -332,8 +339,13 @@ func (h *accountDeletionHandler) revokeAppleAuthorization(code string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return fmt.Errorf("apple token exchange returned %d", resp.StatusCode)
+		// Apple explains itself in the body ("invalid_grant" for a used or
+		// expired code, "invalid_client" for a credential mismatch). Discarding
+		// it left us unable to tell those apart.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		reason := appleErrorCode(body)
+		h.noteAppleFailure("token_exchange", resp.StatusCode, reason)
+		return fmt.Errorf("apple token exchange returned %d (%s)", resp.StatusCode, reason)
 	}
 	var tokenPayload struct {
 		AccessToken  string `json:"access_token"`
@@ -363,9 +375,11 @@ func (h *accountDeletionHandler) revokeAppleAuthorization(code string) error {
 		return err
 	}
 	defer revokeResp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(revokeResp.Body, 64<<10))
+	revokeBody, _ := io.ReadAll(io.LimitReader(revokeResp.Body, 8<<10))
 	if revokeResp.StatusCode < 200 || revokeResp.StatusCode >= 300 {
-		return fmt.Errorf("apple revoke returned %d", revokeResp.StatusCode)
+		reason := appleErrorCode(revokeBody)
+		h.noteAppleFailure("revoke", revokeResp.StatusCode, reason)
+		return fmt.Errorf("apple revoke returned %d (%s)", revokeResp.StatusCode, reason)
 	}
 	return nil
 }
@@ -682,6 +696,13 @@ func (h *accountDeletionHandler) DebugHandler(secret string) http.HandlerFunc {
 			out["appleMissingSettings"] = missing
 		}
 
+		if f := h.recentAppleFailure(); f != nil {
+			out["lastAppleFailure"] = f
+			if hint := appleRevocationHint(f); hint != "" {
+				out["appleFailureHint"] = hint
+			}
+		}
+
 		perms, err := h.selfPermissions()
 		if err != nil {
 			out["permissionCheckError"] = err.Error()
@@ -707,5 +728,71 @@ func (h *accountDeletionHandler) DebugHandler(secret string) http.HandlerFunc {
 				h.namespace, requiredDeletionResource, h.clientID)
 		}
 		_ = json.NewEncoder(w).Encode(out)
+	}
+}
+
+// ── Apple failure diagnostics ────────────────────────────────────────────────
+//
+// There is no way to read this service's logs from outside, so the last Apple
+// revocation failure is kept in memory and surfaced through the debug probe.
+// It records Apple's own error code only — never the authorization code, the
+// tokens, or which player it was.
+
+type appleFailure struct {
+	Stage  string `json:"stage"`  // token_exchange | revoke
+	Status int    `json:"status"` // Apple's HTTP status
+	Reason string `json:"reason"` // Apple's error code, e.g. invalid_grant
+	At     string `json:"at"`
+}
+
+// appleErrorCode pulls the OAuth error code out of an Apple error body.
+// Apple replies {"error":"invalid_grant"}; anything unparseable is reported as
+// "unrecognized" rather than echoing a body we have not inspected.
+func appleErrorCode(body []byte) string {
+	var parsed struct {
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(body), &parsed); err != nil || parsed.Error == "" {
+		return "unrecognized"
+	}
+	if parsed.ErrorDescription != "" {
+		return parsed.Error + ": " + parsed.ErrorDescription
+	}
+	return parsed.Error
+}
+
+func (h *accountDeletionHandler) noteAppleFailure(stage string, status int, reason string) {
+	h.appleFailureMu.Lock()
+	defer h.appleFailureMu.Unlock()
+	h.lastAppleFailure = &appleFailure{
+		Stage: stage, Status: status, Reason: reason,
+		At: h.now().UTC().Format(time.RFC3339),
+	}
+}
+
+func (h *accountDeletionHandler) recentAppleFailure() *appleFailure {
+	h.appleFailureMu.Lock()
+	defer h.appleFailureMu.Unlock()
+	return h.lastAppleFailure
+}
+
+// appleRevocationHint turns Apple's error code into the thing to actually check.
+func appleRevocationHint(f *appleFailure) string {
+	if f == nil {
+		return ""
+	}
+	switch {
+	case strings.HasPrefix(f.Reason, "invalid_grant"):
+		return "Apple rejected the authorization code: it was already used, expired (they last ~5 minutes), " +
+			"or was issued to a different client_id than APPLE_CLIENT_ID. Note that a code already redeemed " +
+			"for sign-in cannot be reused for revocation — the client must request a fresh one."
+	case strings.HasPrefix(f.Reason, "invalid_client"):
+		return "Apple rejected our credentials: APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_CLIENT_ID and the private key " +
+			"must all belong to the same key, and APPLE_CLIENT_ID must match the app's bundle id."
+	case strings.HasPrefix(f.Reason, "invalid_request"):
+		return "Apple rejected the request shape — usually a missing or malformed code."
+	default:
+		return ""
 	}
 }

@@ -508,3 +508,51 @@ func TestDeletionDebugHandlerReportsPermissionAndHidesSecrets(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Apple's error body is the whole diagnosis; discarding it is what left the
+// revocation failure unexplainable.
+func TestAppleErrorCodeExtraction(t *testing.T) {
+	cases := map[string]string{
+		`{"error":"invalid_grant"}`:                                    "invalid_grant",
+		`{"error":"invalid_client"}`:                                   "invalid_client",
+		`{"error":"invalid_grant","error_description":"code expired"}`: "invalid_grant: code expired",
+		``:            "unrecognized",
+		`not json`:    "unrecognized",
+		`{"foo":"1"}`: "unrecognized",
+	}
+	for body, want := range cases {
+		if got := appleErrorCode([]byte(body)); got != want {
+			t.Errorf("appleErrorCode(%q) = %q, want %q", body, got, want)
+		}
+	}
+}
+
+// A revocation failure must be recoverable from the debug probe, since this
+// service's logs cannot be read from outside — and must never expose the
+// authorization code, tokens, or which player it was.
+func TestAppleFailureSurfacesThroughDebugProbeWithoutSecrets(t *testing.T) {
+	transport := &deletionRoundTripper{appleLinked: true, revokeStatus: http.StatusBadRequest}
+	h := testDeletionHandler(t, transport)
+	h.noteAppleFailure("token_exchange", 400, "invalid_grant")
+
+	rec := httptest.NewRecorder()
+	h.DebugHandler("s3cret")(rec, httptest.NewRequest(http.MethodGet, "/debug/account-deletion?key=s3cret", nil))
+
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	failure, ok := out["lastAppleFailure"].(map[string]any)
+	if !ok {
+		t.Fatalf("no lastAppleFailure in probe output: %s", rec.Body.String())
+	}
+	if failure["reason"] != "invalid_grant" || failure["stage"] != "token_exchange" {
+		t.Errorf("failure = %+v", failure)
+	}
+	// The hint must point at the actual cause, including the reuse trap.
+	hint, _ := out["appleFailureHint"].(string)
+	if !strings.Contains(hint, "already used") {
+		t.Errorf("hint should explain invalid_grant: %q", hint)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "player-123") || strings.Contains(body, "cGVt") {
+		t.Errorf("probe leaked identity or key material: %s", body)
+	}
+}
