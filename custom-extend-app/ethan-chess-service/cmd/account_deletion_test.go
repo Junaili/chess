@@ -561,3 +561,91 @@ func TestAppleFailureSurfacesThroughDebugProbeWithoutSecrets(t *testing.T) {
 		t.Errorf("probe leaked identity or key material: %s", body)
 	}
 }
+
+// Revoking the Apple authorization is irreversible and external. If the
+// deletion cannot succeed, we must stop BEFORE revoking — otherwise the player
+// is left signed out of Apple for this app with their account still present,
+// which is exactly what happened in production.
+func TestDeletionStopsBeforeRevokingWhenItCannotSucceed(t *testing.T) {
+	permissionsJSON := `[{"Resource":"ADMIN:NAMESPACE:chess:INFORMATION:USER:*","Action":8}]` // Delete only, no Create
+	var appleCalled bool
+	h := &accountDeletionHandler{
+		agsBaseURL: "https://ags.test", namespace: "chess",
+		clientID: "svc", clientSecret: "secret",
+		appleBaseURL: "https://apple.test",
+		appleTeamID:  "TEAM", appleKeyID: "KEY", appleClientID: "io.example.chess",
+		applePrivateKey: testApplePrivateKey(t),
+		now:             func() time.Time { return time.Unix(1_750_000_000, 0) },
+	}
+	h.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{}`
+		switch {
+		case req.URL.Host == "ags.test" && req.URL.Path == "/iam/v3/oauth/token":
+			payload := base64.RawURLEncoding.EncodeToString([]byte(`{"permissions":` + permissionsJSON + `}`))
+			body = `{"access_token":"h.` + payload + `.s"}`
+		case strings.HasSuffix(req.URL.Path, "/platforms/distinct"):
+			body = `{"platforms":[{"platformName":"apple","status":"LINKED"}]}`
+		case req.URL.Host == "apple.test":
+			appleCalled = true
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{},
+			Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+
+	rec := httptest.NewRecorder()
+	h.deleteAccount(rec, authenticatedDeletionRequest(http.MethodPost, "/account/deletion",
+		`{"confirmation":"DELETE","appleAuthorizationCode":"fresh-code"}`))
+
+	if appleCalled {
+		t.Fatal("Apple authorization was revoked even though the deletion could not succeed")
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+	// The player must be told nothing changed, not that it half-worked.
+	if !strings.Contains(rec.Body.String(), "Nothing was changed") {
+		t.Errorf("body should reassure the account is untouched: %s", rec.Body.String())
+	}
+}
+
+// With the grant present, the flow proceeds and Apple is revoked as before.
+func TestDeletionProceedsWhenPermissionIsPresent(t *testing.T) {
+	permissionsJSON := `[{"Resource":"ADMIN:NAMESPACE:chess:INFORMATION:USER:*","Action":9}]` // Create + Delete
+	var appleCalled bool
+	h := &accountDeletionHandler{
+		agsBaseURL: "https://ags.test", namespace: "chess",
+		clientID: "svc", clientSecret: "secret",
+		appleBaseURL: "https://apple.test",
+		appleTeamID:  "TEAM", appleKeyID: "KEY", appleClientID: "io.example.chess",
+		applePrivateKey: testApplePrivateKey(t),
+		now:             func() time.Time { return time.Unix(1_750_000_000, 0) },
+	}
+	h.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{}`
+		switch {
+		case req.URL.Host == "ags.test" && req.URL.Path == "/iam/v3/oauth/token":
+			payload := base64.RawURLEncoding.EncodeToString([]byte(`{"permissions":` + permissionsJSON + `}`))
+			body = `{"access_token":"h.` + payload + `.s"}`
+		case strings.HasSuffix(req.URL.Path, "/platforms/distinct"):
+			body = `{"platforms":[{"platformName":"apple","status":"LINKED"}]}`
+		case req.URL.Host == "apple.test" && req.URL.Path == "/auth/token":
+			appleCalled = true
+			body = `{"refresh_token":"apple-refresh"}`
+		case req.URL.Host == "apple.test":
+			appleCalled = true
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{},
+			Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+
+	rec := httptest.NewRecorder()
+	h.deleteAccount(rec, authenticatedDeletionRequest(http.MethodPost, "/account/deletion",
+		`{"confirmation":"DELETE","appleAuthorizationCode":"fresh-code"}`))
+
+	if !appleCalled {
+		t.Error("expected Apple revocation to run when the deletion can succeed")
+	}
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("status = %d, want 202", rec.Code)
+	}
+}

@@ -154,6 +154,23 @@ func (h *accountDeletionHandler) deleteAccount(w http.ResponseWriter, r *http.Re
 		writeDeletionError(w, http.StatusBadGateway, "requirements_unavailable", "Could not verify linked login methods. Your account was not deleted.")
 		return
 	}
+	// Revoking the Apple authorization is irreversible and happens OUTSIDE our
+	// system, so never do it until we know the deletion itself can succeed.
+	// Without this check a player whose deletion then failed was left in the
+	// worst of both worlds: signed out of Apple for this app, with their
+	// account and data still fully present. That happened in production.
+	if permitted, err := h.canSubmitDeletion(); err == nil && !permitted {
+		log.Printf("[account-deletion] refusing to start: service client %s lacks %s Create — "+
+			"stopping before any irreversible step", h.clientID, requiredDeletionResource)
+		writeDeletionError(w, http.StatusServiceUnavailable, "deletion_unavailable",
+			"Account deletion is temporarily unavailable. Nothing was changed on your account.")
+		return
+	} else if err != nil {
+		// A failed probe must not block deletion outright — log and continue,
+		// accepting the small risk rather than making deletion undeletable.
+		log.Printf("[account-deletion] permission pre-check failed (continuing): %v", err)
+	}
+
 	if appleLinked {
 		code := strings.TrimSpace(body.AppleAuthorizationCode)
 		if code == "" {
@@ -671,6 +688,23 @@ func (h *accountDeletionHandler) selfPermissions() ([]tokenPermission, error) {
 		return nil, fmt.Errorf("parse token claims: %w", err)
 	}
 	return claims.Permissions, nil
+}
+
+// canSubmitDeletion reports whether this service's own IAM client carries the
+// grant AGS requires to submit a GDPR deletion. Used as a pre-flight so the
+// irreversible Apple revocation never runs ahead of a deletion that cannot
+// succeed.
+func (h *accountDeletionHandler) canSubmitDeletion() (bool, error) {
+	perms, err := h.selfPermissions()
+	if err != nil {
+		return false, err
+	}
+	for _, p := range perms {
+		if strings.Contains(p.Resource, requiredDeletionResource) && p.Action&permissionActionCreate != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // DebugHandler reports whether account deletion can actually work.
