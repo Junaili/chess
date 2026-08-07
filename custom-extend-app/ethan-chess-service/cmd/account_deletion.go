@@ -176,6 +176,9 @@ func (h *accountDeletionHandler) deleteAccount(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := h.submitAGSDeletion(userID); err != nil {
+		// Log the underlying reason. Swallowing it made a permissions problem
+		// indistinguishable from an outage and cost real debugging time.
+		log.Printf("[account-deletion] AGS deletion failed for %s: %v", userID, err)
 		writeDeletionError(w, http.StatusBadGateway, "ags_deletion_failed", "AGS did not accept the deletion request. Your account was not deleted; try again.")
 		return
 	}
@@ -456,9 +459,11 @@ func (h *accountDeletionHandler) submitAGSDeletion(userID string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("AGS GDPR deletion returned %d", resp.StatusCode)
+		// Carry the body: on a 403 AGS names the exact requiredPermission, which
+		// is the difference between "we lack a grant" and "AGS is down".
+		return fmt.Errorf("AGS GDPR deletion returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
 }
@@ -606,5 +611,101 @@ func (h *accountDeletionHandler) handle(w http.ResponseWriter, r *http.Request) 
 		h.cancel(w, r)
 	default:
 		h.deleteAccount(w, r)
+	}
+}
+
+// ── Readiness probe ──────────────────────────────────────────────────────────
+//
+// Account deletion depends on two things that live outside this code: the Apple
+// revocation credential, and an IAM grant on the service's own client. Both
+// were wrong in production at some point, and neither was visible from the
+// outside — a player just saw a 502 or "temporarily unavailable", and the
+// admin APIs do not report a client's effective permissions. This reports what
+// the service can actually see about itself.
+
+// requiredDeletionPermission is what AGS demands to submit a GDPR deletion.
+const (
+	requiredDeletionResource = "INFORMATION:USER"
+	permissionActionCreate   = 1
+)
+
+type tokenPermission struct {
+	Resource string `json:"Resource"`
+	Action   int    `json:"Action"`
+}
+
+// selfPermissions decodes the service's own client-credentials token. AGS
+// embeds the client's effective permissions in the JWT, which is the only
+// reliable way to read them — the admin client endpoint returns them empty.
+func (h *accountDeletionHandler) selfPermissions() ([]tokenPermission, error) {
+	token, err := h.clientCredentialsToken()
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil, errors.New("malformed access token")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("decode token payload: %w", err)
+	}
+	var claims struct {
+		Permissions []tokenPermission `json:"permissions"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, fmt.Errorf("parse token claims: %w", err)
+	}
+	return claims.Permissions, nil
+}
+
+// DebugHandler reports whether account deletion can actually work.
+// GET {basePath}/debug/account-deletion?key=<BOT_TRIGGER_SECRET>
+//
+// Deliberately exposes no secrets: permission resources and action bits only,
+// and the Apple settings by name rather than value.
+func (h *accountDeletionHandler) DebugHandler(secret string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if secret == "" || (r.Header.Get("x-trigger-secret") != secret && r.URL.Query().Get("key") != secret) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		out := map[string]any{
+			"appleRevocationConfigured": h.appleConfigured(),
+			"appleClientId":             h.appleClientID,
+			"agsClientId":               h.clientID,
+			"namespace":                 h.namespace,
+		}
+		if missing := h.missingAppleConfig(); len(missing) > 0 {
+			out["appleMissingSettings"] = missing
+		}
+
+		perms, err := h.selfPermissions()
+		if err != nil {
+			out["permissionCheckError"] = err.Error()
+			_ = json.NewEncoder(w).Encode(out)
+			return
+		}
+		var matching []string
+		canSubmit := false
+		for _, p := range perms {
+			if !strings.Contains(p.Resource, requiredDeletionResource) {
+				continue
+			}
+			matching = append(matching, fmt.Sprintf("%s action=%d", p.Resource, p.Action))
+			if p.Action&permissionActionCreate != 0 {
+				canSubmit = true
+			}
+		}
+		out["deletionPermissions"] = matching
+		out["canSubmitDeletion"] = canSubmit
+		if !canSubmit {
+			out["hint"] = fmt.Sprintf(
+				"grant ADMIN:NAMESPACE:%s:%s:* action Create(1) to client %s",
+				h.namespace, requiredDeletionResource, h.clientID)
+		}
+		_ = json.NewEncoder(w).Encode(out)
 	}
 }

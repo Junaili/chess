@@ -439,3 +439,72 @@ func TestMissingAppleConfigNamesEveryGap(t *testing.T) {
 		})
 	}
 }
+
+// The readiness probe must never leak credentials, and must correctly read the
+// CREATE bit — we got the action bit wrong once already (Delete=8 was granted
+// where Create=1 was required).
+func TestDeletionDebugHandlerReportsPermissionAndHidesSecrets(t *testing.T) {
+	makeToken := func(perms string) string {
+		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"permissions":` + perms + `}`))
+		return "header." + payload + ".sig"
+	}
+	newHandler := func(perms string) *accountDeletionHandler {
+		return &accountDeletionHandler{
+			agsBaseURL: "https://ags.test", namespace: "chess",
+			clientID: "svc-client", clientSecret: "super-secret",
+			appleTeamID: "TEAM", appleKeyID: "KEY", appleClientID: "io.example.chess",
+			applePrivateKey: "cGVt",
+			httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200, Header: http.Header{},
+					Body: io.NopCloser(strings.NewReader(`{"access_token":"` + makeToken(perms) + `"}`))}, nil
+			})},
+			now: time.Now,
+		}
+	}
+
+	t.Run("create bit present", func(t *testing.T) {
+		h := newHandler(`[{"Resource":"ADMIN:NAMESPACE:chess:INFORMATION:USER:*","Action":1}]`)
+		rec := httptest.NewRecorder()
+		h.DebugHandler("s3cret")(rec, httptest.NewRequest(http.MethodGet, "/debug/account-deletion?key=s3cret", nil))
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		if out["canSubmitDeletion"] != true {
+			t.Errorf("canSubmitDeletion = %v, want true", out["canSubmitDeletion"])
+		}
+		if out["appleRevocationConfigured"] != true {
+			t.Errorf("appleRevocationConfigured = %v", out["appleRevocationConfigured"])
+		}
+		// The client secret and Apple private key must never appear.
+		if body := rec.Body.String(); strings.Contains(body, "super-secret") || strings.Contains(body, "cGVt") {
+			t.Errorf("debug output leaked a secret: %s", body)
+		}
+	})
+
+	// Delete(8) is not Create(1) — the exact mistake that cost a round trip.
+	t.Run("delete bit is not enough", func(t *testing.T) {
+		h := newHandler(`[{"Resource":"ADMIN:NAMESPACE:chess:INFORMATION:USER:*","Action":8}]`)
+		rec := httptest.NewRecorder()
+		h.DebugHandler("s3cret")(rec, httptest.NewRequest(http.MethodGet, "/debug/account-deletion?key=s3cret", nil))
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		if out["canSubmitDeletion"] != false {
+			t.Errorf("Delete-only must not count as able to submit: %v", out)
+		}
+		if hint, _ := out["hint"].(string); !strings.Contains(hint, "Create(1)") {
+			t.Errorf("hint should name the missing action: %q", hint)
+		}
+	})
+
+	t.Run("requires the shared secret", func(t *testing.T) {
+		h := newHandler(`[]`)
+		rec := httptest.NewRecorder()
+		h.DebugHandler("s3cret")(rec, httptest.NewRequest(http.MethodGet, "/debug/account-deletion", nil))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", rec.Code)
+		}
+	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

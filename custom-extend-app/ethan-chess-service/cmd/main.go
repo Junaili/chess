@@ -174,6 +174,11 @@ func main() {
 	// Club subscription + Ethan Coins (dev-plan §11.8): cancel Stripe subs and
 	// warn about Apple subs before/during deletion. Wired here (after
 	// `monetization` is constructed below) — see the assignment further down.
+	// Reports whether account deletion can actually work: the Apple revocation
+	// credential and the IAM grant both live outside this code, and neither is
+	// visible from the outside when it is wrong.
+	mux.HandleFunc(basePath+"/debug/account-deletion",
+		accountDeletion.DebugHandler(os.Getenv("BOT_TRIGGER_SECRET")))
 	mux.Handle(basePath+"/account/deletion-requirements",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(accountDeletion.requirements))))
 	// GET reports a deletion scheduled during the AGS grace period, POST
