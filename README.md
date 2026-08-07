@@ -175,9 +175,28 @@ ipconfig getifaddr en0        # Mac
 ipconfig | findstr "IPv4"     # Windows
 ```
 
-`VITE_RTC_ICE_CONFIG_URL` is optional for local development and required for
-production-grade relayed calls. The endpoint must authenticate the player and
-return short-lived credentials in this shape:
+Relayed calls use **AGS TURN Manager**, and the browser calls it directly with
+the signed-in player's AGS token — no proxy service in between. The base URL is
+derived from `VITE_ACCELBYTE_BASE_URL`, so nothing needs configuring for it to
+work; `VITE_AGS_TURN_MANAGER_URL` only overrides the host.
+
+AGS answers in two steps, which is why pointing a single-shot ICE variable at
+it cannot work:
+
+| Call | Returns |
+|---|---|
+| `GET /turnmanager/turn` | `{"servers":[{"ip","port","region","status",...}]}` — **no credentials** |
+| `GET /turnmanager/turn/secret/{region}/{ip}/{port}` | `{"ip","port","region","username","password"}` |
+
+The client filters to `ACTIVE` servers, requests a credential for the first two,
+and maps each into an `RTCIceServer` — `password` becomes WebRTC's `credential`,
+and `ip`/`port` become `turn:` URLs over both UDP and TCP. There is no `turns:`
+entry because AGS identifies servers by raw IP, and TLS cannot validate a
+certificate against an address; TCP is the fallback on UDP-blocked networks.
+
+`VITE_RTC_ICE_CONFIG_URL` is now an **override for a non-AGS relay only**, and
+takes precedence when set. That endpoint must authenticate the player and
+return short-lived credentials in one shot, in this shape:
 
 ```json
 {

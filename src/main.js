@@ -658,6 +658,8 @@ async function prepareRealtimeRuntime() {
       const runtime = videoModule.createVideoCallRuntime({
         Peer,
         iceConfigUrl: import.meta.env.VITE_RTC_ICE_CONFIG_URL || '',
+        turnManagerUrl: import.meta.env.VITE_AGS_TURN_MANAGER_URL
+          || (import.meta.env.VITE_ACCELBYTE_BASE_URL ? `${import.meta.env.VITE_ACCELBYTE_BASE_URL}/turnmanager` : ''),
         getAccessToken: currentAccessToken,
         nativeAudio: nativeVideoCallAudio,
         isNativeIOS: () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios',

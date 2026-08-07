@@ -26,9 +26,16 @@ export const VIDEO_PROFILES = Object.freeze({
 })
 
 const PROFILE_ORDER = ['high', 'medium', 'low']
-const ICE_FETCH_TIMEOUT_MS = 3_000
+// The AGS path spends two sequential round trips here — the server list, then
+// a credential per server — so the budget covers both. Three seconds was not
+// enough for one TLS handshake and an answer over cellular, let alone two.
+const ICE_FETCH_TIMEOUT_MS = 8_000
 const ICE_FAILURE_RETRY_MS = 60_000
 const ICE_EXPIRY_SAFETY_MS = 60_000
+// How many relay servers to request credentials for. Each one costs a round
+// trip inside the budget above, and the browser gathers candidates against
+// every server it is handed, so a longer list slows call setup twice over.
+const AGS_TURN_MAX_SERVERS = 2
 
 function selectedProfile(name) {
   return VIDEO_PROFILES[name] || VIDEO_PROFILES.high
@@ -117,6 +124,77 @@ export function normalizeIceConfiguration(payload, now = Date.now()) {
     expiresAt: parseExpiry(source, now),
     hasTurn: iceServers.some(server => normalizeUrls(server.urls).some(url => /^turns?:/i.test(url))),
   }
+}
+
+/**
+ * AGS TURN Manager hands out relay access in two steps, and the first step
+ * carries no credentials: `GET /turn` lists servers as
+ * `{ servers: [{ ip, port, region, status, ... }] }`, and a credential for one
+ * of them comes from `GET /turn/secret/{region}/{ip}/{port}`. That is why the
+ * list alone can never satisfy `normalizeIceConfiguration` — it has no `urls`,
+ * no `username` and no `credential`, so every entry is correctly dropped.
+ *
+ * Returns the servers worth asking for a credential, in the order AGS listed
+ * them. A browser cannot QoS-probe the `qos_port` the way the engine SDKs do to
+ * find the closest relay, so there is no better ordering available here.
+ */
+export function normalizeTurnServerList(payload) {
+  const source = payload?.data && typeof payload.data === 'object' ? payload.data : payload
+  const rawServers = Array.isArray(source) ? source : source?.servers
+  if (!Array.isArray(rawServers)) return []
+  return rawServers
+    .filter(server => server && typeof server === 'object')
+    // An absent status is treated as usable; only an explicit non-ACTIVE is a
+    // reason to skip a server, so a shape change cannot silently empty this.
+    .filter(server => String(server.status ?? 'ACTIVE').toUpperCase() === 'ACTIVE')
+    .map(server => ({
+      region: typeof server.region === 'string' ? server.region.trim() : '',
+      ip: typeof server.ip === 'string' ? server.ip.trim() : '',
+      port: Number(server.port),
+    }))
+    .filter(server => server.region && server.ip && Number.isInteger(server.port) && server.port > 0)
+}
+
+/**
+ * Turns one AGS credential response into an `RTCIceServer`.
+ *
+ * Two field-name mismatches live here: AGS returns `password` where WebRTC
+ * wants `credential`, and it returns a bare `ip`/`port` where WebRTC wants a
+ * `turn:` URL. Both UDP and TCP transports are offered because a raw IP cannot
+ * carry `turns:` — TLS would fail certificate validation against an address —
+ * so TCP is the only fallback left on networks that block UDP.
+ */
+export function buildIceServerFromCredential(credential) {
+  if (!credential || typeof credential !== 'object') return null
+  const ip = typeof credential.ip === 'string' ? credential.ip.trim() : ''
+  const port = Number(credential.port)
+  const username = credential.username
+  const password = credential.password ?? credential.credential
+  if (!ip || !Number.isInteger(port) || port <= 0) return null
+  if (typeof username !== 'string' || !username) return null
+  if (typeof password !== 'string' || !password) return null
+  return {
+    urls: [`turn:${ip}:${port}?transport=udp`, `turn:${ip}:${port}?transport=tcp`],
+    username,
+    credential: password,
+    credentialType: 'password',
+  }
+}
+
+/**
+ * COTURN's REST credentials carry their own expiry in the username, as
+ * `<unix-seconds>:<user>`. Honour it only when it lands in a believable window:
+ * a stamp already in the past, or absurdly far ahead, means the format is not
+ * what we assumed, and guessing an expiry is worse than falling back to the
+ * caller's conservative default. Returns null when it cannot be trusted.
+ */
+export function coturnUsernameExpiry(username, now = Date.now()) {
+  const match = /^(\d{9,11}):/.exec(typeof username === 'string' ? username : '')
+  if (!match) return null
+  const expiresAt = Number(match[1]) * 1000
+  if (!Number.isFinite(expiresAt)) return null
+  if (expiresAt <= now || expiresAt > now + 24 * 60 * 60_000) return null
+  return expiresAt
 }
 
 function number(value) {
@@ -352,6 +430,9 @@ function setTrackContentHints(stream) {
 export function createVideoCallRuntime({
   Peer,
   iceConfigUrl = '',
+  // AGS TURN Manager base, e.g. https://<host>/turnmanager. Used only when no
+  // `iceConfigUrl` is set: an explicit single-shot endpoint is the override.
+  turnManagerUrl = '',
   getAccessToken = () => '',
   fetchImpl = globalThis.fetch?.bind(globalThis),
   mediaDevices = globalThis.navigator?.mediaDevices,
@@ -364,10 +445,47 @@ export function createVideoCallRuntime({
   let iceRequest = null
   let iceRetryAfter = 0
 
+  async function fetchAgsTurnConfiguration(currentTime, headers, signal) {
+    const base = turnManagerUrl.replace(/\/+$/, '')
+    const listResponse = await fetchImpl(`${base}/turn`, { method: 'GET', headers, signal })
+    if (!listResponse.ok) throw new Error(`TURN server list returned HTTP ${listResponse.status}`)
+    const servers = normalizeTurnServerList(await listResponse.json())
+    if (!servers.length) throw new Error('TURN server list contained no active servers')
+
+    // One server failing to mint a credential should not lose the others, so
+    // each is settled independently and only an empty result is fatal.
+    const candidates = await Promise.all(servers.slice(0, AGS_TURN_MAX_SERVERS).map(async server => {
+      const path = `${base}/turn/secret/${encodeURIComponent(server.region)}/${encodeURIComponent(server.ip)}/${server.port}`
+      try {
+        const response = await fetchImpl(path, { method: 'GET', headers, signal })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return buildIceServerFromCredential(await response.json())
+      } catch (error) {
+        logger?.debug?.('[video-call] TURN credential unavailable', server.region, error?.message || error)
+        return null
+      }
+    }))
+
+    const iceServers = candidates.filter(Boolean)
+    if (!iceServers.length) throw new Error('no TURN server returned a usable credential')
+    // Expire with the first credential to lapse, not the last.
+    const expiries = iceServers
+      .map(server => coturnUsernameExpiry(server.username, currentTime))
+      .filter(expiry => expiry !== null)
+    return {
+      iceServers,
+      expiresAt: expiries.length ? Math.min(...expiries) : currentTime + 10 * 60_000,
+      hasTurn: true,
+    }
+  }
+
   async function fetchIceConfiguration() {
     const currentTime = now()
     if (iceCache && currentTime < iceCache.expiresAt - ICE_EXPIRY_SAFETY_MS) return iceCache
-    if (!iceConfigUrl || !fetchImpl || currentTime < iceRetryAfter) return null
+    if ((!iceConfigUrl && !turnManagerUrl) || !fetchImpl || currentTime < iceRetryAfter) return null
+    // Both AGS endpoints are player-authenticated. Before sign-in there is
+    // nothing to send, and a warning there would be noise rather than news.
+    if (!iceConfigUrl && !(getAccessToken?.() || '')) return null
     if (iceRequest) return iceRequest
 
     iceRequest = (async () => {
@@ -375,15 +493,24 @@ export function createVideoCallRuntime({
       const timeout = controller ? setTimeout(() => controller.abort(), ICE_FETCH_TIMEOUT_MS) : null
       try {
         const token = getAccessToken?.() || ''
+        const headers = token ? { Authorization: `Bearer ${token}` } : {}
+        if (!iceConfigUrl) {
+          iceCache = await fetchAgsTurnConfiguration(currentTime, headers, controller?.signal)
+          return iceCache
+        }
         const response = await fetchImpl(iceConfigUrl, {
           method: 'GET',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers,
           credentials: 'same-origin',
           signal: controller?.signal,
         })
         if (!response.ok) throw new Error(`ICE configuration returned HTTP ${response.status}`)
         const normalized = normalizeIceConfiguration(await response.json(), currentTime)
-        if (!normalized?.hasTurn) throw new Error('ICE configuration did not include a credentialed TURN server')
+        // Split, because these send you to different places: the first means
+        // the endpoint speaks a shape this client does not read, the second
+        // means it read fine and simply carried no usable relay.
+        if (!normalized) throw new Error('ICE configuration response held no readable ICE servers')
+        if (!normalized.hasTurn) throw new Error('ICE configuration held no TURN server with a username and credential')
         iceCache = normalized
         return iceCache
       } catch (error) {
@@ -584,8 +711,9 @@ export function createVideoCallRuntime({
     addNativeAudioListener,
     qualityTelemetryPayload,
     getInfrastructureStatus: () => ({
-      managedTurnConfigured: !!iceConfigUrl,
+      managedTurnConfigured: !!(iceConfigUrl || turnManagerUrl),
       managedTurnLoaded: !!iceCache?.hasTurn,
+      managedTurnSource: iceConfigUrl ? 'ice-config-endpoint' : turnManagerUrl ? 'ags-turn-manager' : 'none',
     }),
   })
 }

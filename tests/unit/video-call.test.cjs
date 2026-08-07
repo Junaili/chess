@@ -242,3 +242,142 @@ test('acquired tracks receive speech and motion content hints', async () => {
   assert.equal(audioTrack.contentHint, 'speech')
   assert.equal(videoTrack.contentHint, 'motion')
 })
+
+test('keeps only active AGS TURN servers and drops malformed entries', async () => {
+  const { normalizeTurnServerList } = await modulePromise
+
+  assert.deepEqual(
+    normalizeTurnServerList({
+      servers: [
+        { ip: '10.0.0.1', port: 3478, region: 'us-west-2', status: 'ACTIVE' },
+        { ip: '10.0.0.2', port: 3478, region: 'ap-southeast-1', status: 'UNREACHABLE' },
+        { ip: '10.0.0.3', port: 3478, region: 'eu-west-1' },
+        { ip: '', port: 3478, region: 'eu-west-2', status: 'ACTIVE' },
+        { ip: '10.0.0.5', port: 0, region: 'eu-west-3', status: 'ACTIVE' },
+      ],
+    }),
+    [
+      { region: 'us-west-2', ip: '10.0.0.1', port: 3478 },
+      { region: 'eu-west-1', ip: '10.0.0.3', port: 3478 },
+    ],
+  )
+
+  // The server list can never satisfy the single-shot contract on its own.
+  const { normalizeIceConfiguration } = await modulePromise
+  assert.equal(normalizeIceConfiguration({ servers: [{ ip: '10.0.0.1', port: 3478, region: 'us-west-2' }] }), null)
+  assert.deepEqual(normalizeTurnServerList({ servers: 'nope' }), [])
+})
+
+test('maps an AGS credential onto an RTCIceServer over UDP and TCP', async () => {
+  const { buildIceServerFromCredential } = await modulePromise
+
+  assert.deepEqual(
+    buildIceServerFromCredential({ ip: '10.0.0.1', port: 3478, region: 'us-west-2', username: '1893456000:player', password: 'secret' }),
+    {
+      urls: ['turn:10.0.0.1:3478?transport=udp', 'turn:10.0.0.1:3478?transport=tcp'],
+      username: '1893456000:player',
+      credential: 'secret',
+      credentialType: 'password',
+    },
+  )
+
+  // AGS calls it `password`; a response missing it is not usable relay.
+  assert.equal(buildIceServerFromCredential({ ip: '10.0.0.1', port: 3478, username: 'u' }), null)
+  assert.equal(buildIceServerFromCredential({ ip: '10.0.0.1', port: 3478, password: 'p' }), null)
+  assert.equal(buildIceServerFromCredential(null), null)
+})
+
+test('trusts a COTURN username expiry only inside a believable window', async () => {
+  const { coturnUsernameExpiry } = await modulePromise
+  const now = 1_800_000_000_000
+
+  assert.equal(coturnUsernameExpiry('1800000600:player', now), 1_800_000_600_000)
+  assert.equal(coturnUsernameExpiry('1799999999:player', now), null, 'already expired')
+  assert.equal(coturnUsernameExpiry('1900000000:player', now), null, 'implausibly far ahead')
+  assert.equal(coturnUsernameExpiry('player-only', now), null)
+  assert.equal(coturnUsernameExpiry(undefined, now), null)
+})
+
+test('resolves AGS TURN through the list-then-secret flow', async () => {
+  const { createVideoCallRuntime } = await modulePromise
+  const constructed = []
+  const requested = []
+  const now = 1_800_000_000_000
+
+  const runtime = createVideoCallRuntime({
+    Peer: class { constructor(id, options) { constructed.push({ id, options }) } },
+    turnManagerUrl: 'https://chess.example.io/turnmanager',
+    getAccessToken: () => 'player-token',
+    fetchImpl: async (url, options) => {
+      requested.push({ url, auth: options.headers.Authorization })
+      if (url.endsWith('/turn')) {
+        return {
+          ok: true,
+          json: async () => ({
+            servers: [
+              { ip: '10.0.0.1', port: 3478, region: 'us-west-2', status: 'ACTIVE' },
+              { ip: '10.0.0.2', port: 3478, region: 'eu-west-1', status: 'ACTIVE' },
+              { ip: '10.0.0.3', port: 3478, region: 'ap-southeast-1', status: 'ACTIVE' },
+            ],
+          }),
+        }
+      }
+      return {
+        ok: true,
+        json: async () => ({ ip: '10.0.0.1', port: 3478, region: 'us-west-2', username: '1800000600:player', password: 'secret' }),
+      }
+    },
+    now: () => now,
+  })
+
+  await runtime.createPeer('player-peer')
+
+  // One list call, then a credential call per chosen server — capped at two.
+  assert.equal(requested.length, 3)
+  assert.equal(requested[0].url, 'https://chess.example.io/turnmanager/turn')
+  assert.equal(requested[1].url, 'https://chess.example.io/turnmanager/turn/secret/us-west-2/10.0.0.1/3478')
+  assert.equal(requested[2].url, 'https://chess.example.io/turnmanager/turn/secret/eu-west-1/10.0.0.2/3478')
+  assert.ok(requested.every(call => call.auth === 'Bearer player-token'))
+
+  const [{ options }] = constructed
+  assert.equal(options.config.iceServers.length, 2)
+  assert.equal(options.config.iceServers[0].credential, 'secret')
+  assert.deepEqual(options.config.iceServers[0].urls, [
+    'turn:10.0.0.1:3478?transport=udp',
+    'turn:10.0.0.1:3478?transport=tcp',
+  ])
+  assert.deepEqual(runtime.getInfrastructureStatus(), {
+    managedTurnConfigured: true,
+    managedTurnLoaded: true,
+    managedTurnSource: 'ags-turn-manager',
+  })
+})
+
+test('falls back to PeerJS when AGS TURN cannot be reached, and never tries unauthenticated', async () => {
+  const { createVideoCallRuntime } = await modulePromise
+  const warnings = []
+
+  const signedOut = createVideoCallRuntime({
+    Peer: class { constructor(id, options) { this.options = options } },
+    turnManagerUrl: 'https://chess.example.io/turnmanager',
+    getAccessToken: () => '',
+    fetchImpl: async () => { throw new Error('should not be called before sign-in') },
+    logger: { warn: (...args) => warnings.push(args), debug: () => {} },
+    now: () => 1_800_000_000_000,
+  })
+  await signedOut.createPeer('anon')
+  assert.deepEqual(warnings, [], 'a signed-out player is not a failure worth warning about')
+
+  const noActive = createVideoCallRuntime({
+    Peer: class { constructor(id, options) { this.options = options } },
+    turnManagerUrl: 'https://chess.example.io/turnmanager',
+    getAccessToken: () => 'player-token',
+    fetchImpl: async () => ({ ok: true, json: async () => ({ servers: [{ ip: '10.0.0.1', port: 3478, region: 'us-west-2', status: 'UNREACHABLE' }] }) }),
+    logger: { warn: (...args) => warnings.push(args), debug: () => {} },
+    now: () => 1_800_000_000_000,
+  })
+  await noActive.createPeer('player')
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0][1], /no active servers/)
+  assert.equal(noActive.getInfrastructureStatus().managedTurnLoaded, false)
+})
