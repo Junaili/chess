@@ -4029,9 +4029,12 @@ async function confirmAccountDeletion() {
         ? 'Waiting for Sign in with Apple…'
         : 'Submitting deletion request…'
     )
-    const appleAuthorizationCode = await authorizeAppleDeletionIfRequired(deletionRequirements)
+    // Apple accounts return both a one-time authorization code (spent on
+    // revoking the grant) and an identity token (authenticates the deletion
+    // itself, since these accounts have no password).
+    const appleCredentials = await authorizeAppleDeletionIfRequired(deletionRequirements)
     setAccountDeletionMessage('Submitting deletion request…')
-    await submitAccountDeletion({ confirmation, appleAuthorizationCode })
+    await submitAccountDeletion({ confirmation, ...appleCredentials })
     setAccountDeletionMessage('Deletion accepted. Signing out…', 'success')
 
     stopFriendsRefresh()

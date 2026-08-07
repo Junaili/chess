@@ -28,12 +28,20 @@ export function describePendingDeletion(status, now = new Date()) {
   return { detail, executionDate: parsed.toISOString(), daysRemaining: days }
 }
 
-export function buildDeletionRequest({ confirmation, appleAuthorizationCode = '' }) {
+// Player credentials travel with the request so AGS can authenticate the
+// deletion as the player rather than as this service — the service's own admin
+// grant is not something we can rely on.
+export function buildDeletionRequest({
+  confirmation, appleAuthorizationCode = '', password = '', platformId = '', platformToken = '',
+}) {
   if (!validateDeletionConfirmation(confirmation)) {
     throw new Error('Type DELETE to confirm account deletion.')
   }
   return {
     confirmation,
     ...(appleAuthorizationCode ? { appleAuthorizationCode } : {}),
+    ...(password ? { password } : {}),
+    ...(platformId ? { platformId } : {}),
+    ...(platformToken ? { platformToken } : {}),
   }
 }

@@ -139,6 +139,12 @@ func (h *accountDeletionHandler) deleteAccount(w http.ResponseWriter, r *http.Re
 	var body struct {
 		Confirmation           string `json:"confirmation"`
 		AppleAuthorizationCode string `json:"appleAuthorizationCode"`
+		// Player credentials for the self-service GDPR routes, which need no
+		// admin grant. Password accounts send Password; platform accounts
+		// (Sign in with Apple) send the platform token.
+		Password      string `json:"password"`
+		PlatformID    string `json:"platformId"`
+		PlatformToken string `json:"platformToken"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&body); err != nil {
 		writeDeletionError(w, http.StatusBadRequest, "invalid_request", "Invalid deletion request.")
@@ -159,7 +165,11 @@ func (h *accountDeletionHandler) deleteAccount(w http.ResponseWriter, r *http.Re
 	// Without this check a player whose deletion then failed was left in the
 	// worst of both worlds: signed out of Apple for this app, with their
 	// account and data still fully present. That happened in production.
-	if permitted, err := h.canSubmitDeletion(); err == nil && !permitted {
+	// Only the admin route depends on that grant. A player supplying their own
+	// credentials goes through the self-service route, which needs none — so do
+	// not block them on a permission their request will never use.
+	selfService := strings.TrimSpace(body.Password) != "" || strings.TrimSpace(body.PlatformToken) != ""
+	if permitted, err := h.canSubmitDeletion(); !selfService && err == nil && !permitted {
 		log.Printf("[account-deletion] refusing to start: service client %s lacks %s Create — "+
 			"stopping before any irreversible step", h.clientID, requiredDeletionResource)
 		writeDeletionError(w, http.StatusServiceUnavailable, "deletion_unavailable",
@@ -199,7 +209,13 @@ func (h *accountDeletionHandler) deleteAccount(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	if err := h.submitAGSDeletion(userID); err != nil {
+	creds := deletionCredentials{
+		playerToken:   accessTokenFromContext(r.Context()),
+		password:      strings.TrimSpace(body.Password),
+		platformID:    strings.TrimSpace(body.PlatformID),
+		platformToken: strings.TrimSpace(body.PlatformToken),
+	}
+	if err := h.submitAGSDeletion(userID, creds); err != nil {
 		// Log the underlying reason. Swallowing it made a permissions problem
 		// indistinguishable from an outage and cost real debugging time.
 		log.Printf("[account-deletion] AGS deletion failed for %s: %v", userID, err)
@@ -466,7 +482,82 @@ func paddedBigInt(value *big.Int, size int) []byte {
 	return result
 }
 
-func (h *accountDeletionHandler) submitAGSDeletion(userID string) error {
+// deletionCredentials carry whatever the player supplied to authenticate the
+// deletion themselves.
+type deletionCredentials struct {
+	playerToken   string
+	password      string
+	platformID    string
+	platformToken string
+}
+
+func (c deletionCredentials) selfService() bool {
+	return c.playerToken != "" && (c.password != "" || c.platformToken != "")
+}
+
+// submitAGSDeletion asks AGS to delete the account.
+//
+// Preferred path is SELF-SERVICE, authenticated by the player's own token plus
+// either their password or their platform token. It needs no admin grant on
+// this service's IAM client, so it is not hostage to a permission we cannot
+// change — which is what blocked deletion entirely.
+//
+// The admin route is the fallback for callers with no player credentials. It
+// requires ADMIN:NAMESPACE:{ns}:INFORMATION:USER Create, which the service may
+// not have; canSubmitDeletion pre-flights that before anything irreversible.
+func (h *accountDeletionHandler) submitAGSDeletion(userID string, creds deletionCredentials) error {
+	if creds.selfService() {
+		if err := h.submitSelfServiceDeletion(userID, creds); err != nil {
+			return err
+		}
+		return nil
+	}
+	return h.submitAdminDeletion(userID)
+}
+
+// submitSelfServiceDeletion uses the public GDPR routes with the player's token.
+func (h *accountDeletionHandler) submitSelfServiceDeletion(userID string, creds deletionCredentials) error {
+	var endpoint string
+	form := url.Values{}
+	switch {
+	case creds.platformToken != "":
+		// Platform-authenticated accounts (Sign in with Apple) have no password.
+		// This route takes the platform token instead. Note it must NOT be the
+		// authorization code when that code was already spent on revocation —
+		// the client sends the identity token.
+		endpoint = h.agsBaseURL + "/gdpr/public/users/me/deletions"
+		platformID := creds.platformID
+		if platformID == "" {
+			platformID = "apple"
+		}
+		form.Set("platformId", platformID)
+		form.Set("platformToken", creds.platformToken)
+	default:
+		endpoint = fmt.Sprintf("%s/gdpr/public/namespaces/%s/users/%s/deletions",
+			h.agsBaseURL, url.PathEscape(h.namespace), url.PathEscape(userID))
+		form.Set("password", creds.password)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+creds.playerToken)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("AGS self-service deletion returned %d: %s",
+			resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+func (h *accountDeletionHandler) submitAdminDeletion(userID string) error {
 	token, err := h.clientCredentialsToken()
 	if err != nil {
 		return err

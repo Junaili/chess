@@ -649,3 +649,120 @@ func TestDeletionProceedsWhenPermissionIsPresent(t *testing.T) {
 		t.Errorf("status = %d, want 202", rec.Code)
 	}
 }
+
+// ── Self-service deletion routing ────────────────────────────────────────────
+//
+// The admin route needs an IAM grant we could not obtain, which blocked
+// deletion entirely. A player authenticating with their own credentials must
+// take the public route instead, which needs no grant.
+
+type routeRecorder struct {
+	paths       []string
+	forms       []string
+	permissions string
+	status      int
+}
+
+func (f *routeRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	body := `{}`
+	if req.Body != nil {
+		raw, _ := io.ReadAll(req.Body)
+		f.forms = append(f.forms, string(raw))
+	}
+	f.paths = append(f.paths, req.URL.Path)
+	if req.URL.Path == "/iam/v3/oauth/token" {
+		perms := f.permissions
+		if perms == "" {
+			perms = `[]`
+		}
+		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"permissions":` + perms + `}`))
+		body = `{"access_token":"h.` + payload + `.s"}`
+	}
+	status := f.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{StatusCode: status, Header: http.Header{},
+		Body: io.NopCloser(strings.NewReader(body))}, nil
+}
+
+func selfServiceHandler(rt *routeRecorder) *accountDeletionHandler {
+	return &accountDeletionHandler{
+		agsBaseURL: "https://ags.test", namespace: "chess",
+		clientID: "svc", clientSecret: "secret",
+		httpClient: &http.Client{Transport: rt},
+		now:        func() time.Time { return time.Unix(1_750_000_000, 0) },
+	}
+}
+
+func TestPasswordAccountUsesThePublicNamespacedRoute(t *testing.T) {
+	rt := &routeRecorder{}
+	err := selfServiceHandler(rt).submitAGSDeletion("player-123", deletionCredentials{
+		playerToken: "player-token", password: "hunter2",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(rt.paths, " ")
+	if !strings.Contains(joined, "/gdpr/public/namespaces/chess/users/player-123/deletions") {
+		t.Errorf("expected the public namespaced route, got %v", rt.paths)
+	}
+	if strings.Contains(joined, "/gdpr/admin/") {
+		t.Errorf("must not fall back to the admin route when credentials were supplied: %v", rt.paths)
+	}
+	// The service's own client credentials must not be fetched for this path.
+	if strings.Contains(joined, "/iam/v3/oauth/token") {
+		t.Errorf("self-service must not need the service client token: %v", rt.paths)
+	}
+	if !strings.Contains(strings.Join(rt.forms, " "), "password=hunter2") {
+		t.Errorf("password was not forwarded: %v", rt.forms)
+	}
+}
+
+// Sign in with Apple accounts have no password; they authenticate with a
+// platform token. It must be the identity token, not the authorization code,
+// which revocation already consumed.
+func TestPlatformAccountUsesTheHeadlessRoute(t *testing.T) {
+	rt := &routeRecorder{}
+	err := selfServiceHandler(rt).submitAGSDeletion("player-123", deletionCredentials{
+		playerToken: "player-token", platformID: "apple", platformToken: "apple-identity-token",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(strings.Join(rt.paths, " "), "/gdpr/public/users/me/deletions") {
+		t.Errorf("expected the headless route, got %v", rt.paths)
+	}
+	form := strings.Join(rt.forms, " ")
+	if !strings.Contains(form, "platformId=apple") || !strings.Contains(form, "platformToken=apple-identity-token") {
+		t.Errorf("platform credentials were not forwarded: %v", rt.forms)
+	}
+}
+
+// With no player credentials there is nothing to authenticate with, so the
+// admin route remains the fallback.
+func TestNoCredentialsFallsBackToTheAdminRoute(t *testing.T) {
+	rt := &routeRecorder{}
+	_ = selfServiceHandler(rt).submitAGSDeletion("player-123", deletionCredentials{})
+	if !strings.Contains(strings.Join(rt.paths, " "), "/gdpr/admin/namespaces/chess/users/player-123/deletions") {
+		t.Errorf("expected the admin fallback, got %v", rt.paths)
+	}
+}
+
+// The pre-flight exists to protect the admin route. It must not block a
+// self-service request, which never uses that grant — otherwise the guard
+// would keep deletion broken for everyone.
+func TestSelfServiceIsNotBlockedByTheMissingAdminGrant(t *testing.T) {
+	rt := &routeRecorder{permissions: `[{"Resource":"ADMIN:NAMESPACE:chess:INFORMATION:USER:*","Action":8}]`}
+	h := selfServiceHandler(rt)
+	rec := httptest.NewRecorder()
+	h.deleteAccount(rec, authenticatedDeletionRequest(http.MethodPost, "/account/deletion",
+		`{"confirmation":"DELETE","password":"hunter2"}`))
+
+	if rec.Code == http.StatusServiceUnavailable {
+		t.Fatalf("self-service was blocked by the admin-route pre-flight: %s", rec.Body.String())
+	}
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("status = %d, want 202. body=%s", rec.Code, rec.Body.String())
+	}
+}

@@ -326,7 +326,15 @@ export async function reauthorizeAppleForDeletion() {
     if (!authorizationCode) {
       return { ok: false, error: 'Apple returned no authorization code. Your account was not deleted.' }
     }
-    return { ok: true, authorizationCode }
+    // Return the identity token too. Apple accounts have no password, so AGS
+    // authenticates the deletion with a platform token instead — and it cannot
+    // be the authorization code, which revocation consumes (codes are
+    // single-use, so reusing it would fail with invalid_grant).
+    return {
+      ok: true,
+      authorizationCode,
+      identityToken: result?.response?.identityToken || '',
+    }
   } catch (error) {
     return { ok: false, error: error?.message || 'Apple reauthorization was cancelled.' }
   }

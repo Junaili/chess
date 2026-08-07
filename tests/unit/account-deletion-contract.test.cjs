@@ -86,3 +86,42 @@ test('describePendingDeletion never reports negative days once the date passes',
   assert.equal(result.daysRemaining, 0)
   assert.doesNotMatch(result.detail, /-\d/)
 })
+
+// ── Self-service credentials ─────────────────────────────────────────────────
+// AGS authenticates the deletion as the player, so the request carries their
+// own credential. Omitting empty ones keeps the payload minimal.
+
+test('buildDeletionRequest carries a password when one is supplied', async () => {
+  const { buildDeletionRequest } = await contractPromise
+  const body = buildDeletionRequest({ confirmation: 'DELETE', password: 'hunter2' })
+  assert.equal(body.password, 'hunter2')
+  assert.equal('platformToken' in body, false)
+})
+
+test('buildDeletionRequest carries the platform token for Apple accounts', async () => {
+  const { buildDeletionRequest } = await contractPromise
+  const body = buildDeletionRequest({
+    confirmation: 'DELETE',
+    appleAuthorizationCode: 'one-time-code',
+    platformId: 'apple',
+    platformToken: 'identity-token',
+  })
+  // The code and the token are different things and both must survive: the code
+  // revokes the Apple grant, the token authenticates the deletion.
+  assert.equal(body.appleAuthorizationCode, 'one-time-code')
+  assert.equal(body.platformId, 'apple')
+  assert.equal(body.platformToken, 'identity-token')
+})
+
+test('buildDeletionRequest omits empty credentials entirely', async () => {
+  const { buildDeletionRequest } = await contractPromise
+  const body = buildDeletionRequest({ confirmation: 'DELETE' })
+  for (const key of ['password', 'platformId', 'platformToken', 'appleAuthorizationCode']) {
+    assert.equal(key in body, false, `${key} should be omitted when empty`)
+  }
+})
+
+test('buildDeletionRequest still refuses a wrong confirmation', async () => {
+  const { buildDeletionRequest } = await contractPromise
+  assert.throws(() => buildDeletionRequest({ confirmation: 'delete', password: 'hunter2' }))
+})
