@@ -3713,18 +3713,24 @@ function startMatchmakingWaitTimer(startedAt) {
   matchmakingWaitInterval = setInterval(update, 1000);
 }
 
-function showWaitingScreen(role) {
+function showWaitingScreen(role, botId = '') {
   stopMatchmakingWaitTimer();
   showScreen('waiting');
   const messages = {
     'host':               ['🎮', 'Invite your friend',      'Share the link below. The game starts when they open it.'],
     'joiner':             ['⏳', 'Joining game…',           'Connecting to your friend. Please wait.'],
     'matchmaking':        ['🔍', 'Finding opponent…',       'Searching for a random opponent. This may take a moment.'],
-    'gus-matchmaking':    ['♞', 'Summoning Gambit Gus…',    'Gus is grabbing his board — the game usually starts within 2 minutes.'],
     'matchmaking-host':   ['⚡', 'Match found!',            'Setting up the board.'],
     'matchmaking-joiner': ['⚡', 'Match found!',            'Setting up the board.'],
   };
-  const [icon, title, sub] = messages[role] || messages['joiner'];
+  const selected = role === 'bot-matchmaking'
+    ? (() => {
+        const bot = waitingBots().find(entry => entry.id === botId);
+        const name = bot?.name || botDisplayName(botId);
+        return [bot?.glyph || '♟', `Summoning ${name}…`, `${name} is setting up the board — the game usually starts within 2 minutes.`];
+      })()
+    : messages[role] || messages['joiner'];
+  const [icon, title, sub] = selected;
   document.getElementById('waiting-icon').textContent = icon;
   document.getElementById('waiting-title').textContent = title;
   document.getElementById('waiting-sub').textContent = sub;
@@ -3846,7 +3852,7 @@ function startQueueMatchmaking(opponentKind) {
   matchmakingActive = true;
   gameMode = 'online';
   const queueStartedAt = Date.now();
-  showWaitingScreen(isBot ? 'gus-matchmaking' : 'matchmaking');
+  showWaitingScreen(isBot ? 'bot-matchmaking' : 'matchmaking', opponentKind);
   startMatchmakingWaitTimer(queueStartedAt);
   if (typeof window.agsPrepareSessionChat === 'function') window.agsPrepareSessionChat();
   if (typeof window.agsSendEvent === 'function') window.agsSendEvent('matchmaking_started', { opponent: opponentKind });
