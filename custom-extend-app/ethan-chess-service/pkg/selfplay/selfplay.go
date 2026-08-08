@@ -45,6 +45,7 @@ type styleParams struct {
 	aggression  float64 // bonus for captures
 	kingAttack  float64 // bonus for checks
 	temperature float64 // centipawn noise for variety
+	lookahead   int     // full plies to inspect; 1 keeps the lightweight picker
 }
 
 func parseStyle(raw []byte) styleParams {
@@ -52,18 +53,31 @@ func parseStyle(raw []byte) styleParams {
 		Aggression      float64 `json:"aggression"`
 		KingAttackFocus float64 `json:"king_attack_focus"`
 		RiskTolerance   float64 `json:"risk_tolerance"`
+		SearchDepth     int     `json:"search_depth"`
 	}
 	_ = json.Unmarshal(raw, &s)
 	sp := styleParams{
 		aggression:  s.Aggression,
 		kingAttack:  s.KingAttackFocus,
 		temperature: 25 + s.RiskTolerance*60,
+		lookahead:   s.SearchDepth,
 	}
 	if sp.aggression == 0 {
 		sp.aggression = 0.5
 	}
 	if sp.kingAttack == 0 {
 		sp.kingAttack = 0.3
+	}
+	if sp.lookahead < 1 {
+		sp.lookahead = 1
+	}
+	if sp.lookahead > 2 {
+		sp.lookahead = 2 // bounded so one live game cannot monopolize the DS
+	}
+	// A bot which deliberately looks ahead should not throw that calculation
+	// away with the same random variety used by a casual one-ply opponent.
+	if sp.lookahead > 1 {
+		sp.temperature = 3 + s.RiskTolerance*12
 	}
 	return sp
 }
@@ -131,6 +145,9 @@ func pickMove(pos *chess.Position, st styleParams, rng *rand.Rand) *chess.Move {
 	var chosen *chess.Move
 	for _, mv := range moves {
 		score := float64(baseMaterial + moveMaterialDelta(board, mv))
+		if st.lookahead > 1 {
+			score = float64(worstReplyMaterial(pos.Update(mv), mover, score, mv))
+		}
 		if mv.HasTag(chess.Capture) {
 			score += st.aggression * 30
 		}
@@ -144,6 +161,30 @@ func pickMove(pos *chess.Position, st styleParams, rng *rand.Rand) *chess.Move {
 		}
 	}
 	return chosen
+}
+
+// worstReplyMaterial asks the one question the original greedy picker did not:
+// "after I make this move, what is my opponent's strongest immediate reply?"
+// That shallow minimax pass catches loose pieces and poisoned captures while
+// staying small and predictable enough for a dedicated-server turn.
+func worstReplyMaterial(after *chess.Position, mover chess.Color, fallback float64, move *chess.Move) int {
+	replies := after.ValidMoves()
+	if len(replies) == 0 {
+		// A checking move with no reply is mate. A non-checking move is stalemate,
+		// which should never be preferred merely because it happens to be ahead.
+		if move.HasTag(chess.Check) {
+			return 100000
+		}
+		return int(fallback) - 500
+	}
+	worst := math.MaxInt
+	for _, reply := range replies {
+		score := materialScore(after.Update(reply), mover)
+		if score < worst {
+			worst = score
+		}
+	}
+	return worst
 }
 
 // ChooseMove returns the bot's move for the current position using the given
