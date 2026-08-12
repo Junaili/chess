@@ -200,6 +200,12 @@ func main() {
 	mux.Handle(basePath+"/family/group/",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(family.handle))))
 
+	// Achievement has no CORS on any origin (not even preflight), so every
+	// browser read/unlock has to come through here.
+	achievements := newAchievementProxyFromEnv()
+	mux.Handle(basePath+"/achievement/",
+		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(achievements.handle))))
+
 	childAccounts := newChildAccountHandlerFromEnv()
 	mux.Handle(basePath+"/family/child-account",
 		corsMiddleware(allowedOrigins, auth.wrap(http.HandlerFunc(childAccounts.create))))
@@ -428,8 +434,10 @@ func corsMiddleware(allowed map[string]struct{}, next http.Handler) http.Handler
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 		}
-		// DELETE covers family disband (DELETE /group/v1/.../groups/{id}).
-		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS")
+		// DELETE covers family disband (DELETE /group/v1/.../groups/{id});
+		// PUT covers achievement unlock, which AGS models as a PUT. Handlers
+		// each enforce their own method, so listing one here never opens a route.
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		if r.Method == http.MethodOptions {

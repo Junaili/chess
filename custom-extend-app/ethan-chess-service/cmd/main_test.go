@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -82,6 +83,30 @@ func TestCORSMiddlewareAllowsCredentialedBrowserRequests(t *testing.T) {
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
 		t.Fatalf("credentials are not allowed: %q", got)
+	}
+}
+
+// Achievement unlock is a PUT; if the preflight doesn't advertise it, the
+// browser never sends the request and unlocks silently stop happening.
+func TestCORSMiddlewareAdvertisesMethodsHandlersUse(t *testing.T) {
+	t.Parallel()
+
+	handler := corsMiddleware(
+		map[string]struct{}{"https://junaili.github.io": {}},
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+	)
+	req := httptest.NewRequest(http.MethodOptions, "https://service.example/achievement/me/unlock/chess-first-friend", nil)
+	req.Header.Set("Origin", "https://junaili.github.io")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPut)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	allowed := rec.Header().Get("Access-Control-Allow-Methods")
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions} {
+		if !strings.Contains(allowed, method) {
+			t.Fatalf("%s missing from Access-Control-Allow-Methods: %q", method, allowed)
+		}
 	}
 }
 

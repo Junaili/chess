@@ -8,8 +8,14 @@
 //
 // Defensive style mirrors stats.js / telemetry.js: schema validation off,
 // 404/409-tolerant, console.warn on failure, never throw into game flow.
+//
+// Transport: the Extend proxy, NOT the AGS SDK. The Achievement service answers
+// no CORS preflight and sets no Access-Control-Allow-Origin, so direct browser
+// calls die before the response is readable — the defensive style above turned
+// that into an empty badge panel instead of an error. The proxy takes the user
+// id from the caller's token, so only "me" is ever readable/unlockable.
 
-import { AchievementsApi, UserAchievementsApi } from '@accelbyte/sdk-achievement'
+import { extendFetch } from './extend-client.js'
 import { sdk } from './ags-client.js'
 
 const UNLOCKED_CACHE_KEY = 'ags-achievements-unlocked'
@@ -17,19 +23,17 @@ const STATUS_UNLOCKED = 2  // AGS: status 1 = in progress, 2 = unlocked
 
 let _catalog = null
 
-function api(Factory) {
-  const { coreConfig } = sdk.assembly()
-  return Factory(sdk, { coreConfig: { ...coreConfig, useSchemaValidation: false } })
-}
-
 export async function fetchAchievementCatalog(language = 'en') {
   if (_catalog) return _catalog
   try {
-    const res = await api(AchievementsApi).getAchievements({ language, limit: 100, offset: 0 })
-    _catalog = res.data?.data || []
+    const res = await extendFetch(
+      `/achievement/catalog?language=${encodeURIComponent(language)}&limit=100&offset=0`,
+    )
+    if (!res.ok) throw new Error('HTTP ' + res.status)
+    _catalog = (await res.json())?.data || []
     return _catalog
   } catch (e) {
-    console.warn('[AGS achievements] catalog:', e?.response?.data || e?.message)
+    console.warn('[AGS achievements] catalog:', e?.message)
     return []
   }
 }
@@ -37,10 +41,11 @@ export async function fetchAchievementCatalog(language = 'en') {
 export async function fetchUserAchievements(userId) {
   if (!userId || !sdk.getToken()?.accessToken) return []
   try {
-    const res = await api(UserAchievementsApi).getAchievements_ByUserId(userId, { limit: 100, offset: 0 })
-    return res.data?.data || []
+    const res = await extendFetch('/achievement/me?limit=100&offset=0')
+    if (!res.ok) throw new Error('HTTP ' + res.status)
+    return (await res.json())?.data || []
   } catch (e) {
-    console.warn('[AGS achievements] user fetch:', e?.response?.data || e?.message)
+    console.warn('[AGS achievements] user fetch:', e?.message)
     return []
   }
 }
@@ -48,10 +53,11 @@ export async function fetchUserAchievements(userId) {
 export async function unlockEventAchievement(userId, code) {
   if (!userId || !code || !sdk.getToken()?.accessToken) return
   try {
-    await api(UserAchievementsApi).updateUnlock_ByUserId_ByAchievementCode(userId, code)
+    const res = await extendFetch(`/achievement/me/unlock/${encodeURIComponent(code)}`, { method: 'PUT' })
+    // 409 = already unlocked, which is the normal case on every repeat call.
+    if (!res.ok && res.status !== 409) throw new Error('HTTP ' + res.status)
   } catch (e) {
-    if (e?.response?.status === 409) return  // already unlocked — not an error
-    console.warn('[AGS achievements] unlock', code, ':', e?.response?.data || e?.message)
+    console.warn('[AGS achievements] unlock', code, ':', e?.message)
   }
 }
 

@@ -26,8 +26,11 @@ test.describe('Live friends & achievements', () => {
   test('achievements modal opens and renders cards from AGS', async ({ page }) => {
     await page.locator('#btn-achievements').click();
     await expect(page.locator('#achievements-modal')).toBeVisible();
-    // Achievement definitions come from AGS; the grid should populate.
-    await expect(page.locator('#achievements-grid > *').first()).toBeVisible({ timeout: 15_000 });
+    // Assert real cards, not just "a child element": the empty state is also a
+    // child of #achievements-grid, so the looser check passed for a month while
+    // every Achievement call was being killed by the missing CORS headers.
+    await expect(page.locator('#achievements-grid .ach-card').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('#achievements-grid .achievements-loading')).toHaveCount(0);
     await page.locator('#achievements-modal').getByRole('button', { name: 'Close' }).click();
     await expect(page.locator('#achievements-modal')).toBeHidden();
   });
