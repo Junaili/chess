@@ -88,6 +88,10 @@ type OpponentDossier struct {
 	GamesPlayed    int    `json:"gamesPlayed"`
 	Notes          string `json:"notes"`
 	UpdatedAt      string `json:"updatedAt"`
+	// Handicap is how many ladder rungs the bot gives away against THIS player.
+	// Keeping it here rather than in PlayTuning is the point of the split: one
+	// player's results must not decide how hard everyone else's game is.
+	Handicap int `json:"handicap"`
 }
 
 // BookLine is an opening line in coordinate-move form (both sides' moves, from
@@ -122,8 +126,9 @@ type MatchQuality struct {
 // trainer computes it deterministically from the bot's own recent games and the
 // playing bot (peerjs-bot-spike) fetches it via GET /bot/brain.
 type PlayTuning struct {
-	Difficulty      string      `json:"difficulty"`        // legacy name: easy|medium|hard
-	StrengthLevel   int         `json:"strength_level"`    // ai-engine ladder rung 1-10; overrides Difficulty
+	Difficulty      string      `json:"difficulty"`        // legacy name, derived; for DS builds that predate levels
+	StrengthLevel   int         `json:"strength_level"`    // how well the bot CAN play: rung 1-10, only earned upward
+	GlobalHandicap  int         `json:"global_handicap"`   // rungs given away to a player with no history yet
 	ThinkMsMean     int         `json:"think_ms_mean"`     // human-ness: per-move delay mean
 	ThinkMsJitter   int         `json:"think_ms_jitter"`   // ± jitter around the mean
 	SearchBudgetMs  int         `json:"search_budget_ms"`  // hard CPU deadline for one move

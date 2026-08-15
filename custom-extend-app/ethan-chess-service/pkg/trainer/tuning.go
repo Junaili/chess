@@ -134,27 +134,16 @@ func ComputePlayTuning(brain *botbrain.Brain, history []botbrain.MatchEntry, opt
 		t.WinRate = score / played
 	}
 
-	// Difficulty is a fairness dial, not the learning promotion metric. Hard is
-	// now safe because the Node search has an independent wall-clock deadline.
-	if played >= tuningMinGames {
-		idx := indexOf(difficultyLadder, t.Difficulty)
-		if idx < 0 {
-			idx = 1
-		}
-		switch {
-		case t.WinRate > winRateHigh && idx > 0:
-			idx--
-		case t.WinRate < winRateLow && idx < len(difficultyLadder)-1:
-			idx++
-		}
-		t.Difficulty = difficultyLadder[idx]
-	}
-	// The fairness dial still owns strength for now, so the rung mirrors the
-	// name it just chose. Without this the dial would go inert the moment the
-	// bot started reading the rung instead of the name. Inverting this — rung
-	// ratchets on move quality, name becomes a per-opponent handicap — is the
-	// next step, not this one.
-	t.StrengthLevel = strengthLevelForDifficulty(t.Difficulty)
+	// Fairness is now a handicap per player, not a global strength setting. The
+	// bot's own rung (StrengthLevel) is deliberately NOT touched here: it is what
+	// the bot can do, and giving it away because it won would be the same mistake
+	// as before. Raising it is the promotion rule's job.
+	UpdateHandicaps(brain, history)
+
+	// A DS build that predates levels only understands the name, so give it the
+	// name that matches the rung a stranger would face. Without this an old bot
+	// would freeze at whatever it last read.
+	t.Difficulty = legacyDifficultyForLevel(EffectiveLevel(t.StrengthLevel, t.GlobalHandicap))
 
 	var msSum, plySum int64
 	for _, match := range recent {

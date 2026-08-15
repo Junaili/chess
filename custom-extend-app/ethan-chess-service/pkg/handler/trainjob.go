@@ -514,7 +514,10 @@ func (j *TrainJob) BotBrainHandler(secret string, hosted []string) http.HandlerF
 	}
 	var mu sync.Mutex
 	caches := map[string]*cached{}
-	load := func(ctx context.Context, botID string) ([]byte, error) {
+	// opponent is the player the bot is about to face, when the caller knows it.
+	// The handicap is resolved here rather than on the DS so the bot needs no
+	// knowledge of how fairness is decided.
+	load := func(ctx context.Context, botID, opponent string) ([]byte, error) {
 		var brain botbrain.Brain
 		found, err := fetchAdminValueContext(ctx, BotBrainKey(botID), &brain)
 		if err != nil {
@@ -524,8 +527,14 @@ func (j *TrainJob) BotBrainHandler(secret string, hosted []string) http.HandlerF
 		if found {
 			out["version"] = brain.Version
 			if t := brain.PlayTuning; t != nil {
+				handicap := trainer.HandicapFor(&brain, opponent)
+				effective := trainer.EffectiveLevel(t.StrengthLevel, handicap)
 				out["difficulty"] = t.Difficulty
-				out["strengthLevel"] = t.StrengthLevel
+				// strengthLevel is what to PLAY at; the raw rung and the handicap
+				// ride along so a surprising game can be explained after the fact.
+				out["strengthLevel"] = effective
+				out["baseStrengthLevel"] = t.StrengthLevel
+				out["handicap"] = handicap
 				out["thinkMsMean"] = t.ThinkMsMean
 				out["thinkMsJitter"] = t.ThinkMsJitter
 				out["searchBudgetMs"] = t.SearchBudgetMs
@@ -557,11 +566,16 @@ func (j *TrainJob) BotBrainHandler(secret string, hosted []string) http.HandlerF
 			http.Error(w, "unknown bot "+botID, http.StatusBadRequest)
 			return
 		}
+		// The response now depends on who the bot is about to play, so the cache
+		// has to be keyed by both. Keying it by bot alone would serve one
+		// player's handicap to the next player through the door.
+		opponent := strings.TrimSpace(r.URL.Query().Get("opponent"))
+		cacheKey := botID + "\x00" + opponent
 		mu.Lock()
-		c := caches[botID]
+		c := caches[cacheKey]
 		if c == nil {
 			c = &cached{}
-			caches[botID] = c
+			caches[cacheKey] = c
 		}
 		if c.body != nil && time.Since(c.at) <= 60*time.Second {
 			body := c.body
@@ -603,7 +617,7 @@ func (j *TrainJob) BotBrainHandler(secret string, hosted []string) http.HandlerF
 		done := c.refreshing
 		mu.Unlock()
 
-		body, err := load(r.Context(), botID)
+		body, err := load(r.Context(), botID, opponent)
 		mu.Lock()
 		if err == nil {
 			c.at = time.Now()
