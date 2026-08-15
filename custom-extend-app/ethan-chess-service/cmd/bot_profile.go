@@ -319,6 +319,9 @@ type gusBrainSummary struct {
 	LastChecked      string           `json:"lastChecked,omitempty"`
 	GamesLearnedFrom int              `json:"gamesLearnedFrom"`
 	Difficulty       string           `json:"difficulty,omitempty"`
+	StrengthLevel    int              `json:"strengthLevel,omitempty"`
+	LevelFloor       int              `json:"levelFloor,omitempty"`
+	MedianRegretCP   float64          `json:"medianRegretCp,omitempty"`
 	ThinkMsMean      int              `json:"thinkMsMean,omitempty"`
 	ThinkMsJitter    int              `json:"thinkMsJitter,omitempty"`
 	SearchBudgetMs   int              `json:"searchBudgetMs,omitempty"`
@@ -364,6 +367,9 @@ func summarizeGusBrain(brain *botbrain.Brain) *gusBrainSummary {
 	}
 	if t := brain.PlayTuning; t != nil {
 		s.Difficulty = t.Difficulty
+		s.StrengthLevel = t.StrengthLevel
+		s.LevelFloor = t.LevelFloor
+		s.MedianRegretCP = t.MedianRegretCP
 		s.ThinkMsMean = t.ThinkMsMean
 		s.ThinkMsJitter = t.ThinkMsJitter
 		s.SearchBudgetMs = t.SearchBudgetMs

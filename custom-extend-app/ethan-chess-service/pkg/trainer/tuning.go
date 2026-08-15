@@ -134,11 +134,11 @@ func ComputePlayTuning(brain *botbrain.Brain, history []botbrain.MatchEntry, opt
 		t.WinRate = score / played
 	}
 
-	// Fairness is now a handicap per player, not a global strength setting. The
-	// bot's own rung (StrengthLevel) is deliberately NOT touched here: it is what
-	// the bot can do, and giving it away because it won would be the same mistake
-	// as before. Raising it is the promotion rule's job.
+	// Fairness is a handicap per player, not a global strength setting. Strength
+	// itself moves only on move quality, and only via the promotion rule — giving
+	// it away because the bot won would be the old mistake.
 	UpdateHandicaps(brain, history)
+	EvaluatePromotion(brain, history, ctx.Analyses, ctx.Now)
 
 	// A DS build that predates levels only understands the name, so give it the
 	// name that matches the rung a stranger would face. Without this an old bot

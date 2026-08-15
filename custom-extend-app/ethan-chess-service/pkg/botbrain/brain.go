@@ -129,6 +129,10 @@ type PlayTuning struct {
 	Difficulty      string      `json:"difficulty"`        // legacy name, derived; for DS builds that predate levels
 	StrengthLevel   int         `json:"strength_level"`    // how well the bot CAN play: rung 1-10, only earned upward
 	GlobalHandicap  int         `json:"global_handicap"`   // rungs given away to a player with no history yet
+	LevelSince      string      `json:"level_since,omitempty"`
+	LevelFloor      int         `json:"level_floor"`       // rungs held long enough to keep; a slump cannot undo them
+	PoorQualityRuns int         `json:"poor_quality_runs"` // consecutive runs below the demotion bar
+	MedianRegretCP  float64     `json:"median_regret_cp"`  // last measured move quality (lower is better)
 	ThinkMsMean     int         `json:"think_ms_mean"`     // human-ness: per-move delay mean
 	ThinkMsJitter   int         `json:"think_ms_jitter"`   // ± jitter around the mean
 	SearchBudgetMs  int         `json:"search_budget_ms"`  // hard CPU deadline for one move
