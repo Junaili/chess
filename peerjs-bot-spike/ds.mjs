@@ -128,6 +128,10 @@ let tuning = null // learned play tuning from /bot/brain (null = defaults)
 const tuningOpts = () => ({
   ...(tuning ? {
     difficulty: tuning.difficulty || undefined,
+    // Ladder rung, when the trainer has one. The engine prefers it over the
+    // difficulty name and falls back to the name when it is missing, so an old
+    // brain and a new one both play correctly.
+    level: tuning.strengthLevel || undefined,
     thinkMsMean: tuning.thinkMsMean || undefined,
     thinkMsJitter: tuning.thinkMsJitter ?? undefined,
     searchBudgetMs: tuning.searchBudgetMs || undefined,
@@ -198,7 +202,8 @@ async function fetchBrain() {
     })
     if (!r.ok) { log('brain fetch: HTTP', r.status); return null }
     const b = await r.json()
-    log('brain v' + (b.version ?? 0), 'applied (difficulty=' + (b.difficulty || 'medium') +
+    log('brain v' + (b.version ?? 0), 'applied (level=' + (b.strengthLevel || '-') +
+      ', difficulty=' + (b.difficulty || 'medium') +
       ', thinkMs=' + (b.thinkMsMean || 1200) + '±' + (b.thinkMsJitter || 0) +
       ', book=' + ((b.book || []).length) + ' lines)')
     return b

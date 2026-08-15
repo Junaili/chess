@@ -199,3 +199,57 @@ test('quiescence respects the node ceiling instead of running away', () => {
   ai._quiesce(game, -Infinity, Infinity, true, 4);
   assert.ok(ai._nodes <= 200, `quiescence ignored its node budget: ${ai._nodes}`);
 });
+
+test('the legacy difficulty names keep their old search behaviour', () => {
+  // A refactor must not change the opponent Ethan practises against. easy/
+  // medium/hard resolve to 1/2/4 ply with quiescence OFF, as before levels.
+  const ai = new ChessAI();
+  const game = new ChessGame();
+  for (const [difficulty, depth] of [['medium', 2], ['hard', 4]]) {
+    ai.getBestMove(game, difficulty, { timeBudgetMs: 4000 });
+    assert.equal(ai.lastSearch.targetDepth, depth, `${difficulty} target depth`);
+    assert.equal(ai.lastSearch.quiescence, false, `${difficulty} must not gain quiescence`);
+  }
+});
+
+test('a numeric level overrides the difficulty name', () => {
+  const ai = new ChessAI();
+  const game = new ChessGame();
+  ai.getBestMove(game, 'easy', { level: 7, timeBudgetMs: 4000 });
+  assert.equal(ai.lastSearch.targetDepth, 4, 'level 7 searches 4 ply');
+  assert.equal(ai.lastSearch.quiescence, true, 'level 7 carries quiescence');
+});
+
+test('a bad level falls back to the name; a too-high one clamps to the top', () => {
+  const ai = new ChessAI();
+  const game = new ChessGame();
+  // Above the ladder: clamp, so a trainer overshoot still plays at full strength.
+  ai.getBestMove(game, 'medium', { level: 999, timeBudgetMs: 1000 });
+  assert.equal(ai.lastSearch.targetDepth, 5, 'level 999 clamps to the top rung');
+  // Not a usable level: fall back to the difficulty name rather than silently
+  // becoming the weakest possible opponent.
+  for (const bad of [-5, 0, NaN, 'abc', null, undefined]) {
+    ai.getBestMove(game, 'medium', { level: bad, timeBudgetMs: 1000 });
+    assert.equal(ai.lastSearch.targetDepth, 2, `level ${String(bad)} should fall back to medium`);
+  }
+});
+
+test('a level caps the think time it was designed for', () => {
+  // Level 1 is a 200ms rung; handing it 4s must not turn it into a deep search.
+  const ai = new ChessAI();
+  const game = new ChessGame();
+  ai.getBestMove(game, 'medium', { level: 1, timeBudgetMs: 4000 });
+  assert.ok(ai.lastSearch.budgetMs <= 200, `budget not capped: ${ai.lastSearch.budgetMs}`);
+});
+
+test('the ladder never gets weaker as the level rises', () => {
+  const ai = new ChessAI();
+  const game = new ChessGame();
+  let prevDepth = 0;
+  for (let level = 1; level <= 10; level++) {
+    ai.getBestMove(game, 'medium', { level, timeBudgetMs: 50 });
+    const d = ai.lastSearch.targetDepth;
+    assert.ok(d >= prevDepth, `level ${level} target depth ${d} regressed from ${prevDepth}`);
+    prevDepth = d;
+  }
+});

@@ -122,7 +122,8 @@ type MatchQuality struct {
 // trainer computes it deterministically from the bot's own recent games and the
 // playing bot (peerjs-bot-spike) fetches it via GET /bot/brain.
 type PlayTuning struct {
-	Difficulty      string      `json:"difficulty"`        // ai-engine level: easy|medium|hard
+	Difficulty      string      `json:"difficulty"`        // legacy name: easy|medium|hard
+	StrengthLevel   int         `json:"strength_level"`    // ai-engine ladder rung 1-10; overrides Difficulty
 	ThinkMsMean     int         `json:"think_ms_mean"`     // human-ness: per-move delay mean
 	ThinkMsJitter   int         `json:"think_ms_jitter"`   // ± jitter around the mean
 	SearchBudgetMs  int         `json:"search_budget_ms"`  // hard CPU deadline for one move

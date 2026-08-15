@@ -26,6 +26,10 @@ const (
 	// finishes the depth its difficulty promises.
 	minSearchMs = 800
 	maxSearchMs = 4000
+	// Ladder rungs understood by ai-engine.js. Keep in step with strengthLevels
+	// there; a rung this side does not recognise falls back to the legacy name.
+	minStrengthLevel = 1
+	maxStrengthLevel = 10
 	maxShufflePlies    = 120
 	bookPromotionDelta = 0.01
 )
@@ -79,6 +83,25 @@ func NormalizePlayTuning(brain *botbrain.Brain) {
 	if t.SearchBudgetMs < minSearchMs || t.SearchBudgetMs > maxSearchMs {
 		t.SearchBudgetMs = defaultSearchMs
 	}
+	// Seed the ladder rung from the legacy name so an existing brain lands on
+	// the rung it is already playing at, rather than being reset.
+	if t.StrengthLevel < minStrengthLevel || t.StrengthLevel > maxStrengthLevel {
+		t.StrengthLevel = strengthLevelForDifficulty(t.Difficulty)
+	}
+}
+
+// strengthLevelForDifficulty maps the three historical names onto the ladder.
+// These are the rungs whose depth matches what each name searched, so seeding
+// is not a strength change: hard was a 4-ply target, which is rung 7.
+func strengthLevelForDifficulty(difficulty string) int {
+	switch strings.ToLower(strings.TrimSpace(difficulty)) {
+	case "easy":
+		return 1
+	case "hard":
+		return 7
+	default:
+		return 4
+	}
 }
 
 func ComputePlayTuning(brain *botbrain.Brain, history []botbrain.MatchEntry, optional ...TuningContext) TuningOutcome {
@@ -126,6 +149,12 @@ func ComputePlayTuning(brain *botbrain.Brain, history []botbrain.MatchEntry, opt
 		}
 		t.Difficulty = difficultyLadder[idx]
 	}
+	// The fairness dial still owns strength for now, so the rung mirrors the
+	// name it just chose. Without this the dial would go inert the moment the
+	// bot started reading the rung instead of the name. Inverting this — rung
+	// ratchets on move quality, name becomes a per-opponent handicap — is the
+	// next step, not this one.
+	t.StrengthLevel = strengthLevelForDifficulty(t.Difficulty)
 
 	var msSum, plySum int64
 	for _, match := range recent {

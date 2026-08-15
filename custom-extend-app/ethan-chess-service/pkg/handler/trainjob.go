@@ -525,6 +525,7 @@ func (j *TrainJob) BotBrainHandler(secret string, hosted []string) http.HandlerF
 			out["version"] = brain.Version
 			if t := brain.PlayTuning; t != nil {
 				out["difficulty"] = t.Difficulty
+				out["strengthLevel"] = t.StrengthLevel
 				out["thinkMsMean"] = t.ThinkMsMean
 				out["thinkMsJitter"] = t.ThinkMsJitter
 				out["searchBudgetMs"] = t.SearchBudgetMs

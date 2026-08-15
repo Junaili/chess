@@ -186,7 +186,13 @@ export function playGame(conn, role, opts = {}) {
               searchBudgetMs,
               Math.min(searchBudgetCeilingMs, thinkWindowMs - moveDeliveryReserveMs),
             )
-            const searchOptions = { timeBudgetMs: budgetMs, maxNodes: 250000, style: opts.style || {}, quiescence: true }
+            const searchOptions = {
+              timeBudgetMs: budgetMs,
+              maxNodes: 250000,
+              style: opts.style || {},
+              quiescence: true,
+              level: opts.level,
+            }
             // The inline search is synchronous: whatever budget it gets, it
             // holds the PeerJS heartbeat thread for. Anything longer than a
             // blink has to go to the worker, or thinking for two seconds costs
