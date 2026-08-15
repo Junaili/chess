@@ -10,7 +10,8 @@ This project is intended to serve as a practical reference for integrating a bro
 - **Play vs Computer** — three difficulty levels powered by a minimax AI
 - **Invite Friend** — share a link and play peer-to-peer via WebRTC (PeerJS)
 - **Play vs Random** — AGS Matchmaking pairs you with a random online player, including a cold-start AI opponent ("Gus") backed by an AMS dedicated server
-- **Guest Play** — try a game against the computer without creating an account
+- **Online Guest Play** — enter a local name and join the normal AGS matchmaking flow through a persistent Device ID login, without registering
+- **Offline Guest Play** — try a game against the computer without creating an account
 - **Move Hints** — on-demand hint, or post-move AI feedback
 - **Live Spectating** — watch a friend's match in real time; replay moves after it ends
 - **Quick Review** — a lesson-driven post-match walkthrough that surfaces a player's key mistakes, punished moments, and swings, with a takeaway and an optional retry at each moment
@@ -241,7 +242,7 @@ This section explains what AGS does in this game and how each service was integr
 
 | Service | AGS Module | What it does in this game |
 |---|---|---|
-| Authentication | IAM | Google, Apple, and email/password sign-in; guest play; parent-managed child accounts |
+| Authentication | IAM | Google, Apple, email/password, and persistent Device ID guest sign-in; parent-managed child accounts |
 | Player Stats | Social Stats | Tracks wins, losses, and rating per player |
 | Match History | CloudSave | Stores per-player match records and live spectating state |
 | Leaderboard | Leaderboard | Global win rankings |
@@ -372,9 +373,20 @@ export async function handleCallback() {
 
 PKCE is designed for public clients: the app proves possession of a one-time verifier without embedding a client secret. Tokens are retained only for the current WebView/browser session.
 
+**How online guest sign-in works:**
+
+1. `src/anon-id.js` creates one random `chess-…` Device ID and stores it in `localStorage`.
+2. `loginWithDeviceId()` uses IAM's V4 `device` platform grant with `createHeadless: true`; the browser public client sends no client secret.
+3. The client proves the resulting session with `GET /iam/v3/public/users/me` before entering matchmaking.
+4. Access and refresh tokens stay in SDK memory and `sessionStorage`. Ending the session removes them, while the Device ID remains so the next guest login resolves to the same AGS user.
+5. Guest sessions use Lobby presence, `chess-quickmatch`, AGS Session, and the existing P2P board flow. Account-only hydration and APIs (friends, profile editing, stats/leaderboards, achievements, Club, and commerce) remain disabled.
+
+Clearing browser/app site data removes the Device ID and creates a new guest identity on the next login. Guest-to-registered-account upgrade is not implemented.
+
 **Required setup:**
 - Configure Google as an identity provider in **AGS Admin Portal → IAM**
 - Add the exact HTTPS redirect URI to the public IAM client
+- Enable Device ID login for the game namespace and public IAM client
 - For iOS, keep the HTTPS redirect page and register `io.github.junaili.chess:/oauth2redirect` as the native return URL
 
 Email/password login and registration use `IamUserAuthorizationClient`'s password grant directly (`loginWithPassword`, `registerWithPassword` in `src/auth.js`); parent-managed child accounts go through the same registration call with a guardian's session and a `groupId` linking the child to the family (`registerChildAccount`).

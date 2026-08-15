@@ -182,6 +182,7 @@ for (const name of GAMEPLAY_GLOBALS) {
 
 const loginWithGoogle = async (...args) => (await authFeature.load()).loginWithGoogle(...args)
 const loginWithApple = async (...args) => (await authFeature.load()).loginWithApple(...args)
+const loginWithDeviceId = async (...args) => (await authFeature.load()).loginWithDeviceId(...args)
 const loginWithPassword = async (...args) => (await authFeature.load()).loginWithPassword(...args)
 const requestPasswordReset = async (...args) => (await authFeature.load()).requestPasswordReset(...args)
 const resetPassword = async (...args) => (await authFeature.load()).resetPassword(...args)
@@ -208,11 +209,19 @@ function hasStoredSession() {
     return false
   }
 }
+function getStoredAuthMode() {
+  try {
+    return sessionStorage.getItem('ags_auth_mode') === 'guest' ? 'guest' : 'registered'
+  } catch {
+    return 'registered'
+  }
+}
 function clearStoredSession() {
   for (const storage of [localStorage, sessionStorage]) {
     try {
       storage.removeItem('ags_session')
       storage.removeItem('ags_refresh_token')
+      storage.removeItem('ags_auth_mode')
     } catch {}
   }
 }
@@ -887,6 +896,7 @@ const STATIC_ACTIONS = new Set([
   'agsOpenClub',
   'agsOpenCoinStore',
   'agsOpenGuestPlay',
+  'agsOpenOnlineGuest',
   'agsOpenGusProfile',
   'agsOpenLegalDocument',
   'agsOpenJournal',
@@ -897,6 +907,7 @@ const STATIC_ACTIONS = new Set([
   'agsOpenPrivacyChoices',
   'agsOpenRegister',
   'agsPasswordLogin',
+  'agsPlayOnlineGuest',
   'agsPlayFamilyNudge',
   'agsProfileAddFriend',
   'agsProfileCancelEdit',
@@ -1050,6 +1061,9 @@ function getShareableAppURL(params = {}) {
 
 let currentUserId = null
 let currentProfile = null  // hydrated IAM profile — needed for child-session (COPPA) checks
+let currentAuthMode = null
+const ONLINE_GUEST_NAME_KEY = 'chess_online_guest_name'
+const ONLINE_GUEST_MATCH_PENDING_KEY = 'chess_online_guest_match_pending'
 let currentUserWins = 0
 let currentStreak = 0
 let currentUserRating = 1200
@@ -1613,10 +1627,11 @@ function showInviteScreen(inviterName, { live = false } = {}) {
   if (typeof window.showScreen === 'function') window.showScreen('invite')
 }
 
-async function hydrateAuthenticatedUser(profile) {
+async function hydrateAuthenticatedUser(profile, { authMode = getStoredAuthMode() } = {}) {
   const hydratedUserId = profile.userId
   currentUserId = profile.userId
   currentProfile = profile
+  currentAuthMode = authMode === 'guest' ? 'guest' : 'registered'
   window.agsCurrentUserId = currentUserId
   // Child sessions never store an email (COPPA data minimization — the
   // address on a parent-created account is the parent's mailbox anyway).
@@ -2111,9 +2126,16 @@ async function maybeRequireLegalAcceptance(profile = null, tokenData = null) {
 // (Previously duplicated inline in each caller: a brand-new registrant who
 // had to accept the legal gate never joined their invited match, because
 // that path's own completion code never checked chess_pending_peer.)
-function finishAuthenticatedEntry() {
+function finishAuthenticatedEntry({ authMode = getStoredAuthMode() } = {}) {
   scheduleProactiveRefresh()  // keep the token fresh for this session
   if (typeof window.showScreen === 'function') window.showScreen('home')
+  if (authMode === 'guest') {
+    if (sessionStorage.getItem(ONLINE_GUEST_MATCH_PENDING_KEY) === '1') {
+      sessionStorage.removeItem(ONLINE_GUEST_MATCH_PENDING_KEY)
+      window.setTimeout(() => window.startRandomMatchmaking?.(), 0)
+    }
+    return
+  }
   // Covers Google's full-page redirect too, since the id survives in sessionStorage.
   const pendingPeerId = sessionStorage.getItem('chess_pending_peer')
   if (pendingPeerId) {
@@ -2123,14 +2145,18 @@ function finishAuthenticatedEntry() {
   }
 }
 
-async function completeAuthenticatedSession({ profile = null, tokenData = null } = {}) {
+async function completeAuthenticatedSession({
+  profile = null,
+  tokenData = null,
+  authMode = getStoredAuthMode(),
+} = {}) {
   await installSessionKeepAlive()
   const resolvedProfile = profile || await getProfile()
   const canProceed = await maybeRequireLegalAcceptance(resolvedProfile, tokenData)
   if (!canProceed) return false
   if (!resolvedProfile) return false
-  await hydrateAuthenticatedUser(resolvedProfile)
-  finishAuthenticatedEntry()
+  await hydrateAuthenticatedUser(resolvedProfile, { authMode })
+  finishAuthenticatedEntry({ authMode })
   return true
 }
 
@@ -2178,7 +2204,7 @@ async function initAuth() {
       sendEvent('session_started', {})
     }
   } catch {}
-  window.agsRefreshLeaderboard = refreshLeaderboard
+  window.agsRefreshLeaderboard = () => hasRegisteredSession() ? refreshLeaderboard() : null
   window.cacheDisplayName = cacheDisplayName
   setQueueUIHandler(renderLoginQueue)
   window.agsCancelLoginQueue = cancelLoginQueue
@@ -2251,7 +2277,9 @@ async function initAuth() {
     stopFriendsChangeUpdates()
       currentUserId = null
       currentProfile = null
+      currentAuthMode = null
       window.agsCurrentUserId = null
+      window.agsIsGuest = false
       chatClient.disconnect()
       updateAuthUI(false, null, null)
       updateStatsUI(null)
@@ -2264,7 +2292,9 @@ async function initAuth() {
     stopFriendsChangeUpdates()
     currentUserId = null
     currentProfile = null
+    currentAuthMode = null
     window.agsCurrentUserId = null
+    window.agsIsGuest = false
     chatClient.disconnect()
     updateAuthUI(false, null, null)
     updateStatsUI(null)
@@ -2403,6 +2433,77 @@ async function initAuth() {
       trigger.setAttribute('aria-expanded', 'true')
     }
     window.requestAnimationFrame(() => nameInput?.focus())
+  }
+  window.agsOpenOnlineGuest = () => {
+    const trigger = document.getElementById('ags-open-online-guest')
+    const options = document.getElementById('ags-online-guest-options')
+    const nameInput = document.getElementById('online-guest-name-input')
+    if (!options) return
+
+    sendEvent('guest_mode_entered', { online: true })
+    options.hidden = false
+    if (trigger) {
+      trigger.style.display = 'none'
+      trigger.setAttribute('aria-expanded', 'true')
+    }
+    if (nameInput && !nameInput.value) {
+      try { nameInput.value = localStorage.getItem(ONLINE_GUEST_NAME_KEY) || '' } catch {}
+    }
+    window.requestAnimationFrame(() => nameInput?.focus())
+  }
+  window.agsPlayOnlineGuest = async () => {
+    const nameInput = document.getElementById('online-guest-name-input')
+    const button = document.getElementById('ags-online-guest-submit')
+    const message = document.getElementById('ags-online-guest-message')
+    const requestedName = nameInput?.value.trim() || ''
+    const setMessage = (text, tone = '') => {
+      if (!message) return
+      message.className = `auth-message${tone ? ` ${tone}` : ''}`
+      message.textContent = text
+    }
+
+    if (!requestedName) {
+      setMessage('Enter a guest name to play online.', 'error')
+      nameInput?.focus()
+      return
+    }
+
+    const guestName = moderateIncomingDisplayName(requestedName, 'Guest')
+    try {
+      localStorage.setItem(ONLINE_GUEST_NAME_KEY, guestName)
+      sessionStorage.setItem(ONLINE_GUEST_MATCH_PENDING_KEY, '1')
+    } catch {}
+    if (button) {
+      button.disabled = true
+      button.setAttribute('aria-busy', 'true')
+    }
+    setMessage('Signing in as a guest…')
+
+    const result = await loginWithDeviceId()
+    if (!result.ok) {
+      try { sessionStorage.removeItem(ONLINE_GUEST_MATCH_PENDING_KEY) } catch {}
+      if (button) {
+        button.disabled = false
+        button.removeAttribute('aria-busy')
+      }
+      setMessage(result.error || 'Guest sign-in is unavailable. Try again.', 'error')
+      return
+    }
+
+    sendEvent('user_logged_in', { method: 'device' })
+    const completed = await completeAuthenticatedSession({
+      profile: result.profile,
+      tokenData: result.data || null,
+      authMode: 'guest',
+    })
+    if (completed || document.getElementById('screen-legal')?.classList.contains('active')) return
+
+    try { sessionStorage.removeItem(ONLINE_GUEST_MATCH_PENDING_KEY) } catch {}
+    if (button) {
+      button.disabled = false
+      button.removeAttribute('aria-busy')
+    }
+    setMessage('Signed in, but could not start guest play. Try again.', 'error')
   }
   window.agsPasswordLogin = async () => {
     const identifier = document.getElementById('ags-login-identifier')?.value.trim() || ''
@@ -2616,10 +2717,11 @@ async function initAuth() {
 
     pendingLegalDocuments = []
     pendingLegalProfile = null
-    await refreshAcceptedLegalDocuments()
+    const authMode = getStoredAuthMode()
+    if (authMode !== 'guest') await refreshAcceptedLegalDocuments()
     setLegalMessage('')
-    await hydrateAuthenticatedUser(profile)
-    finishAuthenticatedEntry()
+    await hydrateAuthenticatedUser(profile, { authMode })
+    finishAuthenticatedEntry({ authMode })
   }
   window.agsDeclineLegal = async () => {
     stopFriendsRefresh()
@@ -2639,11 +2741,13 @@ async function initAuth() {
   // passed in fresh on every call, never cached here.
   window.agsHighFiveButtonState = opts => deriveHighFiveButton({
     ...opts,
-    senderId: currentUserId,
+    senderId: hasRegisteredSession() ? currentUserId : null,
     coins: getCoins(),
     alreadySent: hasSentHighFive(opts?.matchId),
   })
-  window.agsSendHighFive = (matchId, recipientUserId) => sendHighFive(matchId, recipientUserId)
+  window.agsSendHighFive = (matchId, recipientUserId) => hasRegisteredSession()
+    ? sendHighFive(matchId, recipientUserId)
+    : Promise.resolve({ ok: false, error: 'High fives require an account.' })
   window.agsFormatKudosCount = formatKudosCount
   window.agsStartMatchmaking = startMatchmaking
   window.agsCancelMatchmaking = cancelMatchmaking
@@ -2658,13 +2762,14 @@ async function initAuth() {
   // Club screen or trigger a /club/status call — the UI entry points are
   // already hidden for guests, this hard-guards direct invocation too.
   window.agsOpenClub = () => {
-    if (!currentUserId) return
+    if (!hasRegisteredSession()) return
     openClubScreen(isProtectedChildSession())
   }
   window.agsClubManageSubscription = refreshClubManageAction
   window.agsClubRestorePurchases = triggerRestorePurchases
-  window.agsRefreshFriends = refreshFriendsUI
+  window.agsRefreshFriends = (...args) => hasRegisteredSession() ? refreshFriendsUI(...args) : null
   window.agsInviteFriend = friendId => {
+    if (!hasRegisteredSession()) return
     ensureNotificationPermission()  // user gesture — ask now so they can be notified of the reply
     const friend = friendsState.friends.find(item => item.userId === friendId)
     if (!friend) {
@@ -2678,7 +2783,7 @@ async function initAuth() {
     window.startFriendMatchInvite(friend)
   }
   window.agsSendMatchInvite = async (friendId, invite) => {
-    if (!currentUserId) return { ok: false, error: 'Sign in before sending a match invite.' }
+    if (!hasRegisteredSession()) return { ok: false, error: 'Sign in before sending a match invite.' }
     const fromName = document.getElementById('ags-signedin-name')?.textContent || 'Friend'
     return sendGameInvite({
       from: currentUserId,
@@ -2705,17 +2810,20 @@ async function initAuth() {
   }
   window.agsSetPresence = status => {
     setPresenceStatus(status)
-    if (status === 'online') refreshFriendsUI(false)
+    if (status === 'online' && hasRegisteredSession()) refreshFriendsUI(false)
   }
   window.agsAcceptFriend = async friendId => {
+    if (!hasRegisteredSession()) return
     await runFriendAction(() => acceptFriend(friendId), 'Friend request accepted.')
     sendEvent('friend_request_accepted', {})
     unlockEventAchievement(currentUserId, 'chess-first-friend')  // first accepted friend (repeats are 409 no-ops)
   }
   window.agsRejectFriend = async friendId => {
+    if (!hasRegisteredSession()) return
     await runFriendAction(() => rejectFriend(friendId), 'Friend request rejected.')
   }
   window.agsCancelFriendRequest = async friendId => {
+    if (!hasRegisteredSession()) return
     await runFriendAction(() => cancelFriendRequest(friendId), 'Friend request canceled.')
   }
   window.agsRefreshFamily = refreshFamilyUI
@@ -2928,26 +3036,31 @@ async function initAuth() {
     window.startFriendMatchInvite(member)
   }
   window.agsRequestFriend = async friendId => {
+    if (!hasRegisteredSession()) return
     ensureNotificationPermission()  // user gesture — ask now so they can be notified when accepted
     await runFriendAction(() => requestFriend(friendId), 'Friend request sent.')
     sendEvent('friend_request_sent', { source: 'manual' })
   }
-  window.agsOpenProfile = openPublicProfile
+  window.agsOpenProfile = (...args) => {
+    if (hasRegisteredSession()) openPublicProfile(...args)
+  }
   window.agsOpenMyProfile = () => {
-    if (currentUserId) openPublicProfile(currentUserId, getDisplayName(currentProfile))
+    if (hasRegisteredSession()) openPublicProfile(currentUserId, getDisplayName(currentProfile))
   }
   // Game-over nudge target: own profile, landed on the Journal tab.
   window.agsOpenJournal = async () => {
-    if (!currentUserId) return
+    if (!hasRegisteredSession()) return
     sendEvent('journal_nudge_clicked', {})
     await openPublicProfile(currentUserId, getDisplayName(currentProfile))
     showProfileTab('journal')
   }
   window.agsProfileAddFriend = async () => {
+    if (!hasRegisteredSession()) return
     if (!activeProfileUser?.userId) return
     await requestProfileFriend(activeProfileUser)
   }
   window.agsAddFriendByEmail = async () => {
+    if (!hasRegisteredSession()) return
     const emailInput = document.getElementById('ags-add-friend-email')
     const email = emailInput?.value.trim() || ''
     if (!emailInput?.reportValidity()) return
@@ -3052,6 +3165,10 @@ async function initAuth() {
     })
   }
   window.agsRequestLastOpponent = async () => {
+    // Keep the local Gus guard available to the post-match UI even when a
+    // test or legacy caller has not hydrated a full registered session. A
+    // real Device ID guest still exits before any social-service request.
+    if (isGuestSession()) return
     const opponent = window.agsLastOpponent
     if (!opponent?.userId) return
     if (blockedPlayers.some(item => item.userId === opponent.userId)) return
@@ -3060,6 +3177,7 @@ async function initAuth() {
       if (message) message.textContent = 'Gambit Gus cannot be added as a friend.'
       return
     }
+    if (!hasRegisteredSession()) return
     const sent = await runFriendAction(() => requestFriend(opponent.userId, opponent.name), 'Friend request sent.')
     if (sent) await window.agsRefreshMatchChatGate?.({ requestSent: true })
     await updatePostMatchFriendAction(opponent)
@@ -3113,7 +3231,9 @@ async function initAuth() {
     }
   }
   window.agsIsBlockedPlayer = userId => blockedPlayers.some(item => item.userId === userId)
-  window.agsOpenDeleteAccount = openDeleteAccountModal
+  window.agsOpenDeleteAccount = () => {
+    if (hasRegisteredSession()) openDeleteAccountModal()
+  }
   window.agsCancelAccountDeletion = handleCancelAccountDeletion
   window.agsRefreshDeletionStatus = refreshDeletionStatus
   window.agsUpdateDeleteConfirmation = updateDeleteAccountConfirmation
@@ -3124,19 +3244,19 @@ async function initAuth() {
     deletionRequirements = null
     setAccountDeletionMessage('')
   }
-  window.agsGetStats = (userId) => fetchStats(userId)
+  window.agsGetStats = (userId) => hasRegisteredSession() ? fetchStats(userId) : null
   window.agsGetToken = () => currentAccessToken() || null
   // Elo-style rating exchange: app.js reads this to embed in the game_start /
   // player_info peer messages, and calls agsSetOpponentRating with whatever
   // the other side sent back — that's the only way each client learns the
   // other's current rating (a plain player-to-player client can't read
   // another user's stats directly).
-  window.agsGetRating = () => currentUserRating
+  window.agsGetRating = () => hasRegisteredSession() ? currentUserRating : null
   window.agsSetOpponentRating = (rating) => {
     pendingOpponentRating = typeof rating === 'number' && Number.isFinite(rating) ? rating : null
   }
   window.agsRecordEloResult = async (score) => {
-    if (!currentUserId || pendingOpponentRating == null) return
+    if (!hasRegisteredSession() || pendingOpponentRating == null) return
     const displayName = document.getElementById('ags-signedin-name')?.textContent || null
     const newRating = await recordEloResult(currentUserId, currentUserRating, pendingOpponentRating, score, displayName)
     if (newRating != null) {
@@ -3163,7 +3283,7 @@ async function initAuth() {
   window.agsFetchLiveMatchStrict = (userId) => fetchLiveMatchStrict(userId)
   window.agsResolveMatchForfeit = (userId, matchId, loserUserId) => resolveMatchForfeit(userId, matchId, loserUserId)
   window.agsIncrementWin = async () => {
-    if (!currentUserId) return
+    if (!hasRegisteredSession()) return
     const displayName = document.getElementById('ags-signedin-name')?.textContent || ''
     await incrementStat(currentUserId, 'chess-wins', displayName || null)
     currentUserWins++
@@ -3171,22 +3291,22 @@ async function initAuth() {
     await refreshLeaderboard()
   }
   window.agsIncrementLoss = async () => {
-    if (!currentUserId) return
+    if (!hasRegisteredSession()) return
     await incrementStat(currentUserId, 'chess-losses')
     updateStatsUI(await fetchStats(currentUserId))
   }
   window.agsIncrementDraw = async () => {
-    if (!currentUserId) return
+    if (!hasRegisteredSession()) return
     await incrementStat(currentUserId, 'chess-draws')
     updateStatsUI(await fetchStats(currentUserId))
   }
   window.agsIncrementGamePlayed = async (mode) => {
-    if (!currentUserId) return
+    if (!hasRegisteredSession()) return
     await incrementStat(currentUserId, 'chess-games-played')
     if (mode === 'online') await incrementStat(currentUserId, 'chess-online-games')
   }
   window.agsUpdateStreak = async () => {
-    if (!currentUserId) return
+    if (!hasRegisteredSession()) return
     const result = await updateStreak(currentUserId)
     if (result?.streak) {
       currentStreak = result.streak
@@ -3196,7 +3316,7 @@ async function initAuth() {
   // After a game: detect newly-unlocked achievements and celebrate them —
   // toast + OS notification + telemetry. Fire-and-forget from the game-end hook.
   window.agsCheckAchievements = async () => {
-    if (!currentUserId) return []
+    if (!hasRegisteredSession()) return []
     const fresh = await diffNewlyUnlocked(currentUserId)
     if (!fresh.length) return fresh
     const merged = await fetchMergedAchievements(currentUserId)
@@ -3211,6 +3331,7 @@ async function initAuth() {
     return fresh
   }
   window.agsOpenAchievements = async () => {
+    if (!hasRegisteredSession()) return
     const modal = document.getElementById('achievements-modal')
     if (!modal) return
     modal.style.display = 'flex'
@@ -3225,19 +3346,19 @@ async function initAuth() {
     if (modal) modal.style.display = 'none'
   }
   window.agsRecordMatchHistory = async match => {
-    if (!currentUserId) return
+    if (!hasRegisteredSession()) return
     await recordMatchHistory({ ...match, playerUserId: currentUserId })
     emitLearningStateChanged('match_saved')
   }
 
   window.agsPublishLiveMove = async () => {
-    if (!currentUserId) return
+    if (!hasRegisteredSession()) return
     const data = window.getSpectatorMatchData?.()
     if (!data) return
     await publishLiveMatch(currentUserId, data)
   }
   window.agsClearLiveMatch = async () => {
-    if (!currentUserId) return
+    if (!hasRegisteredSession()) return
     // Publish the final state with active=false but preserve all moves so watchers can replay.
     // clearLiveMatch() would wipe moves, causing the watcher's replay guard to fail.
     const data = window.getSpectatorMatchData?.()
@@ -3321,6 +3442,7 @@ async function initAuth() {
   window.agsSpectatorLast  = () => replayAt((spectatorLastMatchData?.moves || []).length - 1)
 
   window.agsProfileEditName = () => {
+    if (!hasRegisteredSession()) return
     const nameEl = document.getElementById('profile-display-name')
     const form = document.getElementById('profile-name-edit-form')
     const input = document.getElementById('profile-name-edit-input')
@@ -3339,6 +3461,7 @@ async function initAuth() {
     if (message) message.textContent = ''
   }
   window.agsProfileSaveName = async () => {
+    if (!hasRegisteredSession()) return
     const input = document.getElementById('profile-name-edit-input')
     const saveBtn = document.getElementById('profile-btn-save-name')
     const nameEl = document.getElementById('profile-display-name')
@@ -3376,6 +3499,7 @@ async function initAuth() {
     }
   }
   window.agsEditName = () => {
+    if (!hasRegisteredSession()) return
     const nameEl = document.getElementById('ags-signedin-name')
     const form = document.getElementById('name-edit-form')
     const input = document.getElementById('name-edit-input')
@@ -3396,6 +3520,7 @@ async function initAuth() {
   }
 
   window.agsSaveName = async () => {
+    if (!hasRegisteredSession()) return
     const input = document.getElementById('name-edit-input')
     const saveBtn = document.getElementById('btn-save-name')
     const form = document.getElementById('name-edit-form')
@@ -4564,26 +4689,41 @@ function renderAdvancedStats(derived, { hasClub = false, isChildSession = false 
   `
 }
 
-function updateAuthUI(loggedIn, name, userId) {
+function updateAuthUI(loggedIn, name, userId, { guest = false } = {}) {
   const nameInput = document.getElementById('player-name-input')
   const signInBtn = document.getElementById('ags-signin-btn')
   const authActions = document.getElementById('ags-auth-actions')
   const authOrDivider = document.getElementById('ags-auth-or-divider')
   const guestDivider = document.getElementById('ags-guest-divider')
+  const onlineGuestDivider = document.getElementById('ags-online-guest-divider')
   const accountEntry = document.getElementById('ags-account-entry')
   const guestEntry = document.getElementById('ags-guest-entry')
+  const onlineGuestEntry = document.getElementById('ags-online-guest-entry')
   const guestOptions = document.getElementById('ags-guest-options')
   const guestTrigger = document.getElementById('ags-open-guest')
+  const onlineGuestOptions = document.getElementById('ags-online-guest-options')
+  const onlineGuestTrigger = document.getElementById('ags-open-online-guest')
   const memberPlayActions = document.getElementById('ags-member-play-actions')
   const homeLeaderboard = document.getElementById('home-leaderboard-panel')
   const signedInInfo = document.getElementById('ags-signedin-info')
   const signedInName = document.getElementById('ags-signedin-name')
+  const signedInGreeting = document.getElementById('ags-signedin-greeting')
+  const editNameButton = document.getElementById('btn-edit-name')
+  const accountButton = document.getElementById('btn-my-account')
+  const signOutButton = document.getElementById('btn-signout')
+  const singlePlayerButton = document.getElementById('btn-single-player')
+  const botPlayActions = document.getElementById('ags-bot-play-actions')
+  const playerSummaryMeta = document.querySelector('#ags-player-summary .player-summary-meta')
+  const playNote = document.getElementById('home-play-note')
+  const randomBtn = document.getElementById('btn-play-random')
   const lbCta = document.getElementById('lb-signin-cta')
 
   if (!nameInput || !signInBtn || !signedInInfo) return
 
   // Switches the home screen into the compact, no-scroll signed-in dashboard.
-  document.getElementById('screen-home')?.classList.toggle('signed-in', loggedIn)
+  const homeScreen = document.getElementById('screen-home')
+  homeScreen?.classList.toggle('signed-in', loggedIn)
+  homeScreen?.classList.toggle('guest-session', loggedIn && guest)
 
   // Sign in with Apple is an iOS-only option (App Store Guideline 4.8).
   const appleBtn = document.getElementById('ags-signin-apple')
@@ -4597,14 +4737,27 @@ function updateAuthUI(loggedIn, name, userId) {
     signInBtn.style.display = 'none'
     if (accountEntry) accountEntry.style.display = 'none'
     if (guestEntry) guestEntry.style.display = 'none'
+    if (onlineGuestEntry) onlineGuestEntry.style.display = 'none'
     if (memberPlayActions) memberPlayActions.style.display = ''
-    if (homeLeaderboard) homeLeaderboard.style.display = ''
+    if (homeLeaderboard) homeLeaderboard.style.display = guest ? 'none' : ''
     if (authActions) authActions.style.display = 'none'
     if (authOrDivider) authOrDivider.style.display = 'none'
     if (guestDivider) guestDivider.style.display = 'none'
+    if (onlineGuestDivider) onlineGuestDivider.style.display = 'none'
     if (lbCta) lbCta.style.display = 'none'
     signedInInfo.style.display = 'flex'
     if (signedInName) signedInName.textContent = name || 'Player'
+    if (signedInGreeting) signedInGreeting.textContent = guest ? 'Playing online as guest' : 'Signed in as'
+    if (editNameButton) editNameButton.style.display = guest ? 'none' : ''
+    if (accountButton) accountButton.style.display = guest ? 'none' : ''
+    if (signOutButton) signOutButton.textContent = guest ? 'End guest session' : 'Log out'
+    if (singlePlayerButton) singlePlayerButton.style.display = guest ? 'none' : ''
+    if (botPlayActions) botPlayActions.style.display = guest ? 'none' : ''
+    if (playerSummaryMeta) playerSummaryMeta.style.display = guest ? 'none' : ''
+    if (playNote) playNote.textContent = guest
+      ? 'Online guest play is ready. Your identity stays on this device, but account features are unavailable.'
+      : 'Choose your color, customize your pieces, and start from the board you actually want to play on.'
+    if (randomBtn) randomBtn.style.display = ''
   } else {
     acceptedLegalDocuments = []
     renderAcceptedLegalDocuments()
@@ -4612,6 +4765,7 @@ function updateAuthUI(loggedIn, name, userId) {
     signInBtn.style.display = ''
     if (accountEntry) accountEntry.style.display = ''
     if (guestEntry) guestEntry.style.display = ''
+    if (onlineGuestEntry) onlineGuestEntry.style.display = ''
     if (memberPlayActions) memberPlayActions.style.display = 'none'
     if (homeLeaderboard) homeLeaderboard.style.display = 'none'
     if (guestOptions) guestOptions.hidden = true
@@ -4619,13 +4773,26 @@ function updateAuthUI(loggedIn, name, userId) {
       guestTrigger.style.display = ''
       guestTrigger.setAttribute('aria-expanded', 'false')
     }
+    if (onlineGuestOptions) onlineGuestOptions.hidden = true
+    if (onlineGuestTrigger) {
+      onlineGuestTrigger.style.display = ''
+      onlineGuestTrigger.setAttribute('aria-expanded', 'false')
+    }
     if (authActions) authActions.style.display = 'flex'
     if (authOrDivider) authOrDivider.style.display = ''
     if (guestDivider) guestDivider.style.display = ''
+    if (onlineGuestDivider) onlineGuestDivider.style.display = ''
     if (lbCta) lbCta.style.display = ''
     signedInInfo.style.display = 'none'
-    const randomBtn = document.getElementById('btn-play-random')
     if (randomBtn) randomBtn.style.display = 'none'
+    if (signedInGreeting) signedInGreeting.textContent = 'Signed in as'
+    if (editNameButton) editNameButton.style.display = ''
+    if (accountButton) accountButton.style.display = ''
+    if (signOutButton) signOutButton.textContent = 'Log out'
+    if (singlePlayerButton) singlePlayerButton.style.display = ''
+    if (botPlayActions) botPlayActions.style.display = ''
+    if (playerSummaryMeta) playerSummaryMeta.style.display = ''
+    if (playNote) playNote.textContent = 'Choose your color, customize your pieces, and start from the board you actually want to play on.'
     friendsState = { friends: [], incoming: [], outgoing: [] }
     renderFriendsPanel(false)
     resetClubStatus()
@@ -5209,6 +5376,7 @@ window.agsCloseOfflineFriends = closeOfflineFriends
 
 const coinStoreOverlay = createOverlayController('coin-store-overlay', 'coin-store-close')
 window.agsOpenCoinStore = trigger => {
+  if (isGuestSession()) return
   coinStoreOverlay.open(trigger)
   void loadCoinStore()
 }
@@ -5616,6 +5784,11 @@ async function updatePostMatchFriendAction(opponent) {
   const btn = document.getElementById('btn-add-match-friend')
   const note = document.getElementById('match-friend-message')
   if (!btn || !note) return
+  if (!hasRegisteredSession()) {
+    btn.style.display = 'none'
+    note.textContent = ''
+    return
+  }
   if (!opponent?.userId || opponent.userId === currentUserId) {
     btn.style.display = 'none'
     note.textContent = ''
@@ -5658,7 +5831,7 @@ window.agsUpdateMatchFriendAction = updatePostMatchFriendAction
 // friendship is mutual, so status '3' on our side means both players are
 // friends. Fails closed: any error, guest session, or self-check → false.
 window.agsIsFriendWith = async userId => {
-  if (!userId || !currentUserId || userId === currentUserId) return false
+  if (!hasRegisteredSession() || !userId || userId === currentUserId) return false
   const status = await getFriendshipStatus(userId)
   return !!(status.ok && status.status === '3')
 }

@@ -1,4 +1,5 @@
-import { IamUserAuthorizationClient, OAuth20ExtensionApi, UsersApi } from '@accelbyte/sdk-iam'
+import { AccelByte } from '@accelbyte/sdk'
+import { IamUserAuthorizationClient, OAuth20ExtensionApi, OAuth20V4Api, UsersApi } from '@accelbyte/sdk-iam'
 import { sdk } from './ags-client.js'
 import { isQueueTicket, runLoginQueue } from './login-queue.js'
 import { getDeviceId } from './anon-id.js'
@@ -20,6 +21,7 @@ const NATIVE_RETURN_PATH = '__native__'
 const DEVICE_NAME_KEY = 'ags_device_name'
 const SESSION_FLAG = 'ags_session'
 const REFRESH_TOKEN_KEY = 'ags_refresh_token'
+const AUTH_MODE_KEY = 'ags_auth_mode'
 
 function getAuthConfig() {
   const { coreConfig } = sdk.assembly()
@@ -34,6 +36,7 @@ function clearTransientSessionState() {
   sessionStorage.removeItem('ags_pre_login_search')
   sessionStorage.removeItem(SESSION_FLAG)
   sessionStorage.removeItem(REFRESH_TOKEN_KEY)
+  sessionStorage.removeItem(AUTH_MODE_KEY)
   localStorage.removeItem(SESSION_FLAG)
   localStorage.removeItem(REFRESH_TOKEN_KEY)
   sdk.setToken({ accessToken: '', refreshToken: '' })
@@ -43,7 +46,7 @@ function clearAuthCallbackUrl(preSearch = '') {
   window.history.replaceState({}, '', window.location.pathname + (preSearch || ''))
 }
 
-function setSession(tokenData) {
+function setSession(tokenData, authMode = 'registered') {
   sdk.setToken({
     accessToken: tokenData.access_token || '',
     refreshToken: tokenData.refresh_token || '',
@@ -53,6 +56,7 @@ function setSession(tokenData) {
     // during the current tab/app session, but a full browser/app restart must
     // reauthenticate unless the platform supplies HttpOnly auth cookies.
     sessionStorage.setItem(SESSION_FLAG, '1')
+    sessionStorage.setItem(AUTH_MODE_KEY, authMode === 'guest' ? 'guest' : 'registered')
     if (tokenData.refresh_token) {
       sessionStorage.setItem(REFRESH_TOKEN_KEY, tokenData.refresh_token)
     }
@@ -72,8 +76,13 @@ export function hasStoredSession() {
 export function clearStoredSession() {
   sessionStorage.removeItem(SESSION_FLAG)
   sessionStorage.removeItem(REFRESH_TOKEN_KEY)
+  sessionStorage.removeItem(AUTH_MODE_KEY)
   localStorage.removeItem(SESSION_FLAG)
   localStorage.removeItem(REFRESH_TOKEN_KEY)
+}
+
+export function getStoredAuthMode() {
+  return sessionStorage.getItem(AUTH_MODE_KEY) === 'guest' ? 'guest' : 'registered'
 }
 
 function getRefreshToken() {
@@ -377,6 +386,88 @@ export async function loginWithPassword(identifier, password) {
   }
 }
 
+function createDeviceLoginSdk(deviceId) {
+  const { coreConfig } = sdk.assembly()
+  return AccelByte.SDK({
+    coreConfig: { ...coreConfig },
+    axiosConfig: {
+      request: {
+        headers: {
+          Authorization: `Basic ${btoa(coreConfig.clientId + ':')}`,
+          'Device-Id': deviceId,
+        },
+        timeout: 15_000,
+        withCredentials: false,
+      },
+    },
+  })
+}
+
+function guestLoginError(error) {
+  const status = Number(error?.response?.status || 0)
+  const payload = error?.response?.data || {}
+  const detail = String(
+    payload.error_description || payload.errorMessage || payload.message || payload.error || '',
+  ).toLowerCase()
+  if (detail.includes('platform client not found') || detail.includes('platform config')) {
+    return 'Guest login is not available right now. Please try again later.'
+  }
+  if (status === 401 || status === 403) {
+    return 'Guest login could not be authorized. Please try again later.'
+  }
+  if (status === 429) {
+    return 'Too many guest login attempts. Wait a moment and try again.'
+  }
+  if (status >= 400) {
+    return 'Could not sign in as guest. Please try again.'
+  }
+  return friendlyNetworkError(error, 'Could not sign in as guest. Please try again.')
+}
+
+// Creates or restores a headless AGS account tied to this browser/app install.
+// Only the stable Device ID is persisted; tokens remain in the SDK and this
+// tab's sessionStorage, matching the registered-session security boundary.
+export async function loginWithDeviceId() {
+  const { clientId } = getAuthConfig()
+  const deviceId = getDeviceId()
+  const loginSdk = createDeviceLoginSdk(deviceId)
+  let tokenData = null
+
+  try {
+    const response = await OAuth20V4Api(loginSdk).postTokenOauth_ByPlatformId_v4('device', {
+      client_id: clientId,
+      createHeadless: true,
+      device_id: deviceId,
+      skipSetCookie: true,
+    })
+    tokenData = response?.data || null
+  } catch (error) {
+    const queued = await resolveLoginQueue(error?.response || { status: 0 }, error?.response?.data)
+    if (queued.token) {
+      tokenData = queued.token
+    } else {
+      clearTransientSessionState()
+      if (queued.cancelled) return { ok: false, error: 'Guest sign-in cancelled.' }
+      if (queued.error) return { ok: false, error: queued.error }
+      return { ok: false, error: guestLoginError(error) }
+    }
+  }
+
+  if (!tokenData?.access_token) {
+    clearTransientSessionState()
+    return { ok: false, error: 'Guest login returned no session. Please try again.' }
+  }
+
+  setSession(tokenData, 'guest')
+  const profile = await getProfile()
+  if (!profile?.userId) {
+    clearTransientSessionState()
+    return { ok: false, error: 'Guest login could not verify the player profile. Please try again.' }
+  }
+
+  return { ok: true, data: tokenData, profile }
+}
+
 export async function requestPasswordReset(emailAddress) {
   const { baseURL, namespace } = getAuthConfig()
   try {
@@ -454,7 +545,7 @@ export async function refreshSession() {
       return { ok: false, error: extractErrorMessage(payload, 'Could not refresh your session.') }
     }
 
-    setSession(payload)
+    setSession(payload, getStoredAuthMode())
     return { ok: true, data: payload }
   } catch (e) {
     return { ok: false, error: friendlyNetworkError(e, 'Could not refresh your session.') }

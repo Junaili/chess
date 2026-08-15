@@ -912,6 +912,19 @@ input[type="checkbox"] {
   background: rgba(240, 195, 122, 0.06);
 }
 
+.btn-online-guest {
+  color: #20170f;
+  background: linear-gradient(135deg, var(--accent-2), #e4a95f);
+  border-color: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 10px 26px rgba(228, 169, 95, 0.16);
+}
+
+.btn-online-guest:hover {
+  color: #160f09;
+  background: linear-gradient(135deg, #f8d69c, #eab56f);
+  border-color: rgba(255, 255, 255, 0.38);
+}
+
 .guest-options {
   display: flex;
   flex-direction: column;
@@ -929,6 +942,30 @@ input[type="checkbox"] {
 
 .guest-options .btn {
   width: 100%;
+}
+
+.guest-device-note {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+#screen-home.signed-in.guest-session .home-body {
+  grid-template-columns: minmax(360px, 620px);
+}
+
+#screen-home.signed-in.guest-session .home-left {
+  overflow-y: auto;
+}
+
+#screen-home.signed-in.guest-session .player-summary-card {
+  grid-template-columns: 1fr;
+}
+
+#screen-home.signed-in.guest-session .menu-note {
+  display: block;
+  text-align: center;
 }
 
 .signedin-card {
