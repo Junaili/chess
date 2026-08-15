@@ -264,6 +264,10 @@ func (j *TrainJob) runTrainingAttempt(ctx context.Context, runID string, started
 	bot.Brain.LastTrainingRunID = runID
 	if len(freshPairs) == 0 {
 		status["result"] = "no_new_games"
+		// Hygiene still applies with nothing new to learn from: a bot that is not
+		// playing must still pick up new defaults, or it keeps superseded settings
+		// forever (Fiona kept a 220ms search budget through every such run).
+		trainer.NormalizePlayTuning(bot.Brain)
 		if err := ctx.Err(); err != nil {
 			return status, false, fmt.Errorf("training context ended before check commit: %w", err)
 		}

@@ -56,14 +56,12 @@ type TuningOutcome struct {
 // rebuilt from completed history (never incrementally double-counted), checked
 // for obvious tactical regret, and promoted only when its evidence score beats
 // the current champion or adds material evidence without lowering quality.
-func ComputePlayTuning(brain *botbrain.Brain, history []botbrain.MatchEntry, optional ...TuningContext) TuningOutcome {
-	ctx := TuningContext{Now: time.Now()}
-	if len(optional) > 0 {
-		ctx = optional[0]
-		if ctx.Now.IsZero() {
-			ctx.Now = time.Now()
-		}
-	}
+// NormalizePlayTuning applies defaults and re-bases stale values. This is
+// config hygiene, not learning: it must run on EVERY training run, including
+// runs with no new games. Fiona sat on a budget from a superseded regime for
+// exactly that reason — her runs kept returning no_new_games and short-circuited
+// before any tuning happened.
+func NormalizePlayTuning(brain *botbrain.Brain) {
 	t := brain.PlayTuning
 	if t == nil {
 		t = &botbrain.PlayTuning{
@@ -81,6 +79,18 @@ func ComputePlayTuning(brain *botbrain.Brain, history []botbrain.MatchEntry, opt
 	if t.SearchBudgetMs < minSearchMs || t.SearchBudgetMs > maxSearchMs {
 		t.SearchBudgetMs = defaultSearchMs
 	}
+}
+
+func ComputePlayTuning(brain *botbrain.Brain, history []botbrain.MatchEntry, optional ...TuningContext) TuningOutcome {
+	ctx := TuningContext{Now: time.Now()}
+	if len(optional) > 0 {
+		ctx = optional[0]
+		if ctx.Now.IsZero() {
+			ctx.Now = time.Now()
+		}
+	}
+	NormalizePlayTuning(brain)
+	t := brain.PlayTuning
 
 	recent := history
 	if len(recent) > tuningWindowGames {

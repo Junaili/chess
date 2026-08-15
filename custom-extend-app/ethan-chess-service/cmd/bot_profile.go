@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -68,6 +69,8 @@ type botHandlers struct {
 
 	userLimiter   *emailRateLimiter // challenge: per-player
 	globalLimiter *emailRateLimiter // challenge: fleet-wide
+
+	lastStallWarn time.Time // rate-limits the stalled-training log
 }
 
 // hosts reports whether the AMS bot DS can wake up as botID.
@@ -159,6 +162,43 @@ type gusStats struct {
 	GamesLast7Days int     `json:"gamesLast7Days"`
 	AvgDurationMs  int64   `json:"avgDurationMs"`
 	LastPlayedAt   string  `json:"lastPlayedAt,omitempty"`
+}
+
+// recentGameCount counts games that finished inside the window, including
+// abandoned ones: for staleness the question is "did this bot see traffic",
+// not "did it record a result".
+func recentGameCount(matches []botbrain.MatchEntry, now time.Time, window time.Duration) int {
+	n := 0
+	for _, m := range matches {
+		if t := m.EndedAtTime(); !t.IsZero() && now.Sub(t) <= window {
+			n++
+		}
+	}
+	return n
+}
+
+// staleTrainingDays renders days-since-training for the API, omitting it
+// entirely when the bot has never been trained (rather than reporting a
+// misleading zero).
+func staleTrainingDays(days float64) any {
+	if days < 0 {
+		return nil
+	}
+	return math.Round(days*10) / 10
+}
+
+// warnStalled logs the "playing but not learning" condition at most once an
+// hour per bot, so a stalled trainer is visible in logs without a profile view
+// turning into a log flood.
+func (g *botHandlers) warnStalled(staleDays float64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if time.Since(g.lastStallWarn) < time.Hour {
+		return
+	}
+	g.lastStallWarn = time.Now()
+	log.Printf("[%s] TRAINING STALLED: games in the last 48h but no training run for %.1f days "+
+		"(check the Extend task scheduler: GET /ets/v1/admin/namespaces/{ns}/tasks)", g.botID, staleDays)
 }
 
 // computeGusStats summarizes the bot's history. Results are stored from the
@@ -478,11 +518,20 @@ func (g *botHandlers) profile(w http.ResponseWriter, r *http.Request) {
 	}
 	lastChecked := ""
 	trainingHealthy := false
+	staleDays := -1.0
 	if brain != nil && brain.LastChecked != nil {
 		lastChecked = *brain.LastChecked
 		if checked, parseErr := time.Parse(time.RFC3339, lastChecked); parseErr == nil {
-			trainingHealthy = time.Since(checked) <= 36*time.Hour
+			since := time.Since(checked)
+			trainingHealthy = since <= 36*time.Hour
+			staleDays = since.Hours() / 24
 		}
+	}
+	// "Playing but not learning" is the shape the 35-day outage actually had:
+	// games kept arriving while the brain never moved, and nothing said so.
+	stalled := !trainingHealthy && recentGameCount(games, time.Now(), 48*time.Hour) > 0
+	if stalled {
+		g.warnStalled(staleDays)
 	}
 	out := map[string]any{
 		"bot":           g.identity(),
@@ -498,6 +547,8 @@ func (g *botHandlers) profile(w http.ResponseWriter, r *http.Request) {
 			"cadence":     "scheduled_daily",
 			"lastChecked": lastChecked,
 			"healthy":     trainingHealthy,
+			"staleDays":   staleTrainingDays(staleDays),
+			"stalled":     stalled,
 		},
 	}
 	_ = json.NewEncoder(w).Encode(out)
