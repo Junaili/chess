@@ -12,6 +12,51 @@ const quiesceMaxPlies = 4;
 // the search it was being given time for.
 const maxSearchBudgetMs = 5000;
 
+// Strength ladder. The old three names gave daily training nowhere to go: both
+// bots reached "hard" and the dial had no rung left, so an improvement could
+// only ever be given back. Levels are the dial the trainer moves; the names
+// remain as aliases so every existing caller keeps its exact behaviour.
+//
+// randomChance reproduces the old "easy plays a random move 40% of the time".
+// budgetCapMs bounds what a level is designed to use; the caller still supplies
+// the actual think time and the smaller of the two wins.
+const strengthLevels = [
+  null, // levels are 1-based
+  { depth: 1, quiescence: false, budgetCapMs: 200, randomChance: 0.4 },
+  { depth: 1, quiescence: false, budgetCapMs: 400, randomChance: 0.2 },
+  { depth: 2, quiescence: false, budgetCapMs: 600, randomChance: 0 },
+  { depth: 2, quiescence: false, budgetCapMs: 1200, randomChance: 0 },
+  { depth: 2, quiescence: true, budgetCapMs: 1800, randomChance: 0 },
+  { depth: 3, quiescence: true, budgetCapMs: 2400, randomChance: 0 },
+  { depth: 4, quiescence: true, budgetCapMs: 4000, randomChance: 0 },
+  { depth: 4, quiescence: true, budgetCapMs: 6000, randomChance: 0 },
+  // Depth 5 costs ~16s with today's move ordering, so 9 and 10 are headroom for
+  // after the search work rather than levels to promote into now.
+  { depth: 5, quiescence: true, budgetCapMs: 9000, randomChance: 0 },
+  { depth: 5, quiescence: true, budgetCapMs: 12000, randomChance: 0 },
+];
+
+const maxStrengthLevel = strengthLevels.length - 1;
+
+// The three historical names keep their exact old behaviour rather than
+// pointing at ladder rungs. Mapping `hard` onto a rung would have handed the
+// browser opponent quiescence — a strength change to the game Ethan practises
+// against, smuggled in by a refactor. The AMS bots pass quiescence explicitly,
+// so they are unaffected by this staying off here.
+const legacyDifficulties = {
+  easy: { depth: 1, quiescence: false, budgetCapMs: maxSearchBudgetMs, randomChance: 0.4 },
+  medium: { depth: 2, quiescence: false, budgetCapMs: maxSearchBudgetMs, randomChance: 0 },
+  hard: { depth: 4, quiescence: false, budgetCapMs: maxSearchBudgetMs, randomChance: 0 },
+};
+
+function resolveStrengthLevel(difficulty, level) {
+  const n = Number(level);
+  if (Number.isFinite(n) && n >= 1) {
+    return strengthLevels[Math.max(1, Math.min(Math.round(n), maxStrengthLevel))];
+  }
+  return legacyDifficulties[difficulty] || legacyDifficulties.medium;
+}
+
 class ChessAI {
   constructor() {
     this.pieceVal = { pawn:100, knight:320, bishop:330, rook:500, queen:900, king:20000 };
@@ -282,8 +327,10 @@ class ChessAI {
   }
 
   getBestMove(game, difficulty, options = {}) {
-    const depths = { easy: 1, medium: 2, hard: 4 };
-    const targetDepth = depths[difficulty] || 2;
+    // options.level, when present, is authoritative; the difficulty name is the
+    // fallback so callers that never learned about levels are unaffected.
+    const rung = resolveStrengthLevel(difficulty, options.level);
+    const targetDepth = rung.depth;
     const color = game.currentTurn;
     const maximizing = color === 'white';
     const moves = this._orderMoves(game, game.getAllLegalMoves(color));
@@ -292,18 +339,22 @@ class ChessAI {
       return null;
     }
 
-    // Easy: 40% random
-    if (difficulty === 'easy' && Math.random() < 0.4) {
+    // The lowest rungs blunder on purpose — that is what makes them beatable by
+    // a beginner, rather than just shallow.
+    if (rung.randomChance > 0 && Math.random() < rung.randomChance) {
       this.lastSearch = { nodes: 0, timedOut: false, completedDepth: 0, targetDepth, budgetMs: 0, random: true };
       return moves[Math.floor(Math.random() * moves.length)];
     }
 
-    const budget = Number(options.timeBudgetMs);
-    this._deadline = Number.isFinite(budget) && budget > 0
-      ? Date.now() + Math.max(25, Math.min(maxSearchBudgetMs, budget))
-      : Infinity;
+    const requested = Number(options.timeBudgetMs);
+    const budget = Number.isFinite(requested) && requested > 0
+      ? Math.min(requested, rung.budgetCapMs)
+      : rung.budgetCapMs;
+    this._deadline = Date.now() + Math.max(25, Math.min(maxSearchBudgetMs, budget));
     this._maxNodes = Number.isFinite(options.maxNodes) && options.maxNodes > 0 ? options.maxNodes : Infinity;
-    this._quiescence = options.quiescence === true;
+    // An explicit quiescence option still wins, so the bots can opt in without
+    // waiting for a level that carries it.
+    this._quiescence = options.quiescence === true || rung.quiescence;
     this._nodes = 0;
     this._timedOut = false;
     this._tt = new Map();
@@ -333,7 +384,10 @@ class ChessAI {
       bestMove = iterationMove;
       completedDepth = depth;
     }
-    this.lastSearch = { nodes: this._nodes, timedOut: this._timedOut, completedDepth, targetDepth, budgetMs: budget || 0 };
+    this.lastSearch = {
+      nodes: this._nodes, timedOut: this._timedOut, completedDepth, targetDepth,
+      budgetMs: budget || 0, quiescence: this._quiescence,
+    };
     return bestMove;
   }
 
