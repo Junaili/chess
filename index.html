@@ -50,9 +50,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-FdTwy_01.js"></script>
+  <script type="module" crossorigin src="/chess/assets/index-CCdoLhYS.js"></script>
   <link rel="modulepreload" crossorigin href="/chess/assets/chunk-CMxvf4Kt.js">
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-D0qmcR2P.css">
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-Bapf8ZeY.css">
 </head>
 <body class="app-loading" aria-busy="true">
   <a class="skip-link" href="#app-main">Skip to main content</a>
@@ -108,7 +108,7 @@
               <div class="signedin-identity">
                 <span class="signedin-avatar" aria-hidden="true">♞</span>
                 <div class="signedin-copy">
-                  <span class="signedin-greeting">Signed in as</span>
+                  <span id="ags-signedin-greeting" class="signedin-greeting">Signed in as</span>
                   <div class="signedin-name-row">
                     <span id="ags-signedin-name" class="signedin-name"></span>
                     <button class="btn-edit-name" id="btn-edit-name" title="Edit display name" aria-label="Edit display name" data-click="window.agsEditName && window.agsEditName()"><span aria-hidden="true">✏</span><span>Edit name</span></button>
@@ -116,8 +116,8 @@
                 </div>
               </div>
               <div class="signedin-footer">
-                <button class="btn-account" data-click="window.agsOpenMyProfile && window.agsOpenMyProfile()">My Account</button>
-                <button class="btn-signout" data-click="window.agsLogout && window.agsLogout()">Log out</button>
+                <button id="btn-my-account" class="btn-account" data-click="window.agsOpenMyProfile && window.agsOpenMyProfile()">My Account</button>
+                <button id="btn-signout" class="btn-signout" data-click="window.agsLogout && window.agsLogout()">Log out</button>
               </div>
             </div>
             <div class="player-summary-meta">
@@ -136,22 +136,35 @@
           <div id="learning-next-step" class="learning-next-step-card" style="display:none" role="status" aria-live="polite"></div>
           <div id="learning-reminder-soft-prompt" class="learning-soft-prompt-card" style="display:none" role="status" aria-live="polite"></div>
           <div id="ags-member-play-actions" class="menu-buttons">
-            <button class="btn btn-primary" data-click="showColorSelect('computer')">Single Player</button>
+            <button id="btn-single-player" class="btn btn-primary" data-click="showColorSelect('computer')">Single Player</button>
             <button class="btn btn-matchmake" id="btn-play-random" style="display:none" data-click="startRandomMatchmaking()">Find a Chess Buddy</button>
             <!-- One "Play <bot>" button per hosted personality, rendered by
                  src/gus.js from the roster and revealed only when that bot is
                  actually playable. -->
             <div id="ags-bot-play-actions" class="menu-buttons"></div>
           </div>
-          <p class="menu-note">Choose your color, customize your pieces, and start from the board you actually want to play on.</p>
+          <p id="home-play-note" class="menu-note">Choose your color, customize your pieces, and start from the board you actually want to play on.</p>
           <div id="home-idle-prompt" class="home-idle-prompt" style="display:none">
             <span class="idle-eyebrow">💡 Still here?</span>
             <p class="idle-text">Invite a friend and play a live game right now.</p>
             <div id="home-idle-share-row"></div>
             <button id="home-idle-signup-btn" class="btn btn-primary btn-mini" style="display:none" data-click="window.agsOpenRegister && window.agsOpenRegister()">Create free account →</button>
           </div>
+          <div id="ags-online-guest-entry" class="guest-entry online-guest-entry">
+            <div class="auth-divider" id="ags-online-guest-divider"><span>or play online without an account</span></div>
+            <button id="ags-open-online-guest" class="btn btn-guest btn-online-guest" aria-expanded="false" aria-controls="ags-online-guest-options" data-click="window.agsOpenOnlineGuest && window.agsOpenOnlineGuest()">Play Online as Guest</button>
+            <div id="ags-online-guest-options" class="guest-options" hidden>
+              <label class="auth-field" for="online-guest-name-input">
+                <span>Guest name</span>
+                <input type="text" id="online-guest-name-input" class="name-input" placeholder="How should we call you?" maxlength="20" autocomplete="nickname" data-keydown="if(event.key==='Enter'){event.preventDefault();window.agsPlayOnlineGuest && window.agsPlayOnlineGuest()}" />
+              </label>
+              <button id="ags-online-guest-submit" class="btn btn-matchmake" data-click="window.agsPlayOnlineGuest && window.agsPlayOnlineGuest()">Find a Chess Buddy</button>
+              <p id="ags-online-guest-message" class="auth-message" aria-live="polite"></p>
+              <p class="guest-device-note">Your guest identity stays on this browser and device. Clearing site data creates a new guest.</p>
+            </div>
+          </div>
           <div id="ags-guest-entry" class="guest-entry">
-            <div class="auth-divider" id="ags-guest-divider"><span>want to try it first?</span></div>
+            <div class="auth-divider" id="ags-guest-divider"><span>or play offline</span></div>
             <button id="ags-open-guest" class="btn btn-guest" aria-expanded="false" aria-controls="ags-guest-options" data-click="window.agsOpenGuestPlay && window.agsOpenGuestPlay()">Play Gambit Gus</button>
             <div id="ags-guest-options" class="guest-options" hidden>
               <label class="auth-field" for="player-name-input">
