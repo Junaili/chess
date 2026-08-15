@@ -29,6 +29,21 @@ const ts = () => new Date().toISOString().slice(11, 19)
 const inlineAI = new ChessAI()
 export const log = (...a) => console.log(ts(), ...a)
 
+// Upper bound on a single search. The bot thinks inside its human-like move
+// delay, which the learned pace puts in the seconds, so the old 500ms ceiling
+// threw away most of the time it already spends looking busy.
+const searchBudgetCeilingMs = 4000
+// Left for sending the move and for scheduler slop, so thinking never makes the
+// bot answer later than the delay it advertised.
+const moveDeliveryReserveMs = 250
+// Longest synchronous search we will run on the connection thread.
+const inlineSearchCeilingMs = 400
+
+const sleepUntil = deadline => {
+  const remaining = deadline - Date.now()
+  return remaining > 0 ? new Promise(resolve => setTimeout(resolve, remaining)) : Promise.resolve()
+}
+
 // Play one game over a PeerJS DataConnection. role: 'host' | 'joiner'.
 // Resolves with a reason string when the game ends or the connection closes.
 export function playGame(conn, role, opts = {}) {
@@ -36,7 +51,7 @@ export function playGame(conn, role, opts = {}) {
   const botId = opts.botId || 'bot'
   const thinkMs = opts.thinkMs ?? 1200
   const difficulty = ['easy', 'medium', 'hard'].includes(opts.difficulty) ? opts.difficulty : 'medium'
-  const searchBudgetMs = Math.max(50, Math.min(500, Number(opts.searchBudgetMs) || 220))
+  const searchBudgetMs = Math.max(50, Math.min(searchBudgetCeilingMs, Number(opts.searchBudgetMs) || 220))
   const tag = opts.tag ? `[${opts.tag}]` : ''
   const glog = (...a) => log(tag, ...a)
 
@@ -149,16 +164,37 @@ export function playGame(conn, role, opts = {}) {
       // Reserve the turn before the human-like delay. Duplicate/replayed peer
       // frames can otherwise schedule two searches and make two bot moves.
       movePending = true
-      setTimeout(async () => {
+      // The delay is what makes the bot feel human; it used to be dead time,
+      // with the search squeezed in afterwards. Now the search runs THROUGH the
+      // delay and the move is held back until it elapses — same felt pace, an
+      // order of magnitude more thinking.
+      const thinkWindowMs = sampleThink()
+      const moveReadyAt = Date.now() + thinkWindowMs
+      ;(async () => {
         try {
           if (done || !game || game.currentTurn !== botColor || isOver()) return
           const bm = bookMove()
-          let moved = bm ? playMove(bm, bm.promType, ' (book)') : false
-          if (!moved) {
+          if (bm) {
+            await sleepUntil(moveReadyAt)
+            if (done || !game || game.currentTurn !== botColor || isOver()) return
+            if (playMove(bm, bm.promType, ' (book)') && isOver()) finish('over')
+            return
+          }
+          {
             let move = null
-            const searchOptions = { timeBudgetMs: searchBudgetMs, maxNodes: 250000, style: opts.style || {} }
+            const budgetMs = Math.max(
+              searchBudgetMs,
+              Math.min(searchBudgetCeilingMs, thinkWindowMs - moveDeliveryReserveMs),
+            )
+            const searchOptions = { timeBudgetMs: budgetMs, maxNodes: 250000, style: opts.style || {}, quiescence: true }
+            // The inline search is synchronous: whatever budget it gets, it
+            // holds the PeerJS heartbeat thread for. Anything longer than a
+            // blink has to go to the worker, or thinking for two seconds costs
+            // us pongs and incoming opponent moves.
+            const offThread =
+              opts.workerSearch || opts.forceWorkerSearch || budgetMs > inlineSearchCeilingMs
             try {
-              if (opts.workerSearch || opts.forceWorkerSearch) {
+              if (offThread) {
                 const result = await aiSearchPool.search(game, difficulty, searchOptions)
                 move = result.move
                 if (result.search?.timedOut) glog('AI used bounded fallback after', result.search.nodes, 'nodes')
@@ -170,18 +206,29 @@ export function playGame(conn, role, opts = {}) {
               }
             } catch (error) {
               glog('AI search unavailable:', error?.message || error)
-              // Preserve liveness with a legal move; never run an unbounded
-              // synchronous retry on the PeerJS heartbeat thread.
-              move = game.getAllLegalMoves(botColor)[0] || null
+              // Never retry a long search inline — that is exactly the stall the
+              // worker exists to avoid. Drop to a heartbeat-safe budget instead,
+              // and only then to a bare legal move.
+              try {
+                move = inlineAI.getBestMove(game, difficulty, {
+                  ...searchOptions,
+                  timeBudgetMs: Math.min(budgetMs, inlineSearchCeilingMs),
+                })
+              } catch {
+                move = null
+              }
+              if (!move) move = game.getAllLegalMoves(botColor)[0] || null
             }
+            // Hold a fast answer back to the advertised delay; a search that ran
+            // long already spent it.
+            await sleepUntil(moveReadyAt)
             if (done || !game || game.currentTurn !== botColor || isOver() || !move) return
-            moved = playMove(move, move.promType || 'queen', '')
+            if (playMove(move, move.promType || 'queen', '') && isOver()) finish('over')
           }
-          if (moved && isOver()) finish('over')
         } finally {
           movePending = false
         }
-      }, sampleThink())
+      })()
     }
 
     let lastPong = Date.now()

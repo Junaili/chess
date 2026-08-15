@@ -142,3 +142,60 @@ test('learned style values are clamped before they bias search', () => {
   });
   assert.ok(bias >= 0 && bias <= 4, `untrusted style escaped its unit bounds: ${bias}`);
 });
+
+test('quiescence stays off unless a caller asks for it', () => {
+  // The browser opponent was tuned without it; only the AMS bots opt in.
+  const ai = new ChessAI();
+  const game = new ChessGame();
+  ai.getBestMove(game, 'medium');
+  assert.equal(ai._quiescence, false, 'quiescence must not switch itself on');
+  ai.getBestMove(game, 'medium', { quiescence: true });
+  assert.equal(ai._quiescence, true);
+});
+
+test('quiescence scores a hanging piece the leaf would have missed', () => {
+  const ai = new ChessAI();
+  const game = emptyGame();
+  game.board[7][4] = { type: 'king', color: 'white', hasMoved: true };  // e1
+  game.board[7][3] = { type: 'rook', color: 'white', hasMoved: true };  // d1
+  game.board[0][7] = { type: 'king', color: 'black', hasMoved: true };  // h8
+  game.board[0][3] = { type: 'queen', color: 'black', hasMoved: true }; // d8 — free, king is far away
+  game.currentTurn = 'white';
+
+  const staticScore = ai.evaluate(game);
+  ai._deadline = Infinity; ai._maxNodes = Infinity; ai._nodes = 0; ai._timedOut = false;
+  const quiesced = ai._quiesce(game, -Infinity, Infinity, true, 4);
+
+  // Static eval sees white down a queen; the capture is one ply away.
+  assert.ok(
+    quiesced > staticScore + 500,
+    `quiescence missed the free queen: static ${staticScore}, quiesced ${quiesced}`
+  );
+});
+
+test('quiescence never scores below standing pat for the side to move', () => {
+  // The side to move is never forced to capture, so resolving the position
+  // cannot be worse than simply stopping there.
+  const ai = new ChessAI();
+  const game = new ChessGame();
+  const files = 'abcdefgh';
+  const mv = (from, to) => game.makeMove(8 - +from[1], files.indexOf(from[0]), 8 - +to[1], files.indexOf(to[0]));
+  mv('e2', 'e4'); mv('d7', 'd5'); mv('g1', 'f3'); mv('b8', 'c6');
+
+  const standPat = ai.evaluate(game);
+  ai._deadline = Infinity; ai._maxNodes = Infinity; ai._nodes = 0; ai._timedOut = false;
+  const quiesced = ai._quiesce(game, -Infinity, Infinity, game.currentTurn === 'white', 4);
+  if (game.currentTurn === 'white') {
+    assert.ok(quiesced >= standPat, `white lost ground by resolving captures: ${quiesced} < ${standPat}`);
+  } else {
+    assert.ok(quiesced <= standPat, `black lost ground by resolving captures: ${quiesced} > ${standPat}`);
+  }
+});
+
+test('quiescence respects the node ceiling instead of running away', () => {
+  const ai = new ChessAI();
+  const game = new ChessGame();
+  ai._deadline = Infinity; ai._maxNodes = 5; ai._nodes = 0; ai._timedOut = false;
+  ai._quiesce(game, -Infinity, Infinity, true, 4);
+  assert.ok(ai._nodes <= 200, `quiescence ignored its node budget: ${ai._nodes}`);
+});

@@ -2,6 +2,16 @@
 
 import { ChessGame } from './chess-engine.js';
 
+// How far a quiescence search may chase captures past a leaf. Deep enough to
+// resolve an ordinary exchange on one square, bounded so a busy middlegame
+// cannot explode the node count.
+const quiesceMaxPlies = 4;
+
+// Ceiling on a caller's requested think time. The bot now searches inside its
+// human-like move delay (seconds), where the old 1s ceiling silently truncated
+// the search it was being given time for.
+const maxSearchBudgetMs = 5000;
+
 class ChessAI {
   constructor() {
     this.pieceVal = { pawn:100, knight:320, bishop:330, rook:500, queen:900, king:20000 };
@@ -9,6 +19,7 @@ class ChessAI {
     this._timedOut = false;
     this._nodes = 0;
     this._maxNodes = Infinity;
+    this._quiescence = false;
     this._tt = new Map();
 
     // Piece-square tables from white's perspective (row 0 = rank 8)
@@ -101,14 +112,77 @@ class ChessAI {
     return score;
   }
 
+  // Captures only, ordered most-valuable-victim first so the cheap refutations
+  // come early and prune the rest.
+  _captureMoves(game, color) {
+    const scored = [];
+    for (const m of game.getAllLegalMoves(color)) {
+      const mover = game.board[m.fr][m.fc];
+      const target = game.board[m.toR][m.toC];
+      // A pawn changing file onto an empty square is an en-passant capture.
+      const enPassant = !target && mover?.type === 'pawn' && m.fc !== m.toC;
+      if (!target && !enPassant) continue;
+      const victim = target ? this.pieceVal[target.type] : this.pieceVal.pawn;
+      const attacker = this.pieceVal[mover?.type] || 0;
+      scored.push({ m, gain: victim - attacker / 10 });
+    }
+    return scored.sort((a, b) => b.gain - a.gain).map(entry => entry.m);
+  }
+
+  // Search on past a noisy leaf until the position is quiet, so the score
+  // reflects the end of the capture sequence rather than the middle of it.
+  _quiesce(game, alpha, beta, maximizing, plies) {
+    this._nodes++;
+    if (this._nodes > this._maxNodes || ((this._nodes & 63) === 0 && Date.now() >= this._deadline)) {
+      this._timedOut = true;
+      return this.evaluate(game);
+    }
+    const standPat = this.evaluate(game);
+    if (plies === 0 || game.status === 'checkmate' || game.status === 'stalemate' || game.status.startsWith('draw-'))
+      return standPat;
+
+    // Standing pat: the side to move is never forced to capture, so its score
+    // is at least what it already has.
+    if (maximizing) {
+      if (standPat >= beta) return standPat;
+      if (standPat > alpha) alpha = standPat;
+    } else {
+      if (standPat <= alpha) return standPat;
+      if (standPat < beta) beta = standPat;
+    }
+
+    for (const m of this._captureMoves(game, maximizing ? 'white' : 'black')) {
+      const clone = this._cloneGame(game);
+      clone.makeMove(m.fr, m.fc, m.toR, m.toC, m.promType || 'queen');
+      const val = this._quiesce(clone, alpha, beta, !maximizing, plies - 1);
+      if (this._timedOut) return val;
+      if (maximizing) {
+        if (val > alpha) alpha = val;
+      } else if (val < beta) {
+        beta = val;
+      }
+      if (beta <= alpha) break;
+    }
+    return maximizing ? alpha : beta;
+  }
+
   minimax(game, depth, alpha, beta, maximizing) {
     this._nodes++;
     if (this._nodes > this._maxNodes || (this._nodes & 63) === 0 && Date.now() >= this._deadline) {
       this._timedOut = true;
       return this.evaluate(game);
     }
-    if (depth === 0 || game.status === 'checkmate' || game.status === 'stalemate' || game.status.startsWith('draw-'))
+    if (game.status === 'checkmate' || game.status === 'stalemate' || game.status.startsWith('draw-'))
       return this.evaluate(game);
+    if (depth === 0) {
+      // Without quiescence, a leaf can land in the middle of a capture sequence
+      // and be scored as if the recapture never happens — that is how the bot
+      // hangs pieces right at the horizon. Opt-in so the browser opponent keeps
+      // the strength it was tuned for.
+      return this._quiescence
+        ? this._quiesce(game, alpha, beta, maximizing, quiesceMaxPlies)
+        : this.evaluate(game);
+    }
 
     const color = maximizing ? 'white' : 'black';
     const key = depth > 1 ? this._positionKey(game, depth, maximizing) : '';
@@ -225,8 +299,11 @@ class ChessAI {
     }
 
     const budget = Number(options.timeBudgetMs);
-    this._deadline = Number.isFinite(budget) && budget > 0 ? Date.now() + Math.max(25, Math.min(1000, budget)) : Infinity;
+    this._deadline = Number.isFinite(budget) && budget > 0
+      ? Date.now() + Math.max(25, Math.min(maxSearchBudgetMs, budget))
+      : Infinity;
     this._maxNodes = Number.isFinite(options.maxNodes) && options.maxNodes > 0 ? options.maxNodes : Infinity;
+    this._quiescence = options.quiescence === true;
     this._nodes = 0;
     this._timedOut = false;
     this._tt = new Map();

@@ -20,7 +20,8 @@ const (
 	defaultThinkMs     = 1400
 	minThinkMs         = 700
 	maxThinkMs         = 2600
-	defaultSearchMs    = 220
+	defaultSearchMs    = 1800
+	maxSearchMs        = 4000
 	maxShufflePlies    = 120
 	bookPromotionDelta = 0.01
 )
@@ -70,7 +71,10 @@ func ComputePlayTuning(brain *botbrain.Brain, history []botbrain.MatchEntry, opt
 	if t.MaxShufflePlies == 0 {
 		t.MaxShufflePlies = maxShufflePlies
 	}
-	if t.SearchBudgetMs <= 0 || t.SearchBudgetMs > 500 {
+	// The bot searches inside its human-like move delay, so seconds here are
+	// normal. The old 500ms ceiling silently reset any budget worth having,
+	// which kept "hard" from ever completing a depth the ladder promised.
+	if t.SearchBudgetMs <= 0 || t.SearchBudgetMs > maxSearchMs {
 		t.SearchBudgetMs = defaultSearchMs
 	}
 
