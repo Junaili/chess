@@ -50,9 +50,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/chess/assets/index-BR-26N5h.js"></script>
+  <script type="module" crossorigin src="/chess/assets/index-Dbc97LDR.js"></script>
   <link rel="modulepreload" crossorigin href="/chess/assets/chunk-CMxvf4Kt.js">
-  <link rel="stylesheet" crossorigin href="/chess/assets/index-Bapf8ZeY.css">
+  <link rel="stylesheet" crossorigin href="/chess/assets/index-BbaDozjV.css">
 </head>
 <body class="app-loading" aria-busy="true">
   <a class="skip-link" href="#app-main">Skip to main content</a>
@@ -63,6 +63,16 @@
 
   <!-- ── Connection Banner ──────────────────────────────────────────────── -->
   <div id="conn-banner" class="conn-banner" role="status" aria-live="polite" aria-atomic="true" style="display:none"></div>
+
+  <div class="language-picker">
+    <label class="visually-hidden" for="app-language-select" data-i18n="language.label">Language</label>
+    <select id="app-language-select" data-i18n-ignore>
+      <option value="en">English</option>
+      <option value="id">Bahasa Indonesia</option>
+      <option value="ms">Bahasa Melayu</option>
+      <option value="zh-CN">简体中文</option>
+    </select>
+  </div>
 
   <main id="app-main" class="app-main" tabindex="-1">
 
@@ -254,7 +264,7 @@
                    email is an alias of the guardian's mailbox, and the consent is
                    recorded before the family invite goes out. -->
               <form id="ags-add-child-form" class="add-child-form" style="display:none" onsubmit="return false">
-                <p class="add-child-intro">Create a protected account for your child. You keep the sign-in details; password resets go to <strong>your</strong> email.</p>
+                <p class="add-child-intro"><span data-i18n="family.child_intro_before">Create a protected account for your child. You keep the sign-in details; password resets go to </span><strong data-i18n="family.child_intro_emphasis">your</strong><span data-i18n="family.child_intro_after"> email.</span></p>
                 <label class="auth-field" for="ags-child-nickname">
                   <span>Player nickname</span>
                   <input type="text" id="ags-child-nickname" class="name-input" placeholder="A fun name — not their real full name" maxlength="48" autocomplete="off" />
