@@ -1078,6 +1078,22 @@ let activeLegalReaderDocument = null
 let legalReaderTrigger = null
 let friendsState = { friends: [], incoming: [], outgoing: [] }
 let familyState = { group: null, members: [], incomingInvites: [] }
+
+function isGuestSession() {
+  return currentAuthMode === 'guest'
+}
+
+function hasRegisteredSession() {
+  return !!currentUserId && !isGuestSession()
+}
+
+function getOnlineGuestName() {
+  try {
+    return moderateIncomingDisplayName(localStorage.getItem(ONLINE_GUEST_NAME_KEY), 'Guest')
+  } catch {
+    return 'Guest'
+  }
+}
 let friendsRefreshTimer = null
 let friendsVisibilityHandler = null
 let friendsRefreshPromise = null
@@ -1633,6 +1649,23 @@ async function hydrateAuthenticatedUser(profile, { authMode = getStoredAuthMode(
   currentProfile = profile
   currentAuthMode = authMode === 'guest' ? 'guest' : 'registered'
   window.agsCurrentUserId = currentUserId
+  window.agsIsGuest = isGuestSession()
+
+  if (isGuestSession()) {
+    const name = getOnlineGuestName()
+    window.agsCurrentUserEmail = ''
+    void flushPendingEvents().catch(error => {
+      console.warn('[telemetry] queued-event flush unavailable:', error?.message || error)
+    })
+    if (typeof window.setPlayerFromAGS === 'function') {
+      window.setPlayerFromAGS(name)
+    }
+    updateAuthUI(true, name, currentUserId, { guest: true })
+    if (typeof window.showScreen === 'function') window.showScreen('home')
+    setPresenceStatus('online')
+    return
+  }
+
   // Child sessions never store an email (COPPA data minimization — the
   // address on a parent-created account is the parent's mailbox anyway).
   const userEmail = profile.emailAddress || ''
