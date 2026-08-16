@@ -253,3 +253,120 @@ test('the ladder never gets weaker as the level rises', () => {
     prevDepth = d;
   }
 });
+
+// ── Static Exchange Evaluation ──────────────────────────────────────────────
+
+test('SEE: a clean, undefended capture wins exactly the piece taken', () => {
+  const ai = new ChessAI();
+  const game = emptyGame();
+  game.board[7][4] = { type: 'king', color: 'white', hasMoved: true };  // e1
+  game.board[0][7] = { type: 'king', color: 'black', hasMoved: true };  // h8
+  game.board[4][3] = { type: 'pawn', color: 'white', hasMoved: true };  // d4
+  game.board[3][4] = { type: 'pawn', color: 'black', hasMoved: true };  // e5, undefended
+  const see = ai._see(game, 4, 3, 3, 4, 'white');
+  assert.equal(see, 100, `undefended pawn capture: got ${see}`);
+});
+
+test('SEE: capturing a defended pawn with the queen is a clear loss', () => {
+  // Queen takes d5 pawn; a second black pawn on e6 recaptures. Losing the
+  // queen for a pawn must read as strongly negative, not merely "not great".
+  const ai = new ChessAI();
+  const game = emptyGame();
+  game.board[7][4] = { type: 'king', color: 'white', hasMoved: true };  // e1
+  game.board[7][3] = { type: 'queen', color: 'white', hasMoved: true }; // d1
+  game.board[0][4] = { type: 'king', color: 'black', hasMoved: true };  // e8
+  game.board[3][3] = { type: 'pawn', color: 'black', hasMoved: true };  // d5, the target
+  game.board[2][4] = { type: 'pawn', color: 'black', hasMoved: true };  // e6, defends d5
+  const see = ai._see(game, 7, 3, 3, 3, 'white');
+  assert.equal(see, -800, `queen for a defended pawn: got ${see}`);
+});
+
+test('SEE: knight takes a pawn defended once nets a piece-for-pawn loss', () => {
+  const ai = new ChessAI();
+  const game = emptyGame();
+  game.board[7][4] = { type: 'king', color: 'white', hasMoved: true };
+  game.board[0][4] = { type: 'king', color: 'black', hasMoved: true };
+  game.board[5][2] = { type: 'knight', color: 'white', hasMoved: true }; // c3
+  game.board[3][3] = { type: 'pawn', color: 'black', hasMoved: true };   // d5, target
+  game.board[2][4] = { type: 'pawn', color: 'black', hasMoved: true };   // e6, defends d5
+  const see = ai._see(game, 5, 2, 3, 3, 'white');
+  assert.equal(see, -220, `knight(320) for pawn(100), recaptured: got ${see}`);
+});
+
+test('SEE: en passant credits the captured pawn even though the square is empty', () => {
+  const ai = new ChessAI();
+  const game = emptyGame();
+  game.board[7][4] = { type: 'king', color: 'white', hasMoved: true };
+  game.board[0][4] = { type: 'king', color: 'black', hasMoved: true };
+  game.board[3][3] = { type: 'pawn', color: 'white', hasMoved: true }; // d5
+  game.board[3][4] = { type: 'pawn', color: 'black', hasMoved: true }; // e5, captured en passant
+  // White plays d5xe6 e.p.: target square (2,4) is empty; the captured pawn
+  // is the one sitting on (3,4), one rank behind the target for White.
+  const see = ai._see(game, 3, 3, 2, 4, 'white');
+  assert.equal(see, 100, `en passant should still win a pawn: got ${see}`);
+});
+
+test('SEE: an x-ray attacker revealed mid-exchange changes a loss into a gain', () => {
+  // White rook d3 takes a knight on d5 (defended by a bishop on c6). A SECOND
+  // white rook sits on d1, directly behind d3 on the same file — blocked
+  // today, but the moment the d3 rook moves onto d5, its line to d5 opens.
+  // A SEE that does not re-derive attackers from the live board after each
+  // capture (i.e. does not naturally x-ray) would stop after the bishop
+  // recaptures and call this a losing trade (rook for knight, -180). It is
+  // actually a net gain once the hidden rook joins in.
+  const ai = new ChessAI();
+  const game = emptyGame();
+  game.board[7][7] = { type: 'king', color: 'white', hasMoved: true };  // h1
+  game.board[0][7] = { type: 'king', color: 'black', hasMoved: true };  // h8
+  game.board[7][3] = { type: 'rook', color: 'white', hasMoved: true };  // d1 (hidden until d3 vacates)
+  game.board[5][3] = { type: 'rook', color: 'white', hasMoved: true };  // d3 (first capturer)
+  game.board[3][3] = { type: 'knight', color: 'black', hasMoved: true }; // d5 (target)
+  game.board[2][2] = { type: 'bishop', color: 'black', hasMoved: true }; // c6 (defends d5)
+
+  const see = ai._see(game, 5, 3, 3, 3, 'white');
+  // Knight(320) + Bishop(330) won, Rook(500) given up: (320+330)-500 = 150.
+  assert.equal(see, 150, `x-ray reveal not applied: got ${see}`);
+});
+
+test('SEE: _captureMoves drops losing exchanges and orders the rest best-first', () => {
+  const ai = new ChessAI();
+  const game = emptyGame();
+  game.board[7][4] = { type: 'king', color: 'white', hasMoved: true };
+  game.board[0][4] = { type: 'king', color: 'black', hasMoved: true };
+  // A clean pawn capture (SEE +100)...
+  game.board[4][3] = { type: 'pawn', color: 'white', hasMoved: true };  // d4
+  game.board[3][4] = { type: 'pawn', color: 'black', hasMoved: true };  // e5, undefended
+  // ...and a losing queen capture of a defended pawn (SEE -800), offered by
+  // the same side so both appear in one _captureMoves call.
+  game.board[7][3] = { type: 'queen', color: 'white', hasMoved: true }; // d1
+  game.board[3][3] = { type: 'pawn', color: 'black', hasMoved: true };  // d5, target
+  game.board[2][4] = { type: 'pawn', color: 'black', hasMoved: true };  // e6, defends d5
+
+  const moves = ai._captureMoves(game, 'white');
+  assert.ok(moves.length >= 1, 'the winning capture must survive');
+  assert.ok(
+    !moves.some(m => m.fr === 7 && m.fc === 3 && m.toR === 3 && m.toC === 3),
+    'the losing queen capture must be dropped, not merely deprioritised'
+  );
+  assert.ok(
+    moves.some(m => m.fr === 4 && m.fc === 3 && m.toR === 3 && m.toC === 4),
+    'the clean pawn capture must remain'
+  );
+});
+
+test('SEE: a promoting capture is valued as landing a queen, not a pawn', () => {
+  // White pawn captures on the 8th rank and promotes; a black rook then
+  // retakes the new queen. Losing "a pawn" for a rook would misprice this as
+  // a great trade; losing a QUEEN for a rook is what actually happens.
+  const ai = new ChessAI();
+  const game = emptyGame();
+  game.board[7][4] = { type: 'king', color: 'white', hasMoved: true };
+  game.board[0][4] = { type: 'king', color: 'black', hasMoved: true };
+  game.board[1][3] = { type: 'pawn', color: 'white', hasMoved: true };  // d7
+  game.board[0][2] = { type: 'knight', color: 'black', hasMoved: true }; // c8, target
+  game.board[0][0] = { type: 'rook', color: 'black', hasMoved: true };  // a8, defends c8 along the back rank
+  const see = ai._see(game, 1, 3, 0, 2, 'white');
+  // Wins the knight (320), loses the promoted queen (900) to the rook: -580.
+  // A pawn-valued mover would have (wrongly) read this as +220.
+  assert.equal(see, -580, `promotion not valued as a queen: got ${see}`);
+});
