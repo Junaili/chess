@@ -2185,7 +2185,12 @@ async function completeAuthenticatedSession({
 } = {}) {
   await installSessionKeepAlive()
   const resolvedProfile = profile || await getProfile()
-  const canProceed = await maybeRequireLegalAcceptance(resolvedProfile, tokenData)
+  // Guests never see the legal gate: it's a Terms/Privacy acceptance flow
+  // tied to a real (registered) IAM account, and device-ID guest login still
+  // returns a normal IAM access token that AGS Legal would otherwise flag as
+  // having pending agreements. A guest never becomes a registered account
+  // from this session, so there's nothing to gate.
+  const canProceed = authMode === 'guest' ? true : await maybeRequireLegalAcceptance(resolvedProfile, tokenData)
   if (!canProceed) return false
   if (!resolvedProfile) return false
   await hydrateAuthenticatedUser(resolvedProfile, { authMode })

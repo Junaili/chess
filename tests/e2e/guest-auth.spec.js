@@ -38,7 +38,31 @@ function tokenResponse(attempt) {
   };
 }
 
-async function mockGuestBackend(page, { failFirstGrant = false } = {}) {
+// A pending, mandatory Terms-of-Service eligibility — same shape AGS Legal
+// returns for a real registered account. Used to prove that guest login
+// doesn't route through the legal-acceptance gate (dev-plan: guests never
+// see it — device-ID login still returns a normal IAM token, so without an
+// explicit guest bypass AGS Legal would flag it exactly like it would for
+// any registered account).
+const PENDING_TOS_ELIGIBILITY = {
+  isAccepted: false,
+  isMandatory: true,
+  policyId: 'policy-tos',
+  policyName: 'Terms of Service',
+  policyVersions: [{
+    id: 'version-1',
+    displayVersion: '1.0',
+    isInEffect: true,
+    localizedPolicyVersions: [{
+      id: 'localized-1',
+      localeCode: 'en-US',
+      isDefaultSelection: true,
+      attachmentLocation: 'tos.md',
+    }],
+  }],
+};
+
+async function mockGuestBackend(page, { failFirstGrant = false, pendingLegalDocuments = false } = {}) {
   const deviceIds = [];
   const accountOnlyRequests = [];
   let grantAttempts = 0;
@@ -89,7 +113,13 @@ async function mockGuestBackend(page, { failFirstGrant = false } = {}) {
     await route.fulfill({ status: 404, json: { message: `Unexpected IAM request: ${path}` } });
   });
 
-  await page.route('**/agreement/**', route => route.fulfill({ status: 200, json: [] }));
+  await page.route('**/agreement/**', route => {
+    const url = route.request().url();
+    if (url.includes('/eligibilities/namespaces/')) {
+      return route.fulfill({ status: 200, json: pendingLegalDocuments ? [PENDING_TOS_ELIGIBILITY] : [] });
+    }
+    return route.fulfill({ status: 200, json: [] });
+  });
   for (const pattern of [
     '**/friends/**',
     '**/leaderboard/**',
@@ -182,5 +212,15 @@ test.describe('AGS Device ID guest login', () => {
     await page.locator('#ags-online-guest-submit').click();
     await expect(page.locator('#screen-waiting')).toBeVisible();
     expect(backend.grantAttempts()).toBe(2);
+  });
+
+  test('skips the legal-acceptance gate even when AGS reports a pending mandatory agreement', async ({ page }) => {
+    await mockGuestBackend(page, { pendingLegalDocuments: true });
+    await page.goto(APP_PATH);
+    await expect(page.locator('body')).toHaveAttribute('aria-busy', 'false');
+
+    await submitOnlineGuest(page);
+    await expect(page.locator('#screen-waiting')).toBeVisible();
+    await expect(page.locator('#screen-legal')).not.toHaveClass(/active/);
   });
 });
