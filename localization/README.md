@@ -1,9 +1,9 @@
 # Localization workflow
 
 The source of truth is `src/locales/catalog.mjs`. Every row keeps a stable key,
-English source, Indonesian (`id`), Malay (`ms`), and Simplified Chinese
-(`zh-CN`) side by side. The initial non-English copy is marked `draft` until a
-professional translator validates it.
+English source, Indonesian (`id`), and Malay (`ms`) side by side. The initial
+non-English copy is marked `draft` until a professional translator validates
+it.
 
 Run `npm run i18n:export` to regenerate `translation-review.csv`. Send that CSV
 to translators, then copy approved wording back into the catalog and change the

@@ -128,13 +128,13 @@ test('deriveCosmeticCard uses the requested AGS catalog localization with Englis
     localizations: {
       en: { title: 'Walnut Board', description: 'Warm wood.' },
       id: { title: 'Papan Kenari', description: 'Kayu hangat.' },
-      'zh-CN': { title: '胡桃木棋盘', description: '温暖的木质棋盘。' },
+      fr: { title: 'Plateau en Noyer', description: 'Bois chaleureux.' },
     },
     regionData: [{ price: 100, currencyCode: 'ETHC' }],
   }
 
   assert.equal(deriveCosmeticCard(item, { language: 'id-ID' }).name, 'Papan Kenari')
-  assert.equal(deriveCosmeticCard(item, { language: 'zh-CN' }).description, '温暖的木质棋盘。')
+  assert.equal(deriveCosmeticCard(item, { language: 'fr-FR' }).description, 'Bois chaleureux.')
   assert.equal(deriveCosmeticCard(item, { language: 'ms' }).name, 'Walnut Board')
 })
 

@@ -4,7 +4,6 @@ export const SUPPORTED_LOCALES = Object.freeze([
   { code: 'en', label: 'English', languageTag: 'en-US', agsLanguage: 'en' },
   { code: 'id', label: 'Bahasa Indonesia', languageTag: 'id-ID', agsLanguage: 'id' },
   { code: 'ms', label: 'Bahasa Melayu', languageTag: 'ms-MY', agsLanguage: 'ms' },
-  { code: 'zh-CN', label: '简体中文', languageTag: 'zh-CN', agsLanguage: 'zh-CN' },
 ])
 
 const localeByCode = new Map(SUPPORTED_LOCALES.map(locale => [locale.code, locale]))
@@ -21,7 +20,6 @@ export function normalizeLocale(value) {
   const lower = candidate.toLowerCase()
   if (lower === 'id' || lower.startsWith('id-')) return 'id'
   if (lower === 'ms' || lower.startsWith('ms-')) return 'ms'
-  if (lower === 'zh' || lower === 'zh-cn' || lower === 'zh-sg' || lower.startsWith('zh-hans')) return 'zh-CN'
   if (lower === 'en' || lower.startsWith('en-')) return 'en'
   return DEFAULT_LOCALE
 }
@@ -119,10 +117,20 @@ function translateTextNode(node) {
   const parent = node.parentElement
   if (shouldIgnore(parent)) return
   const { leading, core, trailing } = splitWhitespace(node.nodeValue || '')
-  if (!core || !/[A-Za-z]/.test(core)) return
+  if (!core) return
 
+  // A non-Latin translation (e.g. a prior locale) has no A-Za-z characters,
+  // so it must not be judged against that filter here — only content we've
+  // never touched before is. Otherwise switching away from such a locale
+  // leaves its translation stuck: the filter rejects re-deriving from the
+  // node's own current (translated) text, and the node is silently skipped
+  // on every subsequent locale switch. Re-deriving from the record's original
+  // English source, keyed off whether the DOM still holds our own last write,
+  // survives any script the translation happens to be in.
   let record = textSources.get(node)
-  if (!record || (record.last !== undefined && core !== record.last)) {
+  const isOwnPriorTranslation = record && record.last !== undefined && core === record.last
+  if (!isOwnPriorTranslation) {
+    if (!/[A-Za-z]/.test(core)) return
     record = { source: core, last: undefined }
     textSources.set(node, record)
   }

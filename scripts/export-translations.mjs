@@ -5,7 +5,7 @@ import { TRANSLATION_CATALOG } from '../src/locales/catalog.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = resolve(root, 'localization/translation-review.csv')
-const columns = ['key', 'context', 'english', 'indonesian', 'malay', 'simplified_chinese', 'status']
+const columns = ['key', 'context', 'english', 'indonesian', 'malay', 'status']
 const csvCell = value => `"${String(value ?? '').replace(/"/g, '""')}"`
 const rows = TRANSLATION_CATALOG.map(item => [
   item.key,
@@ -13,7 +13,6 @@ const rows = TRANSLATION_CATALOG.map(item => [
   item.en,
   item.id,
   item.ms,
-  item['zh-CN'],
   item.status,
 ])
 

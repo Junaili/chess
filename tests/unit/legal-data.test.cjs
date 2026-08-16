@@ -42,13 +42,13 @@ test('prefers an exact or language-matched AGS localized policy version', async 
     localizedPolicyVersions: [
       { id: 'english', localeCode: 'en-US', isDefaultSelection: true },
       { id: 'indonesian', localeCode: 'id-ID' },
-      { id: 'chinese', localeCode: 'zh-CN' },
+      { id: 'french', localeCode: 'fr-FR' },
     ],
   }
 
   assert.equal(pickLocalizedVersion(version, 'id').id, 'indonesian')
-  assert.equal(pickLocalizedVersion(version, 'zh-Hans').id, 'chinese')
-  assert.equal(pickLocalizedVersion(version, 'zh-CN').id, 'chinese')
+  assert.equal(pickLocalizedVersion(version, 'fr-CA').id, 'french')
+  assert.equal(pickLocalizedVersion(version, 'fr-FR').id, 'french')
   assert.equal(pickLocalizedVersion(version, 'ms-MY').id, 'english')
 })
 

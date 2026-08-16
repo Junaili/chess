@@ -10,7 +10,6 @@ test('normalizes supported browser language tags and falls back to English', asy
   const { normalizeLocale } = await i18nPromise
   assert.equal(normalizeLocale('id-ID'), 'id')
   assert.equal(normalizeLocale('ms-MY'), 'ms')
-  assert.equal(normalizeLocale('zh-Hans-SG'), 'zh-CN')
   assert.equal(normalizeLocale('fr-FR'), 'en')
 })
 
@@ -18,7 +17,7 @@ test('stored preference wins and unsupported preferences defer to browser langua
   const { resolvePreferredLocale } = await i18nPromise
   assert.equal(resolvePreferredLocale({ storedLocale: 'ms', navigatorLanguages: ['id-ID'] }), 'ms')
   assert.equal(resolvePreferredLocale({ storedLocale: 'fr', navigatorLanguages: ['id-ID'] }), 'id')
-  assert.equal(resolvePreferredLocale({ navigatorLanguages: ['fr-FR', 'zh-Hans'] }), 'zh-CN')
+  assert.equal(resolvePreferredLocale({ navigatorLanguages: ['fr-FR', 'ms-MY'] }), 'ms')
 })
 
 // Must run before any test below loads the catalog — the module caches it
@@ -38,12 +37,12 @@ test('the catalog is not loaded for the English locale, and t() defers to the DO
 
 test('translation lookup and AGS locale mappings follow the active locale', async () => {
   const { ensureCatalogLoaded, getAgsLanguage, getLanguageTag, setLocale, t, translateEnglish } = await i18nPromise
-  setLocale('zh-Hans', { persist: false, announce: false })
+  setLocale('ms-MY', { persist: false, announce: false })
   await ensureCatalogLoaded()
-  assert.equal(t('common.save'), '保存')
-  assert.equal(translateEnglish('Cancel'), '取消')
-  assert.equal(getLanguageTag(), 'zh-CN')
-  assert.equal(getAgsLanguage(), 'zh-CN')
+  assert.equal(t('common.save'), 'Simpan')
+  assert.equal(translateEnglish('Cancel'), 'Batal')
+  assert.equal(getLanguageTag(), 'ms-MY')
+  assert.equal(getAgsLanguage(), 'ms')
 
   setLocale('id-ID', { persist: false, announce: false })
   await ensureCatalogLoaded()
@@ -61,7 +60,6 @@ test('catalog has unique stable keys and complete draft translations', async () 
     assert.ok(item.en)
     assert.ok(item.id)
     assert.ok(item.ms)
-    assert.ok(item['zh-CN'])
     assert.equal(item.status, 'draft')
     assert.equal(keys.has(item.key), false, `duplicate key: ${item.key}`)
     keys.add(item.key)
