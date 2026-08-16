@@ -35,6 +35,11 @@ async function stubClubStatusCoins(page, coins) {
 
 async function stubCloudSaveCosmetics(page, record = null) {
   await page.route('**/cloudsave/**', route => {
+    const isBulkGet = route.request().url().includes('records/bulk') && route.request().method() === 'POST';
+    if (isBulkGet) {
+      const data = record ? [{ key: 'chess-cosmetics', value: record }] : [];
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data }) });
+    }
     const isCosmetics = route.request().url().includes('chess-cosmetics');
     if (isCosmetics && route.request().method() === 'GET') {
       if (record) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ value: record }) });

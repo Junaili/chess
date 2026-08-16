@@ -20,12 +20,14 @@ import {
   deriveCosmeticCard, sortCosmetics, insufficientBalanceMessage, itemRegionData,
 } from './coin-store-contract.mjs'
 import { fetchClubStatus, getCoins } from './club.js'
+import { getAgsLanguage, getLocale } from './i18n.mjs'
 
 const COSMETICS_KEY = 'chess-cosmetics'
 const CATALOG_TTL_MS = 60 * 60 * 1000 // 1h — the cosmetics catalog rarely changes
 
 let cachedCatalog = null
 let cachedCatalogAt = 0
+let cachedCatalogLanguage = ''
 let ownedSkus = []
 let equippedRecord = { ...DEFAULT_COSMETICS_RECORD }
 let cosmeticsLoadedForUserId = null
@@ -41,12 +43,18 @@ function cloudSaveApi() {
   return PublicPlayerRecordApi(sdk, { coreConfig: { ...coreConfig, useSchemaValidation: false } })
 }
 
-async function fetchCosmeticsRecord(userId) {
+// Bulk-get (POST /users/me/records/bulk) instead of the single-key GET: a
+// never-equipped account has no chess-cosmetics record at all, which the
+// single-key endpoint reports as a 404 on every sign-in forever. The bulk
+// endpoint returns 200 with an empty `data` array for keys that don't exist,
+// so a brand-new/never-customised account no longer logs a network error.
+async function fetchCosmeticsRecord() {
   try {
-    const res = await cloudSaveApi().getRecord_ByUserId_ByKey(userId, COSMETICS_KEY)
-    return normalizeCosmeticsRecord(res.data?.value)
+    const res = await cloudSaveApi().createUserMeRecordBulk({ keys: [COSMETICS_KEY] })
+    const record = res.data?.data?.find(r => r.key === COSMETICS_KEY)
+    return normalizeCosmeticsRecord(record?.value)
   } catch (e) {
-    if (e?.response?.status !== 404) console.warn('[coin-store] fetch record:', e?.response?.data || e?.message)
+    console.warn('[coin-store] fetch record:', e?.response?.data || e?.message)
     return { ...DEFAULT_COSMETICS_RECORD }
   }
 }
@@ -70,14 +78,16 @@ function authHeaders() {
 
 async function fetchCosmeticCatalog({ force = false } = {}) {
   const now = Date.now()
-  if (!force && cachedCatalog && now - cachedCatalogAt < CATALOG_TTL_MS) return cachedCatalog
+  const language = getAgsLanguage()
+  if (!force && cachedCatalog && cachedCatalogLanguage === language && now - cachedCatalogAt < CATALOG_TTL_MS) return cachedCatalog
   const url = `${agsBaseURL}/platform/public/namespaces/${encodeURIComponent(agsNamespace)}/items/byCriteria`
-    + `?categoryPath=${encodeURIComponent('/cosmetics')}&region=US&language=en&limit=50`
+    + `?categoryPath=${encodeURIComponent('/cosmetics')}&region=US&language=${encodeURIComponent(language)}&limit=50`
   const res = await fetchWithTimeout(url, { headers: authHeaders() })
   if (!res.ok) throw new Error(`cosmetics catalog ${res.status}`)
   const payload = await res.json()
   cachedCatalog = Array.isArray(payload?.data) ? payload.data : []
   cachedCatalogAt = now
+  cachedCatalogLanguage = language
   return cachedCatalog
 }
 
@@ -118,7 +128,7 @@ export async function purchaseCosmetic(item) {
         price: Number(region.price || 0),
         discountedPrice: Number(region.discountedPrice ?? region.price ?? 0),
         region: 'US',
-        language: 'en',
+        language: getAgsLanguage(),
       }),
     })
   } catch (error) {
@@ -138,7 +148,7 @@ export async function purchaseCosmetic(item) {
     // coin display corrects too (fire-and-forget; the message below already
     // uses the number the server just rejected against).
     void fetchClubStatus({ force: true }).catch(() => {})
-    return { ok: false, insufficientBalance: true, message: insufficientBalanceMessage(deriveCosmeticCard(item, { ownedSkus, coins: getCoins() }), getCoins()) }
+    return { ok: false, insufficientBalance: true, message: insufficientBalanceMessage(deriveCosmeticCard(item, { ownedSkus, coins: getCoins(), language: getAgsLanguage() }), getCoins()) }
   }
   if (payload?.errorCode === 31177) {
     // Permanent item already owned (e.g. a second tab bought it first) —
@@ -235,7 +245,7 @@ export function unequipCosmetic(sku) {
 export async function initCosmetics(userId) {
   if (!userId) return
   try {
-    equippedRecord = await fetchCosmeticsRecord(userId)
+    equippedRecord = await fetchCosmeticsRecord()
     cosmeticsLoadedForUserId = userId
     applyEquippedCosmetics(equippedRecord)
   } catch (error) {
@@ -249,6 +259,7 @@ export function resetCosmetics() {
   ownedSkus = []
   cachedCatalog = null
   cachedCatalogAt = 0
+  cachedCatalogLanguage = ''
   applyEquippedCosmetics(equippedRecord)
 }
 
@@ -278,8 +289,8 @@ function renderStoreGrid() {
   if (!grid) return
   const coins = getCoins()
   const balanceEl = document.getElementById('coin-store-balance')
-  if (balanceEl) balanceEl.textContent = `${coins.toLocaleString()} 🪙`
-  const cards = lastCatalog.map(item => deriveCosmeticCard(item, { ownedSkus, equipped: equippedRecord, coins }))
+  if (balanceEl) balanceEl.textContent = `${coins.toLocaleString(getLocale())} 🪙`
+  const cards = lastCatalog.map(item => deriveCosmeticCard(item, { ownedSkus, equipped: equippedRecord, coins, language: getAgsLanguage() }))
   grid.innerHTML = sortCosmetics(cards).map(cardHtml).join('')
   grid.querySelectorAll('[data-cosmetic-action]').forEach(button => {
     button.addEventListener('click', () => handleCardAction(button))
