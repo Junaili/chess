@@ -7,6 +7,13 @@ import { ChessGame } from './chess-engine.js';
 // cannot explode the node count.
 const quiesceMaxPlies = 4;
 
+// Knight offsets for Static Exchange Evaluation's own attack geometry (kept
+// separate from the move generator: SEE needs "does this piece attack this
+// square" independent of whose turn it is or whether the square is currently
+// occupied by the right color, which chess-engine.js's move generator does
+// not expose as a standalone query).
+const seeKnightOffsets = [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]];
+
 // Ceiling on a caller's requested think time. The bot now searches inside its
 // human-like move delay (seconds), where the old 1s ceiling silently truncated
 // the search it was being given time for.
@@ -161,8 +168,146 @@ class ChessAI {
     return score;
   }
 
-  // Captures only, ordered most-valuable-victim first so the cheap refutations
-  // come early and prune the rest.
+  // ── Static Exchange Evaluation ──────────────────────────────────────────
+  // Delta pruning (a flat "even winning the whole piece plus a margin can't
+  // help" filter) measured net negative at depth 4: it can only rule out a
+  // capture when even its BEST case is hopeless, so it barely fires in a real
+  // middlegame where most captures are simply recaptured for roughly equal
+  // value. SEE instead plays out the actual exchange on the square and
+  // returns its true net material result, which is what tells quiescence
+  // "queen takes a pawn defended by a pawn" is a loser, not just "a queen
+  // capture is playable in principle."
+  //
+  // Pins are ignored — the standard SEE simplification. An attacker that is
+  // pinned and could not legally recapture is still counted as if it could.
+  // This can occasionally overvalue a defender; it costs some search
+  // accuracy, never legality, since SEE only orders/prunes candidates that
+  // getAllLegalMoves already certified legal.
+
+  // Does the piece at (r,c) attack (tr,tc) on this occupancy grid? Pure
+  // geometry: unlike the move generator, this does not care whose turn it is
+  // or what currently sits on the target square — a pawn "attacks" the
+  // square diagonally ahead of it whether or not an enemy is standing there.
+  _seeAttacks(occ, piece, r, c, tr, tc) {
+    switch (piece.type) {
+      case 'pawn': {
+        const dir = piece.color === 'white' ? -1 : 1;
+        return (tr - r) === dir && Math.abs(tc - c) === 1;
+      }
+      case 'knight':
+        return seeKnightOffsets.some(([dr, dc]) => r + dr === tr && c + dc === tc);
+      case 'king':
+        return Math.abs(tr - r) <= 1 && Math.abs(tc - c) <= 1 && (tr !== r || tc !== c);
+      case 'bishop':
+        return this._seeSlide(occ, r, c, tr, tc, true, false);
+      case 'rook':
+        return this._seeSlide(occ, r, c, tr, tc, false, true);
+      case 'queen':
+        return this._seeSlide(occ, r, c, tr, tc, true, true);
+      default:
+        return false;
+    }
+  }
+
+  // Ray-walks from (r,c) toward (tr,tc); true only if the line is the right
+  // shape for this piece AND nothing sits between the two squares. The target
+  // square's own occupant is never checked as a blocker — nothing in an
+  // exchange sequence attacks THROUGH the contested square, only onto it.
+  _seeSlide(occ, r, c, tr, tc, diagonal, orthogonal) {
+    const dr = tr - r, dc = tc - c;
+    if (dr === 0 && dc === 0) return false;
+    const isDiagonalLine = Math.abs(dr) === Math.abs(dc);
+    const isOrthogonalLine = dr === 0 || dc === 0;
+    if (isDiagonalLine && !diagonal) return false;
+    if (isOrthogonalLine && !orthogonal) return false;
+    if (!isDiagonalLine && !isOrthogonalLine) return false;
+    const stepR = Math.sign(dr), stepC = Math.sign(dc);
+    let cr = r + stepR, cc = c + stepC;
+    while (cr !== tr || cc !== tc) {
+      if (occ[cr][cc]) return false;
+      cr += stepR; cc += stepC;
+    }
+    return true;
+  }
+
+  // A pawn landing on the back rank promotes — this engine always to a queen,
+  // since move generation never offers an under-promotion choice (matches
+  // _cloneGame/minimax's own `promType || 'queen'` default elsewhere). What
+  // sits on the square afterward, and what it costs to commit there, is a
+  // queen's worth, not a pawn's.
+  _seeLandingValue(piece, tr) {
+    return piece.type === 'pawn' && (tr === 0 || tr === 7) ? this.pieceVal.queen : this.pieceVal[piece.type];
+  }
+
+  // Every piece on this occupancy grid that attacks (tr,tc), regardless of
+  // color. Recomputed fresh from the current grid on every call, which is
+  // what lets x-ray attackers (a rook behind a pawn, revealed once the pawn
+  // is captured away) appear naturally — no separate reveal-tracking needed.
+  // `value` is what landing this attacker on (tr,tc) commits, so a promoting
+  // pawn sorts as the queen it is about to become, not as a pawn.
+  _seeAttackersOn(occ, tr, tc) {
+    const found = [];
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const p = occ[r][c];
+        if (p && this._seeAttacks(occ, p, r, c, tr, tc)) {
+          found.push({ r, c, color: p.color, value: this._seeLandingValue(p, tr) });
+        }
+      }
+    }
+    return found;
+  }
+
+  // Net centipawn result, from the capturing side's perspective, of playing
+  // (fr,fc)->(tr,tc) followed by the best sequence of recaptures both sides
+  // can make on that square. Positive: color ends up ahead in material.
+  // Standard "swap-off" algorithm (Chess Programming Wiki, SEE); operates on
+  // a private occupancy copy, never the real board.
+  _see(game, fr, fc, tr, tc, color) {
+    const occ = game.board.map(row => row.map(p => (p ? { type: p.type, color: p.color } : null)));
+    let firstGain = 0;
+    if (occ[tr][tc]) {
+      firstGain = this.pieceVal[occ[tr][tc].type];
+    } else {
+      // En passant: the captured pawn sits beside the target square, not on it.
+      const passedRow = color === 'white' ? tr + 1 : tr - 1;
+      const passed = occ[passedRow]?.[tc];
+      if (passed?.type === 'pawn') {
+        firstGain = this.pieceVal.pawn;
+        occ[passedRow][tc] = null;
+      }
+    }
+    const gain = [firstGain];
+    let attackerValue = this._seeLandingValue(occ[fr][fc], tr);
+    occ[fr][fc] = null; // may reveal an x-ray attacker behind it
+    let side = color === 'white' ? 'black' : 'white';
+    let depth = 0;
+    while (true) {
+      const attackers = this._seeAttackersOn(occ, tr, tc).filter(a => a.color === side);
+      if (!attackers.length) break;
+      attackers.sort((a, b) => a.value - b.value); // cheapest attacker recaptures first
+      const next = attackers[0];
+      depth++;
+      gain[depth] = attackerValue - gain[depth - 1];
+      // A side that cannot possibly improve on stopping here, even if this
+      // capture is free, has no reason to continue the sequence.
+      if (Math.max(-gain[depth - 1], gain[depth]) < 0) break;
+      occ[next.r][next.c] = null;
+      attackerValue = next.value;
+      side = side === 'white' ? 'black' : 'white';
+    }
+    while (depth > 0) {
+      gain[depth - 1] = -Math.max(-gain[depth - 1], gain[depth]);
+      depth--;
+    }
+    return gain[0];
+  }
+
+  // Captures ordered by their SEE (best exchange first). Exchanges that lose
+  // material are dropped, not just deprioritized: quiescence exists to
+  // resolve tactical noise near the horizon, not to search sacrifices, and a
+  // capture SEE already certifies as a net loss cannot become a net gain by
+  // being searched deeper.
   _captureMoves(game, color) {
     const scored = [];
     for (const m of game.getAllLegalMoves(color)) {
@@ -171,11 +316,11 @@ class ChessAI {
       // A pawn changing file onto an empty square is an en-passant capture.
       const enPassant = !target && mover?.type === 'pawn' && m.fc !== m.toC;
       if (!target && !enPassant) continue;
-      const victim = target ? this.pieceVal[target.type] : this.pieceVal.pawn;
-      const attacker = this.pieceVal[mover?.type] || 0;
-      scored.push({ m, gain: victim - attacker / 10 });
+      const see = this._see(game, m.fr, m.fc, m.toR, m.toC, color);
+      if (see < 0) continue;
+      scored.push({ m, see });
     }
-    return scored.sort((a, b) => b.gain - a.gain).map(entry => entry.m);
+    return scored.sort((a, b) => b.see - a.see).map(entry => entry.m);
   }
 
   // Search on past a noisy leaf until the position is quiet, so the score
