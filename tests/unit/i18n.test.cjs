@@ -21,15 +21,32 @@ test('stored preference wins and unsupported preferences defer to browser langua
   assert.equal(resolvePreferredLocale({ navigatorLanguages: ['fr-FR', 'zh-Hans'] }), 'zh-CN')
 })
 
+// Must run before any test below loads the catalog — the module caches it
+// once loaded for the process lifetime, so "not yet loaded" is only
+// observable this early.
+test('the catalog is not loaded for the English locale, and t() defers to the DOM until it is', async () => {
+  const { ensureCatalogLoaded, setLocale, t } = await i18nPromise
+  setLocale('en', { persist: false, announce: false })
+  assert.equal(await ensureCatalogLoaded(), null)
+
+  setLocale('ms', { persist: false, announce: false })
+  assert.equal(t('common.save'), undefined)
+  await ensureCatalogLoaded()
+  assert.equal(t('common.save'), 'Simpan')
+  setLocale('en', { persist: false, announce: false })
+})
+
 test('translation lookup and AGS locale mappings follow the active locale', async () => {
-  const { getAgsLanguage, getLanguageTag, setLocale, t, translateEnglish } = await i18nPromise
+  const { ensureCatalogLoaded, getAgsLanguage, getLanguageTag, setLocale, t, translateEnglish } = await i18nPromise
   setLocale('zh-Hans', { persist: false, announce: false })
+  await ensureCatalogLoaded()
   assert.equal(t('common.save'), '保存')
   assert.equal(translateEnglish('Cancel'), '取消')
   assert.equal(getLanguageTag(), 'zh-CN')
   assert.equal(getAgsLanguage(), 'zh-CN')
 
   setLocale('id-ID', { persist: false, announce: false })
+  await ensureCatalogLoaded()
   assert.equal(t('common.save'), 'Simpan')
   assert.equal(getLanguageTag(), 'id-ID')
   assert.equal(getAgsLanguage(), 'id')

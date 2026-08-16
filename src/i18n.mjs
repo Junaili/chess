@@ -1,8 +1,3 @@
-import {
-  TRANSLATIONS_BY_ENGLISH,
-  TRANSLATIONS_BY_KEY,
-} from './locales/catalog.mjs'
-
 export const DEFAULT_LOCALE = 'en'
 export const LOCALE_STORAGE_KEY = 'ethans-chess-locale'
 export const SUPPORTED_LOCALES = Object.freeze([
@@ -66,20 +61,45 @@ export function getAgsLanguage() {
   return localeByCode.get(currentLocale)?.agsLanguage || 'en'
 }
 
+// The catalog carries four languages of copy (~50 KiB raw) and is only ever
+// needed to translate OUT of English, so it's dynamically imported instead
+// of bundled into the eager launch chunk — English-locale visitors (the
+// common case on first load) never pay for it. Loading is gated on locale
+// so a stray call under English never fetches it; ensureCatalogLoaded()
+// resolves immediately (no import) in that case.
+let catalog = null
+let catalogPromise = null
+
+export function ensureCatalogLoaded() {
+  if (currentLocale === DEFAULT_LOCALE) return Promise.resolve(catalog)
+  if (catalog) return Promise.resolve(catalog)
+  if (!catalogPromise) {
+    catalogPromise = import('./locales/catalog.mjs').then(mod => {
+      catalog = mod
+      return catalog
+    })
+  }
+  return catalogPromise
+}
+
 function interpolate(message, values = {}) {
   return String(message).replace(/\{([A-Za-z0-9_]+)\}/g, (match, key) => (
     Object.hasOwn(values, key) ? String(values[key]) : match
   ))
 }
 
+// Returns undefined (rather than the bare key) while the catalog is still
+// loading, so an explicit [data-i18n] element keeps its existing English
+// DOM fallback instead of briefly showing the raw key — applyTranslations()
+// re-runs once ensureCatalogLoaded() resolves and fills it in for real.
 export function t(key, values = {}) {
-  const item = TRANSLATIONS_BY_KEY[key]
-  if (!item) return interpolate(key, values)
+  const item = catalog?.TRANSLATIONS_BY_KEY[key]
+  if (!item) return catalog ? interpolate(key, values) : undefined
   return interpolate(item[currentLocale] || item.en, values)
 }
 
 export function translateEnglish(source, values = {}) {
-  const item = TRANSLATIONS_BY_ENGLISH[String(source)]
+  const item = catalog?.TRANSLATIONS_BY_ENGLISH[String(source)]
   if (!item) return interpolate(source, values)
   return interpolate(item[currentLocale] || item.en, values)
 }
@@ -138,7 +158,7 @@ function translateExplicitElement(element) {
   const key = element.dataset.i18n
   if (!key) return
   const translated = t(key)
-  if (element.textContent !== translated) element.textContent = translated
+  if (translated !== undefined && element.textContent !== translated) element.textContent = translated
 }
 
 function applyToRoot(root) {
@@ -191,6 +211,7 @@ export function setLocale(locale, { persist = true, announce = true } = {}) {
   }
   syncDocumentLocale()
   applyTranslations()
+  void ensureCatalogLoaded().then(() => applyTranslations())
   if (changed && announce && globalThis.window) {
     window.dispatchEvent(new CustomEvent('ethans-chess:locale-changed', {
       detail: {
@@ -207,6 +228,7 @@ export function initI18n() {
   if (!globalThis.document) return
   syncDocumentLocale()
   applyTranslations()
+  void ensureCatalogLoaded().then(() => applyTranslations())
 
   const select = document.getElementById('app-language-select')
   select?.addEventListener('change', event => setLocale(event.currentTarget.value))
