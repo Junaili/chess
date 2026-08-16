@@ -20,12 +20,14 @@ import {
   deriveCosmeticCard, sortCosmetics, insufficientBalanceMessage, itemRegionData,
 } from './coin-store-contract.mjs'
 import { fetchClubStatus, getCoins } from './club.js'
+import { getAgsLanguage, getLocale } from './i18n.mjs'
 
 const COSMETICS_KEY = 'chess-cosmetics'
 const CATALOG_TTL_MS = 60 * 60 * 1000 // 1h — the cosmetics catalog rarely changes
 
 let cachedCatalog = null
 let cachedCatalogAt = 0
+let cachedCatalogLanguage = ''
 let ownedSkus = []
 let equippedRecord = { ...DEFAULT_COSMETICS_RECORD }
 let cosmeticsLoadedForUserId = null
@@ -76,14 +78,16 @@ function authHeaders() {
 
 async function fetchCosmeticCatalog({ force = false } = {}) {
   const now = Date.now()
-  if (!force && cachedCatalog && now - cachedCatalogAt < CATALOG_TTL_MS) return cachedCatalog
+  const language = getAgsLanguage()
+  if (!force && cachedCatalog && cachedCatalogLanguage === language && now - cachedCatalogAt < CATALOG_TTL_MS) return cachedCatalog
   const url = `${agsBaseURL}/platform/public/namespaces/${encodeURIComponent(agsNamespace)}/items/byCriteria`
-    + `?categoryPath=${encodeURIComponent('/cosmetics')}&region=US&language=en&limit=50`
+    + `?categoryPath=${encodeURIComponent('/cosmetics')}&region=US&language=${encodeURIComponent(language)}&limit=50`
   const res = await fetchWithTimeout(url, { headers: authHeaders() })
   if (!res.ok) throw new Error(`cosmetics catalog ${res.status}`)
   const payload = await res.json()
   cachedCatalog = Array.isArray(payload?.data) ? payload.data : []
   cachedCatalogAt = now
+  cachedCatalogLanguage = language
   return cachedCatalog
 }
 
@@ -124,7 +128,7 @@ export async function purchaseCosmetic(item) {
         price: Number(region.price || 0),
         discountedPrice: Number(region.discountedPrice ?? region.price ?? 0),
         region: 'US',
-        language: 'en',
+        language: getAgsLanguage(),
       }),
     })
   } catch (error) {
@@ -144,7 +148,7 @@ export async function purchaseCosmetic(item) {
     // coin display corrects too (fire-and-forget; the message below already
     // uses the number the server just rejected against).
     void fetchClubStatus({ force: true }).catch(() => {})
-    return { ok: false, insufficientBalance: true, message: insufficientBalanceMessage(deriveCosmeticCard(item, { ownedSkus, coins: getCoins() }), getCoins()) }
+    return { ok: false, insufficientBalance: true, message: insufficientBalanceMessage(deriveCosmeticCard(item, { ownedSkus, coins: getCoins(), language: getAgsLanguage() }), getCoins()) }
   }
   if (payload?.errorCode === 31177) {
     // Permanent item already owned (e.g. a second tab bought it first) —
@@ -255,6 +259,7 @@ export function resetCosmetics() {
   ownedSkus = []
   cachedCatalog = null
   cachedCatalogAt = 0
+  cachedCatalogLanguage = ''
   applyEquippedCosmetics(equippedRecord)
 }
 
@@ -284,8 +289,8 @@ function renderStoreGrid() {
   if (!grid) return
   const coins = getCoins()
   const balanceEl = document.getElementById('coin-store-balance')
-  if (balanceEl) balanceEl.textContent = `${coins.toLocaleString()} 🪙`
-  const cards = lastCatalog.map(item => deriveCosmeticCard(item, { ownedSkus, equipped: equippedRecord, coins }))
+  if (balanceEl) balanceEl.textContent = `${coins.toLocaleString(getLocale())} 🪙`
+  const cards = lastCatalog.map(item => deriveCosmeticCard(item, { ownedSkus, equipped: equippedRecord, coins, language: getAgsLanguage() }))
   grid.innerHTML = sortCosmetics(cards).map(cardHtml).join('')
   grid.querySelectorAll('[data-cosmetic-action]').forEach(button => {
     button.addEventListener('click', () => handleCardAction(button))

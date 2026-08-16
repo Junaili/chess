@@ -3837,6 +3837,35 @@ body[data-screen="game"] .privacy-center-button {
   display: none;
 }
 
+.language-picker {
+  position: fixed;
+  z-index: 72;
+  left: max(12px, env(safe-area-inset-left));
+  bottom: max(18px, env(safe-area-inset-bottom));
+}
+
+.language-picker select {
+  min-height: 44px;
+  max-width: min(46vw, 190px);
+  padding: 8px 34px 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  color: rgba(255, 248, 241, 0.88);
+  background: rgba(24, 17, 13, 0.92);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.32);
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 800;
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+}
+
+.language-picker select:hover,
+.language-picker select:focus-visible {
+  color: #fff8f1;
+  border-color: rgba(242, 185, 121, 0.45);
+}
+
 .privacy-center-button {
   position: fixed;
   z-index: 72;

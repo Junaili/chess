@@ -17,21 +17,23 @@
 
 import { extendFetch } from './extend-client.js'
 import { sdk } from './ags-client.js'
+import { getAgsLanguage } from './i18n.mjs'
 
 const UNLOCKED_CACHE_KEY = 'ags-achievements-unlocked'
 const STATUS_UNLOCKED = 2  // AGS: status 1 = in progress, 2 = unlocked
 
-let _catalog = null
+const catalogsByLanguage = new Map()
 
-export async function fetchAchievementCatalog(language = 'en') {
-  if (_catalog) return _catalog
+export async function fetchAchievementCatalog(language = getAgsLanguage()) {
+  if (catalogsByLanguage.has(language)) return catalogsByLanguage.get(language)
   try {
     const res = await extendFetch(
       `/achievement/catalog?language=${encodeURIComponent(language)}&limit=100&offset=0`,
     )
     if (!res.ok) throw new Error('HTTP ' + res.status)
-    _catalog = (await res.json())?.data || []
-    return _catalog
+    const catalog = (await res.json())?.data || []
+    catalogsByLanguage.set(language, catalog)
+    return catalog
   } catch (e) {
     console.warn('[AGS achievements] catalog:', e?.message)
     return []

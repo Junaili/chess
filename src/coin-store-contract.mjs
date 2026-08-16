@@ -47,10 +47,25 @@ export function itemRegionData(item) {
   return rd?.US?.[0]
 }
 
+export function itemLocalization(item, language = 'en') {
+  const localizations = item?.localizations && typeof item.localizations === 'object'
+    ? item.localizations
+    : {}
+  const requested = String(language || 'en')
+  const requestedLanguage = requested.split('-')[0].toLowerCase()
+  const exactKey = Object.keys(localizations).find(key => key.toLowerCase() === requested.toLowerCase())
+  const languageKey = Object.keys(localizations).find(key => key.split('-')[0].toLowerCase() === requestedLanguage)
+  return localizations[exactKey]
+    || localizations[languageKey]
+    || localizations.en
+    || Object.values(localizations)[0]
+    || {}
+}
+
 // deriveCosmeticCard: everything one store grid card needs to render, given
 // the raw AGS item, the caller's owned-sku set, their equipped-cosmetics
 // record, and current coin balance.
-export function deriveCosmeticCard(item, { ownedSkus = [], equipped = DEFAULT_COSMETICS_RECORD, coins = 0 } = {}) {
+export function deriveCosmeticCard(item, { ownedSkus = [], equipped = DEFAULT_COSMETICS_RECORD, coins = 0, language = 'en' } = {}) {
   const sku = item?.sku || ''
   const slot = deriveEquipSlot(sku)
   const slotValue = slotValueFromSku(sku)
@@ -59,6 +74,7 @@ export function deriveCosmeticCard(item, { ownedSkus = [], equipped = DEFAULT_CO
   const isEquipped = owned && slot && equippedValue === slotValue
   const price = Number(itemRegionData(item)?.price ?? item?.price ?? 0)
   const affordable = coins >= price
+  const localization = itemLocalization(item, language)
 
   let ctaLabel = ''
   let ctaAction = ''
@@ -80,8 +96,8 @@ export function deriveCosmeticCard(item, { ownedSkus = [], equipped = DEFAULT_CO
   return {
     sku,
     itemId: item?.itemId || '',
-    name: item?.localizations?.en?.title || item?.name || sku,
-    description: item?.localizations?.en?.description || '',
+    name: localization.title || item?.name || sku,
+    description: localization.description || '',
     price,
     slot,
     owned,

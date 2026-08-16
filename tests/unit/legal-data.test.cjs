@@ -36,6 +36,22 @@ test('maps the active default localized eligibility version', async () => {
   assert.deepEqual(document.tags, ['ethans-chess', 'privacy'])
 })
 
+test('prefers an exact or language-matched AGS localized policy version', async () => {
+  const { pickLocalizedVersion } = await modulePromise
+  const version = {
+    localizedPolicyVersions: [
+      { id: 'english', localeCode: 'en-US', isDefaultSelection: true },
+      { id: 'indonesian', localeCode: 'id-ID' },
+      { id: 'chinese', localeCode: 'zh-CN' },
+    ],
+  }
+
+  assert.equal(pickLocalizedVersion(version, 'id').id, 'indonesian')
+  assert.equal(pickLocalizedVersion(version, 'zh-Hans').id, 'chinese')
+  assert.equal(pickLocalizedVersion(version, 'zh-CN').id, 'chinese')
+  assert.equal(pickLocalizedVersion(version, 'ms-MY').id, 'english')
+})
+
 test('maps the flat acceptance-history response used by AGS events and APIs', async () => {
   const { mapAcceptedAgreement } = await modulePromise
   const document = mapAcceptedAgreement({

@@ -7,6 +7,7 @@ import { moderateIncomingDisplayName, validateDisplayNameLocally } from './conte
 import { buildUsername } from './auth-data.mjs'
 import { extendFetch } from './extend-client.js'
 import { fetchWithTimeout, friendlyNetworkError } from './network.mjs'
+import { getLanguageTag } from './i18n.mjs'
 
 // True when running inside the Capacitor native shell (iOS app), where the
 // app is served from capacitor://localhost and in-WebView OAuth redirects are
@@ -478,7 +479,7 @@ export async function requestPasswordReset(emailAddress) {
       },
       body: JSON.stringify({
         emailAddress,
-        languageTag: navigator.language || 'en-US',
+        languageTag: getLanguageTag(),
       }),
       credentials: 'include',
     })
@@ -504,7 +505,7 @@ export async function resetPassword({ emailAddress, code, newPassword }) {
         clientId,
         code,
         emailAddress,
-        languageTag: navigator.language || 'en-US',
+        languageTag: getLanguageTag(),
         newPassword,
       }),
       credentials: 'include',
@@ -680,6 +681,20 @@ export async function updateDisplayName(displayName) {
       ok: false,
       error: extractErrorMessage(e?.response?.data, 'Could not update your display name.'),
     }
+  }
+}
+
+// IAM stores the player's languageTag and uses it for supported transactional
+// messages. This reuses the same user-owned PATCH /users/me path as display-name
+// edits; locale selection never needs a service credential.
+export async function syncPreferredLanguage(languageTag = getLanguageTag()) {
+  if (!sdk.getToken()?.accessToken) return { ok: false, skipped: true }
+  try {
+    const res = await UsersApi(sdk).patchUserMe_v3({ languageTag })
+    return { ok: true, data: res.data }
+  } catch (error) {
+    console.warn('[AGS] preferred-language sync:', error?.response?.data || error?.message)
+    return { ok: false, error: extractErrorMessage(error?.response?.data, 'Could not save language preference.') }
   }
 }
 

@@ -121,6 +121,23 @@ test('itemRegionData handles both API shapes: public bare array and admin US-key
   assert.equal(itemRegionData(null), undefined)
 })
 
+test('deriveCosmeticCard uses the requested AGS catalog localization with English fallback', async () => {
+  const { deriveCosmeticCard } = await contractPromise
+  const item = {
+    sku: 'cos-board-walnut',
+    localizations: {
+      en: { title: 'Walnut Board', description: 'Warm wood.' },
+      id: { title: 'Papan Kenari', description: 'Kayu hangat.' },
+      'zh-CN': { title: '胡桃木棋盘', description: '温暖的木质棋盘。' },
+    },
+    regionData: [{ price: 100, currencyCode: 'ETHC' }],
+  }
+
+  assert.equal(deriveCosmeticCard(item, { language: 'id-ID' }).name, 'Papan Kenari')
+  assert.equal(deriveCosmeticCard(item, { language: 'zh-CN' }).description, '温暖的木质棋盘。')
+  assert.equal(deriveCosmeticCard(item, { language: 'ms' }).name, 'Walnut Board')
+})
+
 test('deriveCosmeticCard prices from the public bare-array regionData (regression: price read as 0)', async () => {
   const { deriveCosmeticCard } = await contractPromise
   const item = { sku: 'cos-flair-founder', regionData: [{ price: 150, currencyCode: 'ETHC' }] }

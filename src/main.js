@@ -21,7 +21,10 @@ import { resolveLearningFlags, resolveLearningRolloutPercents, isInRolloutPercen
 import { emitLearningStateChanged } from './learning-events.mjs'
 import { historyRowView, filterHistory, historyFilterCounts, pageHistory, HISTORY_PAGE_SIZE } from './history-view.mjs'
 import { isBotIdentity } from './bot-identity.mjs'
+import { getLanguageTag, getLocale, initI18n } from './i18n.mjs'
 import './app-shell.js'
+
+initI18n()
 
 // Learning-loop rollout flags (dev-plan/history-journal-learning-loop-development-plan.md
 // §5.5). All false in production until each milestone is approved; getLearningFlags()
@@ -191,6 +194,7 @@ const registerChildAccount = async (...args) => (await authFeature.load()).regis
 const handleCallback = async (...args) => (await authFeature.load()).handleCallback(...args)
 const getProfile = async (...args) => (await authFeature.load()).getProfile(...args)
 const updateDisplayName = async (...args) => (await authFeature.load()).updateDisplayName(...args)
+const syncPreferredLanguage = async (...args) => (await authFeature.load()).syncPreferredLanguage(...args)
 const syncBasicProfile = async (...args) => (await authFeature.load()).syncBasicProfile(...args)
 const logout = async (...args) => (await authFeature.load()).logout(...args)
 const refreshSession = async (...args) => (await authFeature.load()).refreshSession(...args)
@@ -1079,6 +1083,11 @@ let legalReaderTrigger = null
 let friendsState = { friends: [], incoming: [], outgoing: [] }
 let familyState = { group: null, members: [], incomingInvites: [] }
 
+window.addEventListener('ethans-chess:locale-changed', event => {
+  if (!currentUserId || isGuestSession()) return
+  void syncPreferredLanguage(event.detail?.languageTag || getLanguageTag())
+})
+
 function isGuestSession() {
   return currentAuthMode === 'guest'
 }
@@ -1217,7 +1226,7 @@ function renderAcceptedLegalDocuments(message = '') {
     title.textContent = legalDocument.policyName
     const meta = document.createElement('span')
     const acceptedDate = legalDocument.acceptedAt
-      ? new Date(legalDocument.acceptedAt).toLocaleDateString()
+      ? new Date(legalDocument.acceptedAt).toLocaleDateString(getLocale())
       : ''
     meta.textContent = [
       legalDocument.policyVersionDisplay ? `Version ${legalDocument.policyVersionDisplay}` : '',
@@ -1665,6 +1674,8 @@ async function hydrateAuthenticatedUser(profile, { authMode = getStoredAuthMode(
     setPresenceStatus('online')
     return
   }
+
+  if (profile.languageTag !== getLanguageTag()) void syncPreferredLanguage(getLanguageTag())
 
   // Child sessions never store an email (COPPA data minimization — the
   // address on a parent-created account is the parent's mailbox anyway).

@@ -7,6 +7,7 @@ import {
   rowsFromLegalPayload,
 } from './legal-data.mjs'
 import { fetchWithTimeout, friendlyNetworkError } from './network.mjs'
+import { getLanguageTag } from './i18n.mjs'
 
 const ACCEPT_RETRY_DELAYS_MS = [0, 750, 1500]
 
@@ -104,7 +105,7 @@ export async function fetchPendingLegalDocuments() {
 
     const documents = rowsFromLegalPayload(payload)
       .filter(entry => entry && entry.isAccepted === false && entry.isMandatory === true)
-      .map(mapEligibilityToDocument)
+      .map(entry => mapEligibilityToDocument(entry, getLanguageTag()))
       .filter(Boolean)
 
     const hydrated = await Promise.all(

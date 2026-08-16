@@ -1,14 +1,28 @@
-export function pickLocalizedVersion(version) {
+function normalizedLocale(value) {
+  return String(value || '').trim().replace(/_/g, '-').toLowerCase()
+}
+
+export function pickLocalizedVersion(version, preferredLocale = '') {
   const localizedVersions = Array.isArray(version?.localizedPolicyVersions)
     ? version.localizedPolicyVersions
     : []
+  const preferred = normalizedLocale(preferredLocale)
+  if (preferred) {
+    const exact = localizedVersions.find(item => normalizedLocale(item?.localeCode) === preferred)
+    if (exact) return exact
+    const preferredLanguage = preferred.split('-')[0]
+    const languageMatch = localizedVersions.find(item =>
+      normalizedLocale(item?.localeCode).split('-')[0] === preferredLanguage,
+    )
+    if (languageMatch) return languageMatch
+  }
   return localizedVersions.find(item => item?.isDefaultSelection) || localizedVersions[0] || null
 }
 
-export function mapEligibilityToDocument(entry) {
+export function mapEligibilityToDocument(entry, preferredLocale = '') {
   const versions = Array.isArray(entry?.policyVersions) ? entry.policyVersions : []
   const activeVersion = versions.find(version => version?.isInEffect) || versions[0] || null
-  const localizedVersion = pickLocalizedVersion(activeVersion)
+  const localizedVersion = pickLocalizedVersion(activeVersion, preferredLocale)
   if (!activeVersion?.id || !localizedVersion?.id || !entry?.policyId) return null
 
   return {
