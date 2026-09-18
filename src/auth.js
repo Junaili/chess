@@ -4,7 +4,7 @@ import { sdk } from './ags-client.js'
 import { isQueueTicket, runLoginQueue } from './login-queue.js'
 import { getDeviceId } from './anon-id.js'
 import { moderateIncomingDisplayName, validateDisplayNameLocally } from './content-moderation.mjs'
-import { buildUsername } from './auth-data.mjs'
+import { buildUsername, isAppleCancellation } from './auth-data.mjs'
 import { extendFetch } from './extend-client.js'
 import { fetchWithTimeout, friendlyNetworkError } from './network.mjs'
 import { getLanguageTag } from './i18n.mjs'
@@ -288,7 +288,7 @@ export async function loginWithApple() {
     if (!identityToken) return { ok: false, error: 'Apple sign-in returned no token.' }
 
     const { baseURL, clientId } = getAuthConfig()
-    const resp = await fetchWithTimeout(`${baseURL}/iam/v3/oauth/platforms/apple/token`, {
+    const exchange = () => fetchWithTimeout(`${baseURL}/iam/v3/oauth/platforms/apple/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -297,6 +297,11 @@ export async function loginWithApple() {
       body: new URLSearchParams({ platform_token: identityToken }).toString(),
       credentials: 'include',
     })
+    let resp = await exchange()
+    // This endpoint returned an intermittent 500 once and succeeded moments
+    // later with nothing changed. One retry turns a transient fault into a
+    // successful sign-in instead of a dead end the player has to interpret.
+    if (resp.status >= 500) resp = await exchange()
     const tokenData = await resp.json().catch(() => ({}))
     if (!resp.ok || !tokenData?.access_token) {
       const queued = await resolveLoginQueue(resp, tokenData)
@@ -304,16 +309,29 @@ export async function loginWithApple() {
         setSession(queued.token)
         return { ok: true, data: queued.token }
       }
-      if (queued.cancelled) return { ok: false, error: 'Sign-in cancelled.' }
+      if (queued.cancelled) return { ok: false, cancelled: true }
       if (queued.error) return { ok: false, error: queued.error }
       console.error('[AGS] Apple platform-token exchange failed:', resp.status, tokenData)
+      // A 5xx is ours to fix and means nothing to a player. AGS's 4xx messages
+      // are meaningful here (account linking, for one), so those still show.
+      if (resp.status >= 500) {
+        return { ok: false, error: 'Apple sign-in could not be completed. Please try again.' }
+      }
       return { ok: false, error: extractErrorMessage(tokenData, 'Could not complete Apple sign-in.') }
     }
     setSession(tokenData)
     return { ok: true, data: tokenData }
   } catch (e) {
-    // Plugin throws on user cancel and when the capability isn't configured yet.
-    return { ok: false, error: e?.message || 'Apple sign-in was cancelled.' }
+    // 1001 is ASAuthorizationError.canceled: the player backed out of Apple's
+    // sheet. That is a choice, not a failure. Alerting on it is what App Review
+    // reported under guideline 2.1(a) - "error message displayed when we
+    // attempted to Sign in with Apple". Returning no `error` keeps the caller
+    // silent, since it only alerts when one is present.
+    if (isAppleCancellation(e)) return { ok: false, cancelled: true }
+    // Anything else: log the real error, show the player something they can act
+    // on. Apple's raw NSError text must never reach the UI.
+    console.error('[Apple] authorization failed:', e)
+    return { ok: false, error: 'Apple sign-in could not be completed. Please try again.' }
   }
 }
 
