@@ -1287,7 +1287,12 @@ function renderPrivacyChoices() {
   const status = document.getElementById('privacy-choice-status')
   const banner = document.getElementById('privacy-consent-banner')
   const childSession = isProtectedChildSession()
-  document.body?.classList.toggle('privacy-choice-pending', !preferences.decided && !childSession)
+  // We never prompt for analytics consent, on any platform. Apple reads a
+  // consent prompt inside our web content as a tracking prompt (App Review
+  // guideline 5.1.2(i)) even though we do not track, and one behaviour across
+  // platforms is easier to reason about than two. Analytics stays off until
+  // the player turns it on from Privacy & Support.
+  document.body?.classList.remove('privacy-choice-pending')
   if (toggle) {
     toggle.checked = childSession ? false : preferences.analytics
     toggle.disabled = childSession
@@ -1299,9 +1304,7 @@ function renderPrivacyChoices() {
         ? `Optional analytics are ${preferences.analytics ? 'enabled' : 'disabled'}.`
         : 'You have not made a privacy choice yet.'
   }
-  // A child session never sees the consent banner — there is nothing to opt
-  // in to.
-  if (banner) banner.hidden = preferences.decided || childSession
+  if (banner) banner.hidden = true
 }
 
 async function saveAnalyticsPreference(analytics) {

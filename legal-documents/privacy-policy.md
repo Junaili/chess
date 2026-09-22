@@ -16,6 +16,12 @@ Ethan's Chess uses personal information only to operate, secure, support, and im
 
 Camera and microphone access is requested only when you start or accept voice or video chat. Audio and video are transmitted to the other player and are not recorded by Ethan's Chess. The in-app contact list is created manually and stored locally on your device; the app does not request access to the system Contacts database.
 
+## Cookies and on-device storage
+
+Ethan's Chess stores a small amount of information on your device so the game can work: your sign-in session, your language choice, and your privacy selections. If you play without an account, your guest identity is stored the same way — clearing site or app data removes it and creates a new guest.
+
+This storage is functional only. It is not used to track you across other apps or websites, is not linked to any advertising identifier, and is not shared with third parties or data brokers.
+
 ## How information is used
 
 Information is used to authenticate players, run matches and social features, provide rankings and achievements, prevent abuse, investigate reports, maintain security, provide support, and—when permitted—understand and improve game usage.
