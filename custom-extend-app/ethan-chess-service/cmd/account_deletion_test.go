@@ -719,10 +719,11 @@ func TestPasswordAccountUsesThePublicNamespacedRoute(t *testing.T) {
 	}
 }
 
-// Sign in with Apple accounts have no password; they authenticate with a
-// platform token. It must be the identity token, not the authorization code,
-// which revocation already consumed.
-func TestPlatformAccountUsesTheHeadlessRoute(t *testing.T) {
+// Sign in with Apple accounts have no password, so they used to take the public
+// headless route. That route leaves the account enabled for the 28-day grace
+// period, which App Review treats as no deletion at all, so they now take the
+// admin route like any other account without a password.
+func TestPlatformAccountUsesTheAdminRoute(t *testing.T) {
 	rt := &routeRecorder{}
 	err := selfServiceHandler(rt).submitAGSDeletion("player-123", deletionCredentials{
 		playerToken: "player-token", platformID: "apple", platformToken: "apple-identity-token",
@@ -730,12 +731,12 @@ func TestPlatformAccountUsesTheHeadlessRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(strings.Join(rt.paths, " "), "/gdpr/public/users/me/deletions") {
-		t.Errorf("expected the headless route, got %v", rt.paths)
+	joined := strings.Join(rt.paths, " ")
+	if !strings.Contains(joined, "/gdpr/admin/namespaces/chess/users/player-123/deletions") {
+		t.Errorf("expected the admin route, got %v", rt.paths)
 	}
-	form := strings.Join(rt.forms, " ")
-	if !strings.Contains(form, "platformId=apple") || !strings.Contains(form, "platformToken=apple-identity-token") {
-		t.Errorf("platform credentials were not forwarded: %v", rt.forms)
+	if strings.Contains(joined, "/gdpr/public/") {
+		t.Errorf("a platform token must no longer select a public route: %v", rt.paths)
 	}
 }
 
@@ -764,5 +765,27 @@ func TestSelfServiceIsNotBlockedByTheMissingAdminGrant(t *testing.T) {
 	}
 	if rec.Code != http.StatusAccepted {
 		t.Errorf("status = %d, want 202. body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// The routing decision itself, since this is what changed: a platform token no
+// longer selects the public route. Only the admin route disables the account
+// immediately, and App Review treats an account it can still sign into as not
+// deleted.
+func TestPlatformTokenIsNotSelfService(t *testing.T) {
+	platform := deletionCredentials{
+		playerToken: "player-token", platformID: "apple", platformToken: "apple-identity-token",
+	}
+	if platform.selfService() {
+		t.Error("a platform token must take the admin route so the account is disabled straight away")
+	}
+
+	password := deletionCredentials{playerToken: "player-token", password: "hunter2"}
+	if !password.selfService() {
+		t.Error("password accounts should still use the public self-service route")
+	}
+
+	if (deletionCredentials{password: "hunter2"}).selfService() {
+		t.Error("a password with no player token cannot authenticate a self-service deletion")
 	}
 }

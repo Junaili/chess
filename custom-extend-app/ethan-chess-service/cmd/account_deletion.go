@@ -491,20 +491,31 @@ type deletionCredentials struct {
 	platformToken string
 }
 
+// A platform token used to count here too, which sent Sign in with Apple
+// deletions down the public GDPR route. That route only flags the account and
+// leaves it enabled, so the player can still sign in for the whole 28-day
+// grace period. App Review reads that as the account not being deleted at all
+// - guideline 5.1.1(v), "only offering to temporarily deactivate or disable an
+// account is insufficient".
+//
+// The admin route disables the account immediately. It was avoided because it
+// needs ADMIN:NAMESPACE:{ns}:INFORMATION:USER Create, which this client did not
+// have. AccelByte added it on 2026-09-22, so platform accounts now take the
+// admin route and only a password counts as self-service.
 func (c deletionCredentials) selfService() bool {
-	return c.playerToken != "" && (c.password != "" || c.platformToken != "")
+	return c.playerToken != "" && c.password != ""
 }
 
 // submitAGSDeletion asks AGS to delete the account.
 //
-// Preferred path is SELF-SERVICE, authenticated by the player's own token plus
-// either their password or their platform token. It needs no admin grant on
-// this service's IAM client, so it is not hostage to a permission we cannot
-// change — which is what blocked deletion entirely.
+// The ADMIN route is the default. Only it disables the account straight away,
+// which is what makes the deletion real to App Review rather than a deferred
+// flag the player can sign straight past. It requires
+// ADMIN:NAMESPACE:{ns}:INFORMATION:USER Create; canSubmitDeletion pre-flights
+// that before anything irreversible.
 //
-// The admin route is the fallback for callers with no player credentials. It
-// requires ADMIN:NAMESPACE:{ns}:INFORMATION:USER Create, which the service may
-// not have; canSubmitDeletion pre-flights that before anything irreversible.
+// Password accounts still take the public self-service route, which needs no
+// admin grant.
 func (h *accountDeletionHandler) submitAGSDeletion(userID string, creds deletionCredentials) error {
 	if creds.selfService() {
 		if err := h.submitSelfServiceDeletion(userID, creds); err != nil {
