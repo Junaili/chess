@@ -64,3 +64,43 @@ test('reads a structured Apple error code when the plugin provides one', async (
   // A non-numeric Capacitor code must not be read as an error number.
   assert.equal(appleAuthorizationCode({ code: 'UNIMPLEMENTED' }), null)
 })
+
+// Both login endpoints refuse a deleted account with a 403, but word it
+// differently and neither is fit to show a player.
+test('treats a blocked sign-in the same on both login routes', async () => {
+  const { isSignInBlocked, SIGN_IN_BLOCKED_MESSAGE } = await modulePromise
+
+  // What /iam/v3/oauth/platforms/apple/token actually returned.
+  assert.equal(isSignInBlocked(403, {
+    error_description: 'Forbidden', error: 'access_denied',
+  }), true)
+
+  // What /iam/v3/oauth/token actually returned.
+  assert.equal(isSignInBlocked(403, {
+    message: 'Admin deactivate user account cause request deletion account',
+  }), true)
+
+  assert.match(SIGN_IN_BLOCKED_MESSAGE, /no longer sign in/)
+  // Never leak the upstream wording to a player.
+  assert.doesNotMatch(SIGN_IN_BLOCKED_MESSAGE, /Forbidden|Admin deactivate/)
+})
+
+test('does not mistake an ordinary sign-in failure for a blocked account', async () => {
+  const { isSignInBlocked } = await modulePromise
+
+  // Wrong password must still say so, not claim the account is gone.
+  assert.equal(isSignInBlocked(401, {
+    error_description: 'Invalid username or password', error: 'invalid_grant',
+  }), false)
+  assert.equal(isSignInBlocked(400, { error: 'invalid_request' }), false)
+  assert.equal(isSignInBlocked(500, {}), false)
+  assert.equal(isSignInBlocked(401, null), false)
+})
+
+test('catches the deletion wording even if the status changes', async () => {
+  const { isSignInBlocked } = await modulePromise
+
+  assert.equal(isSignInBlocked(400, {
+    message: 'user account is deactivated',
+  }), true)
+})

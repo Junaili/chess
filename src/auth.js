@@ -4,7 +4,12 @@ import { sdk } from './ags-client.js'
 import { isQueueTicket, runLoginQueue } from './login-queue.js'
 import { getDeviceId } from './anon-id.js'
 import { moderateIncomingDisplayName, validateDisplayNameLocally } from './content-moderation.mjs'
-import { buildUsername, isAppleCancellation } from './auth-data.mjs'
+import {
+  buildUsername,
+  isAppleCancellation,
+  isSignInBlocked,
+  SIGN_IN_BLOCKED_MESSAGE,
+} from './auth-data.mjs'
 import { extendFetch } from './extend-client.js'
 import { fetchWithTimeout, friendlyNetworkError } from './network.mjs'
 import { getLanguageTag } from './i18n.mjs'
@@ -317,6 +322,9 @@ export async function loginWithApple() {
       if (resp.status >= 500) {
         return { ok: false, error: 'Apple sign-in could not be completed. Please try again.' }
       }
+      if (isSignInBlocked(resp.status, tokenData)) {
+        return { ok: false, error: SIGN_IN_BLOCKED_MESSAGE }
+      }
       return { ok: false, error: extractErrorMessage(tokenData, 'Could not complete Apple sign-in.') }
     }
     setSession(tokenData)
@@ -395,6 +403,10 @@ export async function loginWithPassword(identifier, password) {
       }
       if (queued.cancelled) return { ok: false, error: 'Sign-in cancelled.' }
       if (queued.error) return { ok: false, error: queued.error }
+      if (isSignInBlocked(resp.status, payload)) {
+        console.error('[AGS] sign-in blocked:', resp.status, payload)
+        return { ok: false, error: SIGN_IN_BLOCKED_MESSAGE }
+      }
       return { ok: false, error: extractErrorMessage(payload, 'Could not sign in with username and password.') }
     }
 
