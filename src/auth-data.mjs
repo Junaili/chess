@@ -30,3 +30,25 @@ export function appleAuthorizationCode(error) {
 export function isAppleCancellation(error) {
   return appleAuthorizationCode(error) === APPLE_ERROR_CANCELED
 }
+
+// AGS refuses sign-in once an account deletion has been submitted, but the two
+// login endpoints word it differently and neither is fit to show a player.
+// /iam/v3/oauth/token returns "Admin deactivate user account cause request
+// deletion account"; the platform route returns a bare "Forbidden" with
+// error "access_denied". Both are 403.
+//
+// Showing raw upstream text here is the same fault App Review reported under
+// guideline 2.1(a), and this is the exact flow a reviewer exercises when
+// checking that account deletion worked (5.1.1(v)).
+export const SIGN_IN_BLOCKED_MESSAGE =
+  'This account can no longer sign in. If you deleted your account, that is expected.'
+
+export function isSignInBlocked(status, payload) {
+  if (status === 403) return true
+  // Belt and braces: catch the deletion wording whatever status carries it.
+  const text = [payload?.error_description, payload?.message, payload?.error]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return /deactivat|deletion|deleted/.test(text)
+}
