@@ -230,7 +230,24 @@ Friends, chat, family accounts, and other social features additionally require t
 - Stripe billing for Ethan's Chess Club (checkout sessions, webhooks, customer portal) and coin-gifting between players (`cmd/monetization_stripe.go`)
 - Self-learning matchmaking bots (Gambit Gus, Fortress Fiona), each with its own AGS account, brain, and daily training run — served by one multi-persona AMS dedicated server (`peerjs-bot-spike/`) and rostered by the Extend service (`cmd/bot_roster.go`)
 
-See `custom-extend-app/ethan-chess-service/.env.example` for required configuration (an AGS server-side IAM client, Apple credentials, CORS/invite-host allowlists) and its `Makefile` for build/deploy targets. The frontend talks to it through `src/extend-client.js`.
+See `custom-extend-app/ethan-chess-service/.env.example` for required configuration (an AGS server-side IAM client, Apple credentials, CORS/invite-host allowlists). The frontend talks to it through `src/extend-client.js`. The `Makefile` only generates protobuf code — deployment is manual and there is no CI for it:
+
+```bash
+# 1. Authenticate. Browser OAuth, no client secret needed.
+extend-helper-cli login --base-url https://seal-chessags.prod.gamingservices.accelbyte.io
+
+# 2. Build linux/amd64 and push. Tags follow release-<git short sha>.
+#    Every command except `login` needs AB_BASE_URL, or it defaults elsewhere
+#    and reports "not logged in".
+AB_BASE_URL=https://seal-chessags.prod.gamingservices.accelbyte.io \
+  extend-helper-cli image-upload -n seal-chessags -a ethan-chess-service \
+  -t release-$(git rev-parse --short HEAD) \
+  --work-dir custom-extend-app/ethan-chess-service --login
+```
+
+Pushing does not deploy. Finish in the Admin Portal: **Extend -> Service Extensions -> ethan-chess-service -> Image Version History -> Deploy** on the new tag. Rollback is the same page, Deploy on the previous tag, so note the current one first. The CLI comes from [GitHub releases](https://github.com/AccelByte/extend-helper-cli/releases) — `go install` does not work, the module has no installable package path.
+
+Secrets are never in the image (`.dockerignore` excludes `.env*`); they live in the app's Environment Configuration, so a redeploy swaps the binary only. This service also backs Stripe billing, COPPA child accounts and the matchmaking bots, so check what you are shipping with `git log <deployed-sha>..HEAD -- custom-extend-app/` before deploying.
 
 ---
 

@@ -393,7 +393,7 @@ export async function loginWithPassword(identifier, password) {
         setSession(queued.token)
         return { ok: true, data: queued.token }
       }
-      if (queued.cancelled) return { ok: false, error: 'Sign-in cancelled.' }
+      if (queued.cancelled) return { ok: false, cancelled: true }
       if (queued.error) return { ok: false, error: queued.error }
       return { ok: false, error: extractErrorMessage(payload, 'Could not sign in with username and password.') }
     }
@@ -466,7 +466,7 @@ export async function loginWithDeviceId() {
       tokenData = queued.token
     } else {
       clearTransientSessionState()
-      if (queued.cancelled) return { ok: false, error: 'Guest sign-in cancelled.' }
+      if (queued.cancelled) return { ok: false, cancelled: true }
       if (queued.error) return { ok: false, error: queued.error }
       return { ok: false, error: guestLoginError(error) }
     }
